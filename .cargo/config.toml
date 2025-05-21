@@ -1,0 +1,23 @@
+[build]
+# Enable parallel compilation
+rustc-wrapper = "sccache"
+
+[target.wasm32-unknown-unknown]
+# WASM-specific settings
+rustflags = [
+  "-C", "link-arg=--no-entry",
+  "-C", "link-arg=--export-table",
+  "-C", "link-arg=--max-memory=4294967296",
+]
+
+[target.'cfg(all())']
+rustflags = [
+  # Enables better optimizations
+  "-C", "target-cpu=native",
+  # Enables additional warnings
+  "-W", "missing_docs",
+]
+
+[alias]
+check-all = "check --workspace --all-targets --all-features"
+clippy-all = "clippy --workspace --all-targets --all-features -- -D warnings" 

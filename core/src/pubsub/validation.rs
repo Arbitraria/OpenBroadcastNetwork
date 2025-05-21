@@ -1,0 +1,206 @@
+use std::sync::Arc;
+use async_trait::async_trait;
+
+use crate::pubsub::message::Message;
+use crate::pubsub::topic::{Topic, TopicId};
+use crate::overlay::peer::PeerId;
+
+/// Result of message validation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationResult {
+    /// Message is valid and should be processed and forwarded
+    Accept,
+    
+    /// Message is invalid and should be rejected
+    Reject,
+    
+    /// Message validation is pending (async validation in progress)
+    Pending,
+    
+    /// Message should be ignored but not rejected (e.g., duplicate)
+    Ignore,
+}
+
+/// Interface for validating messages
+#[async_trait]
+pub trait MessageValidator: Send + Sync {
+    /// Synchronously validate a message (fast path)
+    /// 
+    /// This method should return quickly. If validation requires 
+    /// asynchronous operations, return Pending and perform 
+    /// the validation in the async_validate method.
+    fn validate(&self, message: &Message, source: Option<&PeerId>) -> ValidationResult;
+    
+    /// Asynchronously validate a message (called after validate returns Pending)
+    async fn async_validate(&self, message: Arc<Message>, source: Option<PeerId>) -> ValidationResult;
+}
+
+/// Basic message validator with size and rate limiting
+#[derive(Debug, Clone)]
+pub struct BasicValidator {
+    /// Maximum allowed message size in bytes
+    max_message_size: usize,
+    
+    /// Maximum messages per second per peer
+    max_messages_per_second: usize,
+    
+    /// Topic-specific validation rules
+    topic_rules: std::collections::HashMap<TopicId, TopicValidationRules>,
+}
+
+/// Topic-specific validation rules
+#[derive(Debug, Clone)]
+pub struct TopicValidationRules {
+    /// Maximum message size for this topic (overrides global)
+    pub max_message_size: Option<usize>,
+    
+    /// Allowed publishers (empty means anyone can publish)
+    pub allowed_publishers: Vec<PeerId>,
+    
+    /// Is message validation required for this topic
+    pub validation_required: bool,
+}
+
+impl BasicValidator {
+    /// Create a new validator with default settings
+    pub fn new() -> Self {
+        Self {
+            max_message_size: 1024 * 1024, // 1MB
+            max_messages_per_second: 100,
+            topic_rules: std::collections::HashMap::new(),
+        }
+    }
+    
+    /// Set the maximum message size
+    pub fn with_max_message_size(mut self, size: usize) -> Self {
+        self.max_message_size = size;
+        self
+    }
+    
+    /// Set the maximum messages per second per peer
+    pub fn with_max_messages_per_second(mut self, count: usize) -> Self {
+        self.max_messages_per_second = count;
+        self
+    }
+    
+    /// Add validation rules for a topic
+    pub fn with_topic_rules(mut self, topic_id: TopicId, rules: TopicValidationRules) -> Self {
+        self.topic_rules.insert(topic_id, rules);
+        self
+    }
+    
+    /// Get the maximum message size for a topic
+    fn get_max_message_size(&self, topic_id: &TopicId) -> usize {
+        if let Some(rules) = self.topic_rules.get(topic_id) {
+            if let Some(size) = rules.max_message_size {
+                return size;
+            }
+        }
+        self.max_message_size
+    }
+    
+    /// Check if a publisher is allowed for a topic
+    fn is_publisher_allowed(&self, topic_id: &TopicId, publisher: &PeerId) -> bool {
+        if let Some(rules) = self.topic_rules.get(topic_id) {
+            if !rules.allowed_publishers.is_empty() {
+                return rules.allowed_publishers.contains(publisher);
+            }
+        }
+        true
+    }
+}
+
+#[async_trait]
+impl MessageValidator for BasicValidator {
+    fn validate(&self, message: &Message, source: Option<&PeerId>) -> ValidationResult {
+        // Check message size
+        let max_size = self.get_max_message_size(&message.topic);
+        if message.size() > max_size {
+            return ValidationResult::Reject;
+        }
+        
+        // Check if the message has expired
+        if message.is_expired() {
+            return ValidationResult::Ignore;
+        }
+        
+        // Check publisher is allowed if specified
+        if let Some(publisher) = &message.publisher {
+            if !self.is_publisher_allowed(&message.topic, publisher) {
+                return ValidationResult::Reject;
+            }
+        }
+        
+        // For now, we'll accept all messages by default
+        // Rate limiting would be implemented with a time window counter
+        ValidationResult::Accept
+    }
+    
+    async fn async_validate(&self, message: Arc<Message>, source: Option<PeerId>) -> ValidationResult {
+        // The basic validator performs all checks synchronously
+        // This is a placeholder for more complex async validation
+        ValidationResult::Accept
+    }
+}
+
+/// Validator that delegates to multiple other validators
+#[derive(Default)]
+pub struct CompositeValidator {
+    validators: Vec<Box<dyn MessageValidator>>,
+}
+
+impl CompositeValidator {
+    /// Create a new empty composite validator
+    pub fn new() -> Self {
+        Self {
+            validators: Vec::new(),
+        }
+    }
+    
+    /// Add a validator to the chain
+    pub fn add_validator<V: MessageValidator + 'static>(&mut self, validator: V) {
+        self.validators.push(Box::new(validator));
+    }
+}
+
+#[async_trait]
+impl MessageValidator for CompositeValidator {
+    fn validate(&self, message: &Message, source: Option<&PeerId>) -> ValidationResult {
+        let mut pending = false;
+        
+        for validator in &self.validators {
+            match validator.validate(message, source) {
+                ValidationResult::Reject => return ValidationResult::Reject,
+                ValidationResult::Pending => pending = true,
+                ValidationResult::Ignore => return ValidationResult::Ignore,
+                ValidationResult::Accept => continue,
+            }
+        }
+        
+        if pending {
+            ValidationResult::Pending
+        } else {
+            ValidationResult::Accept
+        }
+    }
+    
+    async fn async_validate(&self, message: Arc<Message>, source: Option<PeerId>) -> ValidationResult {
+        for validator in &self.validators {
+            match validator.validate(&message, source.as_ref()) {
+                ValidationResult::Reject => return ValidationResult::Reject,
+                ValidationResult::Ignore => return ValidationResult::Ignore,
+                _ => {
+                    // Continue with async validation for this validator
+                    let result = validator.async_validate(message.clone(), source.clone()).await;
+                    match result {
+                        ValidationResult::Reject => return ValidationResult::Reject,
+                        ValidationResult::Ignore => return ValidationResult::Ignore,
+                        _ => continue,
+                    }
+                }
+            }
+        }
+        
+        ValidationResult::Accept
+    }
+} 
