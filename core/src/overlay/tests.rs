@@ -4,12 +4,15 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::interface::{Overlay, OverlayEvent, OverlayError, PeerRole, StreamId, StreamStats};
+    use crate::prelude::*;
     use super::super::tree::{StreamTree, TreeNode, TreeStats};
     use super::super::mesh::{StreamMesh, MeshNode, MeshStats};
-    use libp2p::PeerId;
     use std::collections::HashSet;
     use std::str::FromStr;
+    use libp2p::PeerId;
+    
+    // Re-export for backward compatibility
+    pub use crate::overlay::interface::StreamId;
 
     // Helper to create a random PeerId
     fn random_peer_id() -> PeerId {
@@ -60,8 +63,9 @@ mod tests {
         assert_eq!(node.children.len(), 2);
         assert!(!node.children.contains(&child2));
         
-        // Test children capacity
-        let leaf_node = TreeNode::new(random_peer_id(), PeerRole::Leaf);
+        // Test adding children
+        let leaf_node = TreeNode::new(random_peer_id(), PeerRole::Consumer);
+        assert!(node.add_child(leaf_node));
         assert!(!leaf_node.can_accept_children());
     }
 
@@ -94,9 +98,9 @@ mod tests {
         let leaf1 = random_peer_id();
         let leaf2 = random_peer_id();
         let leaf3 = random_peer_id();
-        assert!(tree.add_peer(leaf1, PeerRole::Leaf, 5000));
-        assert!(tree.add_peer(leaf2, PeerRole::Leaf, 8000));
-        assert!(tree.add_peer(leaf3, PeerRole::Leaf, 3000));
+        assert!(tree.add_peer(leaf1, PeerRole::Consumer, 5000));
+        assert!(tree.add_peer(leaf2, PeerRole::Consumer, 8000));
+        assert!(tree.add_peer(leaf3, PeerRole::Consumer, 3000));
         
         // Should have 6 nodes total (source + 2 relays + 3 leaves)
         assert_eq!(tree.nodes.len(), 6);
@@ -200,9 +204,9 @@ mod tests {
         let peer1 = random_peer_id();
         let peer2 = random_peer_id();
         let peer3 = random_peer_id();
-        assert!(mesh.add_peer(peer1, PeerRole::Relay, 10000));
-        assert!(mesh.add_peer(peer2, PeerRole::Relay, 20000));
-        assert!(mesh.add_peer(peer3, PeerRole::Leaf, 5000));
+        assert!(mesh.add_peer(peer1, PeerRole::Consumer, 10000));
+        assert!(mesh.add_peer(peer2, PeerRole::Relay, 15000));
+        assert!(mesh.add_peer(peer3, PeerRole::Consumer, 5000));
         
         // Should have 4 nodes total (source + 3 peers)
         assert_eq!(mesh.nodes.len(), 4);

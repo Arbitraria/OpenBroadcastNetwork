@@ -85,8 +85,9 @@ impl PubSubConfig for GossipSubConfig {
     }
 }
 
+use std::fmt;
+
 /// GossipSub service implementation
-#[derive(Debug)]
 pub struct GossipSubService {
     /// Configuration
     config: GossipSubConfig,
@@ -111,6 +112,18 @@ pub struct GossipSubService {
     
     /// Is the service started
     started: std::sync::atomic::AtomicBool,
+}
+
+impl fmt::Debug for GossipSubService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GossipSubService")
+            .field("config", &self.config)
+            .field("topics", &self.topics)
+            .field("metrics", &self.metrics)
+            .field("keypair", &"[redacted]")
+            .field("peers", &self.peers)
+            .finish()
+    }
 }
 
 impl GossipSubService {
@@ -166,12 +179,15 @@ impl GossipSubService {
     
     /// Convert libp2p PeerId to our PeerId
     fn from_libp2p_peer_id(peer_id: &LibP2PPeerId) -> PeerId {
-        PeerId(peer_id.to_string())
+        // Convert the libp2p PeerId to bytes and create our PeerId
+        let bytes = peer_id.to_bytes();
+        PeerId::from_bytes(bytes.to_vec())
     }
     
     /// Convert our PeerId to libp2p PeerId
     fn to_libp2p_peer_id(peer_id: &PeerId) -> Result<LibP2PPeerId, PubSubError> {
-        peer_id.0.parse::<LibP2PPeerId>()
+        // Convert our PeerId bytes to a libp2p PeerId
+        LibP2PPeerId::from_bytes(&peer_id.0)
             .map_err(|e| PubSubError::InvalidTopic(format!("Invalid peer ID: {}", e)))
     }
     
@@ -316,13 +332,17 @@ impl PubSub for GossipSubService {
     }
     
     fn list_peers(&self, topic_id: &TopicId) -> Vec<PeerId> {
-        let peers = self.peers.read().unwrap_or_else(|_| HashSet::new().into());
-        peers.iter().cloned().collect()
+        match self.peers.read() {
+            Ok(peers) => peers.iter().cloned().collect(),
+            Err(_) => Vec::new(),
+        }
     }
     
     fn list_subscriptions(&self) -> Vec<TopicId> {
-        let topics = self.topics.read().unwrap_or_else(|_| HashMap::new().into());
-        topics.keys().cloned().collect()
+        match self.topics.read() {
+            Ok(topics) => topics.keys().cloned().collect(),
+            Err(_) => Vec::new(),
+        }
     }
     
     fn start(&mut self) -> Result<(), PubSubError> {
@@ -373,7 +393,7 @@ impl AsyncPubSub for GossipSubService {
         topic: &'a Topic,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), PubSubError>> + Send + 'a>> {
         Box::pin(async move {
-            self.subscribe(topic)
+            PubSub::subscribe(self, topic)
         })
     }
     
@@ -382,7 +402,7 @@ impl AsyncPubSub for GossipSubService {
         topic_id: &'a TopicId,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), PubSubError>> + Send + 'a>> {
         Box::pin(async move {
-            self.unsubscribe(topic_id)
+            PubSub::unsubscribe(self, topic_id)
         })
     }
     
@@ -392,13 +412,13 @@ impl AsyncPubSub for GossipSubService {
         data: Vec<u8>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<MessageId, PubSubError>> + Send + 'a>> {
         Box::pin(async move {
-            self.publish(topic_id, data)
+            PubSub::publish(self, topic_id, data)
         })
     }
     
     fn event_stream<'a>(
         &'a mut self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<PubSubEventStream, PubSubError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<crate::pubsub::interface::PubSubEventStream, PubSubError>> + Send + 'a>> {
         Box::pin(async move {
             // Create a new channel
             let (tx, rx) = mpsc::channel(100);
@@ -410,7 +430,8 @@ impl AsyncPubSub for GossipSubService {
             
             *event_sender = Some(tx);
             
-            Ok(PubSubEventStream::new(rx))
+            // Create and return the event stream
+            Ok(crate::pubsub::interface::PubSubEventStream::new(rx))
         })
     }
 }

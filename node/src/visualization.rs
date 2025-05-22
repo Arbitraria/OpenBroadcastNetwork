@@ -2,6 +2,8 @@
 use colored::*;
 use decentralized_stream_core::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
+use std::time::{Duration, Instant};
 #[cfg(feature = "visualization")]
 use term_table::row::Row;
 #[cfg(feature = "visualization")]
@@ -30,20 +32,19 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 /// Format duration to human-readable string
-pub fn format_duration(seconds: u64) -> String {
-    let days = seconds / (24 * 3600);
-    let hours = (seconds % (24 * 3600)) / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-
-    if days > 0 {
-        format!("{}d {}h {}m {}s", days, hours, minutes, seconds)
-    } else if hours > 0 {
-        format!("{}h {}m {}s", hours, minutes, seconds)
-    } else if minutes > 0 {
-        format!("{}m {}s", minutes, seconds)
-    } else {
+pub fn format_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    
+    if seconds < 60 {
         format!("{}s", seconds)
+    } else if seconds < 3600 {
+        let minutes = seconds / 60;
+        let secs = seconds % 60;
+        format!("{}m {}s", minutes, secs)
+    } else {
+        let hours = seconds / 3600;
+        let minutes = (seconds % 3600) / 60;
+        format!("{}h {}m", hours, minutes)
     }
 }
 
@@ -55,22 +56,41 @@ pub fn create_stream_table(streams: &[StreamInfo]) -> String {
     // Add header
     table.add_row(Row::new(vec![
         TableCell::new_with_alignment("ID", 1, Alignment::Left),
+        TableCell::new_with_alignment("Name", 1, Alignment::Left),
         TableCell::new_with_alignment("Publisher", 1, Alignment::Left),
-        TableCell::new_with_alignment("Subscribers", 1, Alignment::Center),
-        TableCell::new_with_alignment("Bandwidth", 1, Alignment::Right),
+        TableCell::new_with_alignment("Subscribers", 1, Alignment::Right),
+        TableCell::new_with_alignment("Bitrate", 1, Alignment::Right),
         TableCell::new_with_alignment("Age", 1, Alignment::Right),
+        TableCell::new_with_alignment("Relays", 1, Alignment::Right),
+        TableCell::new_with_alignment("Depth", 1, Alignment::Right),
     ]));
 
     // Add stream rows
     for stream in streams {
-        let bandwidth = format_bytes(stream.bandwidth_bps);
-        let age = format_duration(stream.age_seconds);
+        let short_id = if stream.id.len() > 10 {
+            format!("{}...", &stream.id[0..10])
+        } else {
+            stream.id.clone()
+        };
+        
+        let short_publisher = if stream.publisher.len() > 10 {
+            format!("{}...", &stream.publisher[0..10])
+        } else {
+            stream.publisher.clone()
+        };
+        
+        let bitrate_str = format_bytes(stream.bitrate);
+        let age_str = format_duration(stream.age);
+        
         table.add_row(Row::new(vec![
-            TableCell::new_with_alignment(stream.id.to_string(), 1, Alignment::Left),
-            TableCell::new_with_alignment(stream.publisher.to_string(), 1, Alignment::Left),
-            TableCell::new_with_alignment(stream.subscribers.to_string(), 1, Alignment::Center),
-            TableCell::new_with_alignment(bandwidth, 1, Alignment::Right),
-            TableCell::new_with_alignment(age, 1, Alignment::Right),
+            TableCell::new_with_alignment(short_id, 1, Alignment::Left),
+            TableCell::new_with_alignment(stream.name.clone(), 1, Alignment::Left),
+            TableCell::new_with_alignment(short_publisher, 1, Alignment::Left),
+            TableCell::new_with_alignment(stream.subscribers.to_string(), 1, Alignment::Right),
+            TableCell::new_with_alignment(bitrate_str + "/s", 1, Alignment::Right),
+            TableCell::new_with_alignment(age_str, 1, Alignment::Right),
+            TableCell::new_with_alignment(stream.relays.to_string(), 1, Alignment::Right),
+            TableCell::new_with_alignment(stream.max_depth.to_string(), 1, Alignment::Right),
         ]));
     }
 
@@ -78,55 +98,80 @@ pub fn create_stream_table(streams: &[StreamInfo]) -> String {
 }
 
 /// Create a styled table for peers
-pub fn create_peer_table(peers: &[PeerDisplayInfo]) -> String {
+pub fn create_peer_table(peers: &[PeerDisplayInfo], show_location: bool) -> String {
     let mut table = Table::new();
     table.style = TableStyle::extended();
 
     // Add header
-    table.add_row(Row::new(vec![
+    let mut header = vec![
         TableCell::new_with_alignment("ID", 1, Alignment::Left),
         TableCell::new_with_alignment("Role", 1, Alignment::Left),
-        TableCell::new_with_alignment("Address", 1, Alignment::Left),
-        TableCell::new_with_alignment("Region", 1, Alignment::Center),
+        TableCell::new_with_alignment("Status", 1, Alignment::Left),
         TableCell::new_with_alignment("Latency", 1, Alignment::Right),
-        TableCell::new_with_alignment("Bandwidth", 1, Alignment::Right),
-        TableCell::new_with_alignment("Connections", 1, Alignment::Right),
-    ]));
+        TableCell::new_with_alignment("Streams", 1, Alignment::Right),
+    ];
+    
+    if show_location {
+        header.push(TableCell::new_with_alignment("Location", 1, Alignment::Left));
+    }
+    
+    header.push(TableCell::new_with_alignment("Bandwidth", 1, Alignment::Right));
+    header.push(TableCell::new_with_alignment("Score", 1, Alignment::Right));
+    
+    table.add_row(Row::new(header));
 
     // Add peer rows
     for peer in peers {
-        let role_str = format!("{:?}", peer.role);
-        let role_colored = match peer.role {
-            PeerRole::Publisher => role_str.green(),
-            PeerRole::Relay => role_str.blue(),
-            PeerRole::HybridRelay => role_str.yellow(),
-            PeerRole::Consumer => role_str.cyan(),
-            _ => role_str.white(),
+        let short_id = if peer.id.len() > 10 {
+            format!("{}...", &peer.id[0..10])
+        } else {
+            peer.id.clone()
         };
-
-        let address = peer.addresses.first().cloned().unwrap_or_default();
-        let latency = peer
-            .latency_ms
-            .map(|ms| format!("{}ms", ms))
-            .unwrap_or_else(|| "N/A".to_string());
-        let bandwidth = peer
-            .bandwidth
-            .map(format_bytes)
-            .unwrap_or_else(|| "N/A".to_string());
-
-        table.add_row(Row::new(vec![
-            TableCell::new_with_alignment(
-                peer.id.to_string().chars().take(10).collect::<String>() + "...",
-                1,
-                Alignment::Left,
-            ),
-            TableCell::new_with_alignment(role_colored.to_string(), 1, Alignment::Left),
-            TableCell::new_with_alignment(address, 1, Alignment::Left),
-            TableCell::new_with_alignment(peer.region.clone().unwrap_or_default(), 1, Alignment::Center),
-            TableCell::new_with_alignment(latency, 1, Alignment::Right),
-            TableCell::new_with_alignment(bandwidth, 1, Alignment::Right),
-            TableCell::new_with_alignment(peer.connections.to_string(), 1, Alignment::Right),
-        ]));
+        
+        let role_str = match peer.role {
+            PeerRole::Publisher => "Publisher".green(),
+            PeerRole::Consumer => "Consumer".blue(),
+            PeerRole::Relay => "Relay".yellow(),
+            PeerRole::HybridRelay => "Hybrid".magenta(),
+            PeerRole::Gateway => "Gateway".cyan(),
+            _ => "Unknown".normal(),
+        };
+        
+        let status_str = match peer.status.as_str() {
+            "Connected" => "Connected".green(),
+            "Disconnected" => "Disconnected".red(),
+            "Connecting" => "Connecting".yellow(),
+            _ => peer.status.normal(),
+        };
+        
+        let latency_str = peer.latency_ms.map_or("N/A".to_string(), |ms| {
+            format!("{} ms", ms)
+        });
+        
+        let streams_str = peer.streams.len().to_string();
+        
+        let mut row = vec![
+            TableCell::new_with_alignment(short_id, 1, Alignment::Left),
+            TableCell::new_with_alignment(role_str, 1, Alignment::Left),
+            TableCell::new_with_alignment(status_str, 1, Alignment::Left),
+            TableCell::new_with_alignment(latency_str, 1, Alignment::Right),
+            TableCell::new_with_alignment(streams_str, 1, Alignment::Right),
+        ];
+        
+        if show_location {
+            let location_str = peer.location.as_ref().map_or("Unknown".to_string(), |loc| {
+                format!("{}, {}", loc.country_code, loc.region)
+            });
+            row.push(TableCell::new_with_alignment(location_str, 1, Alignment::Left));
+        }
+        
+        let bandwidth_str = format_bytes(peer.bandwidth_bps);
+        let score_str = format!("{:.2}", peer.relay_score);
+        
+        row.push(TableCell::new_with_alignment(bandwidth_str + "/s", 1, Alignment::Right));
+        row.push(TableCell::new_with_alignment(score_str, 1, Alignment::Right));
+        
+        table.add_row(Row::new(row));
     }
 
     table.render()
@@ -136,46 +181,67 @@ pub fn create_peer_table(peers: &[PeerDisplayInfo]) -> String {
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
     /// Stream ID
-    pub id: StreamId,
+    pub id: String,
+    /// Stream name
+    pub name: String,
     /// Publisher ID
-    pub publisher: PeerId,
+    pub publisher: String,
     /// Number of subscribers
     pub subscribers: usize,
-    /// Bandwidth usage
-    pub bandwidth_bps: u64,
-    /// Stream age in seconds
-    pub age_seconds: u64,
+    /// Current bitrate
+    pub bitrate: u64,
+    /// Stream age
+    pub age: Duration,
+    /// Number of relays
+    pub relays: usize,
+    /// Maximum depth
+    pub max_depth: u32,
 }
 
 /// Peer information for display
 #[derive(Debug, Clone)]
 pub struct PeerDisplayInfo {
     /// Peer ID
-    pub id: PeerId,
-    /// Role in the network
-    pub role: PeerRole,
-    /// Addresses (for display, usually just the first one is shown)
+    pub id: String,
+    /// Addresses
     pub addresses: Vec<String>,
-    /// Region
-    pub region: Option<String>,
-    /// Latency in milliseconds
-    pub latency_ms: Option<u64>,
-    /// Bandwidth capability
-    pub bandwidth: Option<u64>,
-    /// Number of connections
-    pub connections: usize,
+    /// Peer role
+    pub role: PeerRole,
+    /// Connection status
+    pub status: String,
+    /// Latency in ms
+    pub latency_ms: Option<u32>,
+    /// Last seen
+    pub last_seen: Option<Instant>,
+    /// Geographic location
+    pub location: Option<GeoLocation>,
+    /// Streams this peer is involved with
+    pub streams: HashSet<String>,
+    /// Relay score
+    pub relay_score: f32,
+    /// Relay hop count
+    pub relay_hops: u32,
+    /// Bandwidth metrics (bytes/sec)
+    pub bandwidth_bps: u64,
 }
 
 impl From<PeerInfo> for PeerDisplayInfo {
     fn from(info: PeerInfo) -> Self {
         Self {
-            id: info.id,
+            id: info.id.short_id(),
             role: info.role,
             addresses: info.addresses,
             region: info.region,
-            latency_ms: info.latency_ms,
+            latency_ms: info.latency_ms.map(|ms| ms as u32),
             bandwidth: info.bandwidth_capacity,
             connections: 0, // Would be filled in by the caller
+            status: "Connected".to_string(),
+            last_seen: None,
+            location: info.geo_location,
+            streams: HashSet::new(),
+            relay_score: 0.0,
+            relay_hops: 0,
+            bandwidth_bps: 0,
         }
     }
 }
@@ -324,4 +390,279 @@ pub fn dot_to_ascii(dot: &str) -> String {
     }
     
     result
+}
+
+/// Tree node for visualization
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    /// Node ID
+    pub id: String,
+    /// Node role
+    pub role: PeerRole,
+    /// Geographic location
+    pub location: Option<GeoLocation>,
+    /// Latency in ms
+    pub latency_ms: Option<u32>,
+    /// Children nodes
+    pub children: Vec<TreeNode>,
+    /// Depth in the tree
+    pub depth: u32,
+}
+
+/// Visualize a tree in text format
+pub fn visualize_tree(root: &TreeNode, writer: &mut dyn Write) -> std::io::Result<()> {
+    visualize_tree_node(root, writer, 0, &mut vec![false])
+}
+
+/// Visualize a tree node recursively
+fn visualize_tree_node(
+    node: &TreeNode,
+    writer: &mut dyn Write,
+    depth: usize,
+    is_last: &mut Vec<bool>,
+) -> std::io::Result<()> {
+    // Print indentation
+    for i in 0..depth {
+        if i == depth - 1 {
+            if is_last[i] {
+                write!(writer, "└── ")?;
+            } else {
+                write!(writer, "├── ")?;
+            }
+        } else {
+            if is_last[i] {
+                write!(writer, "    ")?;
+            } else {
+                write!(writer, "│   ")?;
+            }
+        }
+    }
+    
+    // Print node
+    let role_str = match node.role {
+        PeerRole::Publisher => "Publisher".green(),
+        PeerRole::Consumer => "Consumer".blue(),
+        PeerRole::Relay => "Relay".yellow(),
+        PeerRole::HybridRelay => "Hybrid".magenta(),
+        PeerRole::Gateway => "Gateway".cyan(),
+        _ => "Unknown".normal(),
+    };
+    
+    let location_str = node.location.as_ref().map_or("".to_string(), |loc| {
+        format!(" ({}, {})", loc.country_code, loc.region)
+    });
+    
+    let latency_str = node.latency_ms.map_or("".to_string(), |ms| {
+        format!(" [{}ms]", ms)
+    });
+    
+    writeln!(
+        writer,
+        "{} {} - {}{}{}",
+        role_str,
+        node.depth,
+        node.id,
+        location_str,
+        latency_str
+    )?;
+    
+    // Process children
+    for (i, child) in node.children.iter().enumerate() {
+        let is_child_last = i == node.children.len() - 1;
+        
+        if depth + 1 >= is_last.len() {
+            is_last.push(is_child_last);
+        } else {
+            is_last[depth + 1] = is_child_last;
+        }
+        
+        visualize_tree_node(child, writer, depth + 1, is_last)?;
+    }
+    
+    Ok(())
+}
+
+/// Generate GraphViz DOT format for network visualization
+pub fn generate_dot_graph(
+    peers: &HashMap<PeerId, PeerInfo>,
+    stream_id: Option<&StreamId>,
+) -> String {
+    let mut dot = String::new();
+    dot.push_str("digraph network {\n");
+    dot.push_str("  node [shape=box, style=filled];\n");
+    
+    // Define node colors by role
+    dot.push_str("  node [colorscheme=set19];\n");
+    
+    // Add nodes
+    for (id, info) in peers {
+        let label = format!("{}\\n{}", id.short_id(), info.role.to_string());
+        
+        let color = match info.role {
+            PeerRole::Publisher => "1", // red
+            PeerRole::Consumer => "2",  // blue
+            PeerRole::Relay => "3",     // green
+            PeerRole::HybridRelay => "4", // purple
+            PeerRole::Gateway => "5",    // orange
+            _ => "9", // brown
+        };
+        
+        let location = info.geo_location.as_ref().map_or("Unknown".to_string(), |loc| {
+            format!("{}, {}", loc.country_code, loc.region)
+        });
+        
+        dot.push_str(&format!(
+            "  \"{}\" [label=\"{}\n{}\", fillcolor={}];\n",
+            id.short_id(),
+            label,
+            location,
+            color
+        ));
+    }
+    
+    // Add edges
+    for (id, info) in peers {
+        // Add connections
+        for conn in &info.connections {
+            // Skip if this is a stream-specific view and the connection isn't related
+            if let Some(stream) = stream_id {
+                if !conn.streams.contains(stream) {
+                    continue;
+                }
+            }
+            
+            // Add edge with latency
+            let latency = conn.latency_ms.unwrap_or(0);
+            dot.push_str(&format!(
+                "  \"{}\" -> \"{}\" [label=\"{}ms\", penwidth={}];\n",
+                id.short_id(),
+                conn.peer_id.short_id(),
+                latency,
+                2.0
+            ));
+        }
+    }
+    
+    dot.push_str("}\n");
+    dot
+}
+
+/// Builds a tree structure for a stream from peer information
+pub fn build_stream_tree(
+    stream_id: &StreamId,
+    peers: &HashMap<PeerId, PeerInfo>,
+    publisher_id: &PeerId,
+) -> Option<TreeNode> {
+    // Find the publisher
+    let publisher = match peers.get(publisher_id) {
+        Some(peer) => peer,
+        None => return None,
+    };
+    
+    // Create set of visited peers to avoid cycles
+    let mut visited = HashSet::new();
+    visited.insert(publisher_id.clone());
+    
+    // Create root node
+    let mut root = TreeNode {
+        id: publisher_id.short_id(),
+        role: publisher.role,
+        location: publisher.geo_location.clone(),
+        latency_ms: None,
+        children: Vec::new(),
+        depth: 0,
+    };
+    
+    // Build the tree recursively
+    build_tree_node(
+        publisher_id,
+        &mut root,
+        peers,
+        stream_id,
+        &mut visited,
+        0,
+    );
+    
+    Some(root)
+}
+
+/// Recursively builds a tree node and its children
+fn build_tree_node(
+    peer_id: &PeerId,
+    node: &mut TreeNode,
+    peers: &HashMap<PeerId, PeerInfo>,
+    stream_id: &StreamId,
+    visited: &mut HashSet<PeerId>,
+    depth: u32,
+) {
+    // Find direct consumers/relays of this peer for this stream
+    let peer = match peers.get(peer_id) {
+        Some(peer) => peer,
+        None => return,
+    };
+    
+    for conn in &peer.connections {
+        // Check if this connection is for the given stream
+        if !conn.streams.contains(stream_id) {
+            continue;
+        }
+        
+        // Check if we've already visited this peer
+        if visited.contains(&conn.peer_id) {
+            continue;
+        }
+        
+        // Mark as visited
+        visited.insert(conn.peer_id.clone());
+        
+        // Create child node
+        let child_peer = match peers.get(&conn.peer_id) {
+            Some(peer) => peer,
+            None => continue,
+        };
+        
+        let mut child = TreeNode {
+            id: conn.peer_id.short_id(),
+            role: child_peer.role,
+            location: child_peer.geo_location.clone(),
+            latency_ms: conn.latency_ms,
+            children: Vec::new(),
+            depth: depth + 1,
+        };
+        
+        // Recursively build children
+        build_tree_node(
+            &conn.peer_id,
+            &mut child,
+            peers,
+            stream_id,
+            visited,
+            depth + 1,
+        );
+        
+        node.children.push(child);
+    }
+    
+    // Sort children by role (publishers first, then relays, then consumers)
+    node.children.sort_by(|a, b| {
+        let role_a = match a.role {
+            PeerRole::Publisher => 0,
+            PeerRole::HybridRelay => 1,
+            PeerRole::Relay => 2,
+            PeerRole::Gateway => 3,
+            PeerRole::Consumer => 4,
+            _ => 5,
+        };
+        
+        let role_b = match b.role {
+            PeerRole::Publisher => 0,
+            PeerRole::HybridRelay => 1,
+            PeerRole::Relay => 2,
+            PeerRole::Gateway => 3,
+            PeerRole::Consumer => 4,
+            _ => 5,
+        };
+        
+        role_a.cmp(&role_b)
+    });
 } 

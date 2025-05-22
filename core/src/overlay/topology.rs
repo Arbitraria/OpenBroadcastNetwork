@@ -14,10 +14,10 @@ use std::cmp::Ordering;
 use std::str::FromStr;
 use std::net::IpAddr;
 use rand::Rng;
-use geo_ip::{GeoIP, GeoIPError, Coordinates, ASN};
+use geo_ip::GeoIP;
 
 /// Geographic region codes (simplified)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Region {
     NorthAmerica,
     SouthAmerica,
@@ -184,35 +184,47 @@ impl GeoLocation {
     }
     
     /// Look up location information for an IP address
-    fn lookup_ip_location(ip: &IpAddr) -> Option<Self> {
+    fn lookup_ip_location(_ip: &IpAddr) -> Option<Self> {
         // In a real implementation, this would use a GeoIP database
-        // For now, we'll return random locations for testing
+        // For testing, we'll return a random location
         
-        // Simulate GeoIP lookup with randomized values
-        let mut rng = rand::thread_rng();
-        
-        // Generate random coordinates and country
-        let regions = [
+        // List of major regions and a representative country
+        const REGIONS: &[(Region, &str)] = &[
             (Region::NorthAmerica, "US"),
             (Region::Europe, "DE"),
             (Region::Asia, "JP"),
             (Region::SouthAmerica, "BR"),
-            (Region::Africa, "ZA"),
             (Region::Oceania, "AU"),
+            (Region::Africa, "ZA"),
         ];
         
-        let (region, country) = regions[rng.gen_range(0..regions.len())];
+        // Use the IP address to generate a deterministic but random-seeming location
+        let ip_bytes = match _ip {
+            IpAddr::V4(ip) => ip.octets().to_vec(),
+            IpAddr::V6(ip) => ip.octets().to_vec(),
+        };
         
-        let latitude = rng.gen_range(-90.0..90.0);
-        let longitude = rng.gen_range(-180.0..180.0);
+        let idx = ip_bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) as usize % REGIONS.len();
+        let (region, country) = &REGIONS[idx];
+        
+        // Generate some random coordinates within the region
+        let (lat, lon) = match *region {
+            Region::NorthAmerica => (rand::random::<f64>() * 40.0 + 25.0, rand::random::<f64>() * 60.0 - 130.0),
+            Region::Europe => (rand::random::<f64>() * 20.0 + 35.0, rand::random::<f64>() * 30.0 - 10.0),
+            Region::Asia => (rand::random::<f64>() * 30.0 + 10.0, rand::random::<f64>() * 80.0 + 60.0),
+            Region::SouthAmerica => (rand::random::<f64>() * 30.0 - 20.0, rand::random::<f64>() * 40.0 - 80.0),
+            Region::Oceania => (rand::random::<f64>() * 30.0 - 30.0, rand::random::<f64>() * 40.0 + 110.0),
+            Region::Africa => (rand::random::<f64>() * 40.0 - 20.0, rand::random::<f64>() * 50.0 - 10.0),
+            _ => (rand::random::<f64>() * 180.0 - 90.0, rand::random::<f64>() * 360.0 - 180.0),
+        };
         
         Some(Self {
-            latitude,
-            longitude,
+            latitude: lat,
+            longitude: lon,
             country: country.to_string(),
-            region,
-            city: Some("City".to_string()),
-            asn: Some("AS12345".to_string()),
+            region: *region,
+            city: None, // No city information available
+            asn: None,  // No ASN information available
         })
     }
 }
@@ -392,8 +404,8 @@ impl RelayNode {
     }
     
     /// Set the parent of this node
-    pub fn set_parent(&mut self, parent_id: PeerId) {
-        self.parent = Some(parent_id);
+    pub fn set_parent(&mut self, parent_id: &PeerId) {
+        self.parent = Some(parent_id.clone());
         self.last_updated = Instant::now();
     }
     
@@ -462,7 +474,7 @@ impl RelayTree {
         
         // Find the best parent for this node
         let best_parent = self.find_best_parent(&peer_id, config)?;
-        node.set_parent(best_parent.clone());
+        node.set_parent(&best_parent);
         
         // Calculate depth
         if let Some(parent_node) = self.nodes.get(&best_parent) {
@@ -501,15 +513,20 @@ impl RelayTree {
         // If this node has children, reassign them
         if !node.children.is_empty() {
             let parent_id = node.parent.clone().unwrap_or_else(|| self.root.clone());
+            let parent_depth = self.nodes.get(&parent_id).map(|n| n.depth + 1).unwrap_or(1);
             
-            for child_id in node.children {
-                if let Some(child_node) = self.nodes.get_mut(&child_id) {
-                    child_node.set_parent(parent_id.clone());
-                    child_node.update_depth(self.nodes[&parent_id].depth + 1);
+            // First, update all children to point to the new parent
+            for child_id in &node.children {
+                if let Some(child_node) = self.nodes.get_mut(child_id) {
+                    child_node.set_parent(&parent_id);
+                    child_node.update_depth(parent_depth);
                 }
-                
-                if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
-                    parent_node.add_child(child_id, None);
+            }
+            
+            // Then update the parent's children list
+            if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
+                for child_id in &node.children {
+                    parent_node.add_child(child_id.clone(), None);
                 }
             }
         }
@@ -525,7 +542,7 @@ impl RelayTree {
     }
     
     /// Find the best parent for a new node
-    fn find_best_parent(&self, peer_id: &PeerId, config: &TopologyConfig) -> Result<PeerId, OverlayError> {
+    fn find_best_parent(&self, _peer_id: &PeerId, config: &TopologyConfig) -> Result<PeerId, OverlayError> {
         // Simple strategy: BFS from root to find first node that can accept children
         let mut queue = VecDeque::new();
         queue.push_back(self.root.clone());
@@ -570,7 +587,7 @@ impl RelayTree {
     }
     
     /// Rebalance using standard (non-geo) approach
-    fn rebalance_standard(&mut self, peers: &HashMap<PeerId, Peer>, config: &TopologyConfig) {
+    fn rebalance_standard(&mut self, _peers: &HashMap<PeerId, Peer>, config: &TopologyConfig) {
         // Standard rebalancing logic
         let mut orphaned_peers = Vec::new();
         
@@ -597,29 +614,41 @@ impl RelayTree {
             };
             
             if should_reconnect {
-                orphaned_peers.push(*peer_id);
+                orphaned_peers.push(peer_id.clone());
             }
         }
         
-        // Reconnect orphaned peers
+        // First, collect all the parent updates we need to make
+        let mut parent_updates = Vec::new();
+        
+        // First pass: collect parent updates to avoid borrowing issues
         for peer_id in orphaned_peers {
-            // Temporarily remove from tree
-            if let Some(node) = self.nodes.get(&peer_id) {
-                if let Some(parent_id) = &node.parent {
-                    if let Some(parent) = self.nodes.get_mut(parent_id) {
-                        parent.remove_child(&peer_id, None);
-                    }
+            // Find new parent without modifying the tree yet
+            if let Ok(new_parent_id) = self.find_best_parent_geo_aware(&peer_id, &self.nodes, config) {
+                parent_updates.push((peer_id, new_parent_id));
+            }
+        }
+        
+        // Second pass: apply all updates
+        for (peer_id, new_parent_id) in parent_updates {
+            // First, remove from old parent if any
+            let old_parent = self.nodes.get(&peer_id)
+                .and_then(|node| node.parent.clone());
+                
+            if let Some(old_parent_id) = old_parent {
+                if let Some(parent) = self.nodes.get_mut(&old_parent_id) {
+                    parent.remove_child(&peer_id, None);
                 }
             }
             
-            // Find a new parent
-            if let Ok(new_parent_id) = self.find_best_parent_by_score(&peer_id, &self.nodes, config) {
-                if let Some(peer) = self.nodes.get_mut(&peer_id) {
-                    peer.set_parent(new_parent_id);
-                }
-                if let Some(parent) = self.nodes.get_mut(&new_parent_id) {
-                    parent.add_child(peer_id, None);
-                }
+            // Then update the peer's parent
+            if let Some(peer) = self.nodes.get_mut(&peer_id) {
+                peer.set_parent(&new_parent_id);
+            }
+            
+            // Finally, add to new parent
+            if let Some(parent) = self.nodes.get_mut(&new_parent_id) {
+                parent.add_child(peer_id, None);
             }
         }
     }
@@ -630,11 +659,20 @@ impl RelayTree {
         self.update_node_locations(peers);
         
         // Calculate optimal region distribution
-        let region_distribution = self.calculate_optimal_region_distribution();
+        let _region_distribution = self.calculate_optimal_region_distribution();
         
-        // Find peers that should be reconnected
+        // First pass: collect peers that need reconnection
         let mut reconnect_candidates = Vec::new();
+        let mut peer_regions = HashMap::new();
         
+        // Collect all peer regions first
+        for (peer_id, node) in &self.nodes {
+            if let Some(loc) = &node.location {
+                peer_regions.insert(peer_id.clone(), loc.region.clone());
+            }
+        }
+        
+        // Determine which peers need reconnection
         for (peer_id, node) in &self.nodes {
             // Skip the publisher (root)
             if *peer_id == self.root {
@@ -644,8 +682,8 @@ impl RelayTree {
             // Check if current parent is good
             let should_reconnect = if let Some(parent_id) = &node.parent {
                 if let Some(parent) = self.nodes.get(parent_id) {
-                    let different_regions = match (&node.location, &parent.location) {
-                        (Some(node_loc), Some(parent_loc)) => !node_loc.is_same_region(parent_loc),
+                    let different_regions = match (peer_regions.get(peer_id), peer_regions.get(parent_id)) {
+                        (Some(node_region), Some(parent_region)) => node_region != parent_region,
                         _ => false,
                     };
                     
@@ -666,46 +704,61 @@ impl RelayTree {
             };
             
             if should_reconnect {
-                reconnect_candidates.push(*peer_id);
+                reconnect_candidates.push(peer_id.clone());
             }
         }
         
         // Sort candidates by depth (deeper nodes first)
-        reconnect_candidates.sort_by(|a, b| {
-            let depth_a = self.nodes.get(a).map(|n| n.depth).unwrap_or(0);
-            let depth_b = self.nodes.get(b).map(|n| n.depth).unwrap_or(0);
-            depth_b.cmp(&depth_a)
+        reconnect_candidates.sort_by_cached_key(|peer_id| {
+            std::cmp::Reverse(self.nodes.get(peer_id).map(|n| n.depth).unwrap_or(0))
         });
         
-        // Reconnect candidates
-        for peer_id in reconnect_candidates {
-            let peer_region = self.nodes.get(&peer_id)
-                .and_then(|n| n.location.as_ref())
-                .map(|l| l.region.clone());
+        // First, collect all the new parents and depths for peers that need reconnection
+        let updates: Vec<_> = reconnect_candidates.into_iter()
+            .filter_map(|peer_id| {
+                self.find_best_parent_geo_aware(&peer_id, &self.nodes, config)
+                    .ok()
+                    .map(|new_parent_id| {
+                        let new_depth = self.nodes.get(&new_parent_id)
+                            .map(|p| p.depth + 1)
+                            .unwrap_or(1);
+                        (peer_id, new_parent_id, new_depth)
+                    })
+            })
+            .collect();
+        
+        // Then apply all the updates in two passes to avoid borrowing issues
+        
+        // First pass: collect parent updates to avoid borrowing issues
+        let parent_updates: Vec<_> = updates.iter()
+            .filter_map(|(peer_id, _, _)| {
+                self.nodes.get(peer_id)
+                    .and_then(|node| node.parent.as_ref())
+                    .map(|parent_id| (peer_id.clone(), parent_id.clone()))
+            })
+            .collect();
+        
+        // Apply parent updates
+        for (peer_id, parent_id) in parent_updates {
+            let peer_region = peer_regions.get(&peer_id).cloned();
+            if let Some(parent) = self.nodes.get_mut(&parent_id) {
+                parent.remove_child(&peer_id, peer_region.as_ref());
+            }
+        }
+        
+        // Second pass: update peer's parent and add to new parent's children
+        for (peer_id, new_parent_id, new_depth) in updates {
+            let peer_region = peer_regions.get(&peer_id).cloned();
             
-            // Remove from current parent
-            if let Some(node) = self.nodes.get(&peer_id) {
-                if let Some(parent_id) = &node.parent {
-                    if let Some(parent) = self.nodes.get_mut(parent_id) {
-                        parent.remove_child(&peer_id, peer_region.as_ref());
-                    }
-                }
+            // Update peer's parent and depth
+            if let Some(peer) = self.nodes.get_mut(&peer_id) {
+                peer.set_parent(&new_parent_id);
+                peer.update_depth(new_depth);
             }
             
-            // Find a new parent - prefer same region if possible
-            if let Ok(new_parent_id) = self.find_best_parent_geo_aware(&peer_id, &self.nodes, config) {
-                if let Some(peer) = self.nodes.get_mut(&peer_id) {
-                    peer.set_parent(new_parent_id);
-                    
-                    // Update depth based on new parent
-                    if let Some(parent) = self.nodes.get(&new_parent_id) {
-                        peer.update_depth(parent.depth + 1);
-                    }
-                }
-                
-                if let Some(parent) = self.nodes.get_mut(&new_parent_id) {
-                    parent.add_child(peer_id, peer_region.as_ref());
-                }
+            // Update new parent's children list
+            if let Some(parent) = self.nodes.get_mut(&new_parent_id) {
+                parent.add_child(peer_id, peer_region.as_ref());
             }
         }
     }
@@ -765,7 +818,7 @@ impl RelayTree {
                 }
             }
             
-            candidates.push((*candidate_id, score));
+            candidates.push((candidate_id.clone(), score));
         }
         
         // Sort by score (highest first)
@@ -773,10 +826,10 @@ impl RelayTree {
         
         // Pick the best candidate
         if let Some((best_id, _)) = candidates.first() {
-            Ok(*best_id)
+            Ok(best_id.clone())
         } else {
             // Fallback to the publisher if no suitable candidate found
-            Ok(self.root)
+            Ok(self.root.clone())
         }
     }
     
@@ -788,13 +841,13 @@ impl RelayTree {
         }
         
         // Check if peer is already an ancestor of the potential parent
-        let mut current = Some(*potential_parent_id);
+        let mut current = Some(potential_parent_id.clone());
         while let Some(id) = current {
             if &id == peer_id {
                 return true;
             }
             
-            current = self.nodes.get(&id).and_then(|n| n.parent);
+            current = self.nodes.get(&id).and_then(|n| n.parent.clone());
         }
         
         false
@@ -815,13 +868,11 @@ impl RelayTree {
     /// Calculate optimal distribution of nodes by region
     fn calculate_optimal_region_distribution(&self) -> HashMap<Region, usize> {
         let mut region_counts = HashMap::new();
-        let mut total_with_region = 0;
         
         // Count nodes by region
         for node in self.nodes.values() {
             if let Some(location) = &node.location {
                 *region_counts.entry(location.region.clone()).or_insert(0) += 1;
-                total_with_region += 1;
             }
         }
         
@@ -933,9 +984,9 @@ pub struct TopologyManager {
     /// Configuration
     config: TopologyConfig,
     /// Streams and their relay trees
-    trees: RwLock<HashMap<StreamId, RelayTree>>,
+    trees: Arc<RwLock<HashMap<StreamId, RelayTree>>>,
     /// Known peers
-    peers: RwLock<HashMap<PeerId, Peer>>,
+    peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
     /// Rebalance task handle
     rebalance_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -945,8 +996,8 @@ impl TopologyManager {
     pub fn new(config: TopologyConfig) -> Self {
         Self {
             config,
-            trees: RwLock::new(HashMap::new()),
-            peers: RwLock::new(HashMap::new()),
+            trees: Arc::new(RwLock::new(HashMap::new())),
+            peers: Arc::new(RwLock::new(HashMap::new())),
             rebalance_task: RwLock::new(None),
         }
     }
@@ -954,31 +1005,14 @@ impl TopologyManager {
     /// Start the topology manager
     pub async fn start(&self) -> Result<(), OverlayError> {
         let config = self.config.clone();
-        let trees_ref = self.trees.clone();
-        let peers_ref = self.peers.clone();
+        let trees = Arc::clone(&self.trees);
+        let peers = Arc::clone(&self.peers);
         
-        // Start rebalance task
-        let rebalance_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(config.rebalance_interval);
-            
-            loop {
-                interval.tick().await;
-                
-                // Rebalance all trees
-                let mut trees = trees_ref.write().await;
-                let peers = peers_ref.read().await;
-                
-                for (_, tree) in trees.iter_mut() {
-                    tree.rebalance(&peers, &config);
-                }
-                
-                debug!("Rebalanced {} relay trees", trees.len());
-            }
-        });
+        // Start rebalance task using the periodic_rebalance function
+        let rebalance_task = tokio::spawn(Self::periodic_rebalance(trees, peers, config));
         
-        // Store task handle
-        let mut handle = self.rebalance_task.write().await;
-        *handle = Some(rebalance_task);
+        // Store the task handle
+        *self.rebalance_task.write().await = Some(rebalance_task);
         
         Ok(())
     }
@@ -1154,11 +1188,13 @@ impl TopologyManager {
         loop {
             interval.tick().await;
             
+            // Get a list of stream IDs to rebalance
             let stream_ids = {
                 let trees = trees.read().await;
                 trees.keys().cloned().collect::<Vec<_>>()
             };
             
+            // Rebalance each stream
             for stream_id in stream_ids {
                 let mut trees = trees.write().await;
                 let peers = peers.read().await;

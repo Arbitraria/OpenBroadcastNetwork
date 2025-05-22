@@ -1,0 +1,62 @@
+Claude System Prompt: Decentralized Live Streaming AI Dev Project
+
+You are assisting with the solo development of a decentralized live streaming CDN system, written in Rust, with a focus on AI-assisted development via Cursor and Claude.
+
+This prompt contains all the guiding directives and architectural principles to apply consistently when processing tasks or modifying documents.
+
+Project Overview:
+
+- The system is a decentralized, peer-based CDN for live streaming, with a focus on low latency and large-scale support.  
+- All viewers are nodes; not all nodes are viewers.  
+- Core protocols are based on libp2p and optionally WebRTC for NAT traversal.  
+- Priority is ephemeral live content, but VOD should be possible with the same infrastructure later.  
+- The network will be single and global, dynamically optimized using peer capability and geolocation.
+
+Development Environment:
+
+- Language: Rust  
+- Approach: Type-driven, test-driven, and AI-first  
+- Workflow: Solo dev, assisted by Claude and Cursor  
+- Dependencies:  
+  - Use libp2p v0.55.0 with valid features only: async-std, tcp, dns, mdns, gossipsub  
+  - Avoid quic due to a subtle crate conflict between rustls and sha2  
+  - Remove unsupported features like async-io  
+  - Maintain a DEPENDENCIES.md file tracking versions and flags  
+
+Moderation & Trust:
+
+- Initial moderation is based on blacklists/whitelists that are shareable and user-flagged via the UI.  
+- Long-term, trust clustering is expected.  
+- Light anonymization is applied (1-hop obfuscation).  
+- Logging is included for moderation and diagnostics.
+
+Incentives & Tokens:
+
+- System will include its own reward token layer.  
+- Participants can earn tokens for relaying, content hosting, or moderation.  
+- Leeching is allowed, but incentives discourage it.  
+- Support for crypto tipping using mainstream cryptocurrencies.
+
+Network Coordination:
+
+- Peers should work behind common NAT/firewall configurations.  
+- Bootstrapping is acceptable short-term but must not be required long-term.  
+- Coordination services (e.g., trackers, hinting) are allowed but optional.  
+- The network should reconfigure dynamically to maintain optimal paths.
+
+AI Prompt Best Practices:
+
+- Be explicit about architecture (traits, modules, file names).  
+- Ask for unit and integration tests.  
+- Use a sketch-then-complete approach for large tasks.  
+- Keep tasks modular and focused.  
+- Limit code generation to 300–500 lines per request.
+
+Current Development Priorities:
+
+- Use a mono-repo structured with /core, /node, /ui, /proto, and /scripts.  
+- Implement native clients eventually, but browser support is sufficient for now.  
+- Frontend should start minimal, but aim for a YouTube-like interface in later phases.  
+- Use TCP transport only until libp2p QUIC dependency issues are resolved.
+
+Append your task or instruction below this line:

@@ -133,14 +133,21 @@ pub trait AsyncPubSub: Send + Sync {
         -> Pin<Box<dyn Future<Output = Result<PubSubEventStream, PubSubError>> + Send + 'a>>;
 }
 
+use tokio::sync::mpsc;
+
 /// Event stream for receiving PubSub events
 pub struct PubSubEventStream {
-    // Implementation details will be added later
+    receiver: mpsc::Receiver<PubSubEvent>,
 }
 
 impl PubSubEventStream {
+    /// Create a new PubSubEventStream
+    pub fn new(receiver: mpsc::Receiver<PubSubEvent>) -> Self {
+        Self { receiver }
+    }
+
     /// Get the next event
     pub async fn next(&mut self) -> Option<PubSubEvent> {
-        None // Placeholder implementation
+        self.receiver.recv().await
     }
 } 

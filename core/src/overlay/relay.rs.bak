@@ -255,9 +255,9 @@ pub struct RelayNode {
     /// Message sender
     message_tx: Mutex<Option<mpsc::Sender<RelayMessage>>>,
     /// Message receiver
-    message_rx: Mutex<Option<mpsc::Receiver<RelayMessage>>>,
+    message_rx: Mutex<Option<mpsc::Receiver<RelayMessage>>>>,
     /// Handler for relayed chunks
-    chunk_handler: Arc<RwLock<Option<Box<dyn Fn(PeerId, StreamChunk) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> + Send + Sync>>>>,
+    chunk_handler: Option<Box<dyn Fn(PeerId, StreamChunk) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> + Send + Sync>>,
     /// Statistics
     stats: Arc<RwLock<RelayStats>>,
     /// Task handles
@@ -292,7 +292,7 @@ impl RelayNode {
             message_rx: Mutex::new(None),
             running: Arc::new(AtomicBool::new(false)),
             stats_tx: None,
-            chunk_handler: Arc::new(RwLock::new(None)),
+            chunk_handler: None,
             stats: Arc::new(RwLock::new(RelayStats::new())),
             task_handles: Mutex::new(TaskHandles {
                 worker_task: None,
@@ -303,12 +303,12 @@ impl RelayNode {
     }
     
     /// Set the chunk handler function
-    pub async fn set_chunk_handler<F, Fut>(&self, handler: F) -> Result<(), OverlayError>
+    pub fn set_chunk_handler<F, Fut>(&self, handler: F) -> Result<(), OverlayError>
     where
         F: Fn(PeerId, StreamChunk) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<(), OverlayError>> + Send + 'static,
     {
-        let mut chunk_handler = self.chunk_handler.write().await;
+        let mut chunk_handler = self.chunk_handler.write().map_err(|e| OverlayError::RelayError(e.to_string()))?;
         *chunk_handler = Some(Box::new(move |peer_id, chunk| {
             let fut = handler(peer_id, chunk);
             Box::pin(fut) as Pin<Box<dyn Future<Output = _> + Send>>
@@ -350,8 +350,8 @@ impl RelayNode {
         let streams = Arc::clone(&self.streams);
         let topology = Arc::clone(&self.topology);
         let stats = Arc::clone(&self.stats);
-        let chunk_handler = self.chunk_handler.clone();
-        let local_peer_id = self.local_peer_id.clone();
+        let chunk_handler = self.chunk_handler.read().await.clone();
+        let local_peer_id = self.local_peer_id;
         
         // Create a new task that will process messages and chunks
         let handle = tokio::spawn(async move {
@@ -383,17 +383,10 @@ impl RelayNode {
                     // Handle incoming messages
                     Some(message) = message_rx.recv() => {
                         let streams = Arc::clone(&streams);
-                        let _topology = Arc::clone(&topology);
+                        let topology = Arc::clone(&topology);
                         let chunk_handler = chunk_handler.clone();
                         
                         if let Err(e) = match message {
-                            RelayMessage::Chunk(chunk) => {
-                                // Handle chunk directly
-                                if let Some(handler) = &*chunk_handler.read().await {
-                                    let _ = handler(local_peer_id.clone(), chunk).await;
-                                }
-                                Ok(())
-                            },
                             RelayMessage::AddStream(stream_id, publisher) => {
                                 Self::handle_add_stream(&streams, stream_id, publisher).await
                             },
@@ -415,10 +408,6 @@ impl RelayNode {
                                     &chunk_handler,
                                 ).await
                             },
-                            RelayMessage::Stop => {
-                                // Stop the worker
-                                break 'worker_loop;
-                            }
                         } {
                             error!("Error handling message: {}", e);
                         }
@@ -564,7 +553,7 @@ impl RelayNode {
         streams: &RwLock<HashMap<StreamId, StreamRelay>>,
         _topology: &Arc<TopologyManager>,
         chunk: &StreamChunk,
-        chunk_handler: &Arc<RwLock<Option<Box<dyn Fn(PeerId, StreamChunk) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> + Send + Sync>>>>,
+        chunk_handler: &Option<Arc<dyn Fn(PeerId, StreamChunk) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> + Send + Sync>>,
         _config: &RelayConfig,
         stats: &RwLock<RelayStats>,
         local_peer_id: &PeerId,
@@ -600,7 +589,7 @@ impl RelayNode {
         }
         
         // Forward the chunk to each subscriber
-        if let Some(handler) = &*chunk_handler.read().await {
+        if let Some(handler) = chunk_handler {
             for subscriber in subscribers {
                 let mut subscriber_chunk = chunk.clone();
                 subscriber_chunk.source = Some(local_peer_id.clone());
@@ -622,12 +611,8 @@ impl RelayNode {
         self.running.store(false, Ordering::SeqCst);
         
         // Send stop message to worker
-        if let Some(tx) = self.message_tx.lock().await.as_ref() {
-            if let Err(e) = tx.send(RelayMessage::Stop).await {
-                error!("Failed to send stop message to worker: {}", e);
-            }
-        } else {
-            error!("Message sender not initialized");
+        if let Err(e) = self.message_tx.send(RelayMessage::Stop).await {
+            error!("Failed to send stop message to worker: {}", e);
         }
         
         // Wait for all tasks to complete
@@ -752,7 +737,7 @@ impl RelayNode {
         stream_id: StreamId,
         peer_id: PeerId,
         sequence: u64,
-        chunk_handler: &Arc<RwLock<Option<Box<dyn Fn(PeerId, StreamChunk) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> + Send + Sync>>>>,
+        chunk_handler: &Option<Arc<dyn Fn(PeerId, StreamChunk) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> + Send + Sync>>,
     ) -> Result<(), OverlayError> {
         let chunks = {
             let streams_guard = streams.read().await;
@@ -766,7 +751,7 @@ impl RelayNode {
         };
         
         // Send chunks to the peer
-        if let Some(handler) = &*chunk_handler.read().await {
+        if let Some(handler) = chunk_handler {
             for chunk in chunks {
                 if let Err(e) = handler(peer_id.clone(), chunk).await {
                     error!("Failed to send requested chunk to {}: {}", peer_id, e);
@@ -801,6 +786,55 @@ impl RelayNode {
         }
     }
     
+    /// Remove a stream
+    pub async fn remove_stream(&self, stream_id: StreamId) -> Result<(), OverlayError> {
+        // Send message
+        if let Err(e) = self.message_tx.send(RelayMessage::RemoveStream(stream_id)).await {
+            return Err(OverlayError::RelayError(
+                format!("Failed to remove stream: {}", e)
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Subscribe a peer to a stream
+    pub async fn subscribe_peer(&self, stream_id: StreamId, peer_id: PeerId) -> Result<(), OverlayError> {
+        // Send message
+        if let Err(e) = self.message_tx.send(RelayMessage::AddSubscriber(stream_id, peer_id)).await {
+            return Err(OverlayError::RelayError(
+                format!("Failed to add subscriber: {}", e)
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Unsubscribe a peer from a stream
+    pub async fn unsubscribe_peer(&self, stream_id: StreamId, peer_id: PeerId) -> Result<(), OverlayError> {
+        // Send message
+        if let Err(e) = self.message_tx.send(RelayMessage::RemoveSubscriber(stream_id, peer_id)).await {
+            return Err(OverlayError::RelayError(
+                format!("Failed to remove subscriber: {}", e)
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Request chunks since a sequence number
+    pub async fn request_chunks(&self, stream_id: StreamId, peer_id: PeerId, sequence: u64) -> Result<(), OverlayError> {
+        // Send message
+        if let Err(e) = self.message_tx.send(RelayMessage::RequestChunks(stream_id, peer_id, sequence)).await {
+            return Err(OverlayError::RelayError(
+                format!("Failed to request chunks: {}", e)
+            ));
+        }
+        
+        Ok(())
+    }
+    
+    /// Get current relay stats
     pub async fn get_stats(&self) -> RelayStats {
         let stats = self.stats.read().await;
         stats.clone()

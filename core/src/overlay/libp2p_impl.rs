@@ -199,14 +199,10 @@ impl Libp2pOverlay {
         let local_key = identity::Keypair::generate_ed25519();
         let libp2p_peer_id = local_key.public().to_peer_id();
         
-        // Set up the transport with noise for encryption and yamux for multiplexing
-        let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
-            .into_authentic(&local_key)
-            .map_err(|e| OverlayError::Other(format!("Failed to create noise keys: {}", e)))?;
-            
-        let transport = TcpTransport::new(GenTcpConfig::default())
+        // Create a transport
+        let transport = libp2p::tcp::async_std::Transport::new(GenTcpConfig::default().nodelay(true))
             .upgrade(upgrade::Version::V1)
-            .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+            .authenticate(noise::NoiseAuthenticated::xx(&local_key).unwrap())
             .multiplex(yamux::YamuxConfig::default())
             .boxed();
             

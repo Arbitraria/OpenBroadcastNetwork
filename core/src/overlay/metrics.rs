@@ -130,9 +130,9 @@ impl Meter {
             let rate = self.count as f64 / elapsed as f64;
             
             // Update exponentially weighted moving averages
-            let alpha_1 = 1.0 - (-5.0 / 60.0).exp();
-            let alpha_5 = 1.0 - (-5.0 / 300.0).exp();
-            let alpha_15 = 1.0 - (-5.0 / 900.0).exp();
+            let alpha_1 = 1.0 - f64::exp(-5.0 / 60.0);
+            let alpha_5 = 1.0 - f64::exp(-5.0 / 300.0);
+            let alpha_15 = 1.0 - f64::exp(-5.0 / 900.0);
             
             self.one_min_rate = self.one_min_rate + alpha_1 * (rate - self.one_min_rate);
             self.five_min_rate = self.five_min_rate + alpha_5 * (rate - self.five_min_rate);

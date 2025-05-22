@@ -1,12 +1,13 @@
 use std::fmt::{Display, Formatter};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::hash::{Hash, Hasher};
+use serde::{Serialize, Deserialize};
 
 use crate::overlay::peer::PeerId;
 use crate::pubsub::topic::TopicId;
 
 /// Unique identifier for a message
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MessageId(pub String);
 
 impl Display for MessageId {
@@ -16,7 +17,7 @@ impl Display for MessageId {
 }
 
 /// Type of message content
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageType {
     /// Regular data message
     Data,
@@ -35,7 +36,8 @@ pub enum MessageType {
 }
 
 /// Payload of a message
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum MessagePayload {
     /// Binary data
     Binary(Vec<u8>),
@@ -68,7 +70,7 @@ impl MessagePayload {
 }
 
 /// A message in the pub/sub system
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     /// Unique message identifier
     pub id: MessageId,
@@ -225,15 +227,15 @@ impl Message {
 
 /// Generate a unique message ID based on topic, content, and timestamp
 fn generate_message_id(topic: &TopicId, data: &[u8], timestamp: u64) -> MessageId {
-    use sha2::{Sha256, Digest};
-    
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(topic.0.as_bytes());
     hasher.update(data);
-    hasher.update(timestamp.to_be_bytes());
+    hasher.update(&timestamp.to_be_bytes());
     
-    let result = hasher.finalize();
-    let id = hex::encode(&result[0..16]); // Use first 16 bytes (32 hex chars)
+    let mut output = [0u8; 16];
+    let mut output_reader = hasher.finalize_xof();
+    output_reader.fill(&mut output);
+    let id = hex::encode(output);
     
     MessageId(id)
 } 

@@ -118,7 +118,7 @@ impl PubSubMetrics {
             topic_metrics: RwLock::new(HashMap::new()),
             peer_metrics: RwLock::new(HashMap::new()),
             time_series: RwLock::new(TimeSeriesData::new()),
-            message_ids: RwLock::new(lru::LruCache::new(10_000)),
+            message_ids: RwLock::new(lru::LruCache::new(std::num::NonZeroUsize::new(10_000).unwrap())),
         }
     }
     
@@ -285,7 +285,22 @@ impl PubSubMetrics {
     pub fn cleanup_message_cache(&self, max_age: Duration) {
         if let Ok(mut cache) = self.message_ids.write() {
             let now = Instant::now();
-            cache.retain(|_, &mut timestamp| now.duration_since(timestamp) < max_age);
+            
+            // Create a vector of message IDs to remove
+            let to_remove: Vec<_> = cache.iter()
+                .filter_map(|(id, timestamp)| {
+                    if now.duration_since(*timestamp) >= max_age {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            
+            // Remove old entries
+            for id in to_remove {
+                cache.pop(&id);
+            }
         }
     }
 }

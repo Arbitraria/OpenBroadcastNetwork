@@ -1,9 +1,10 @@
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use serde::{Serialize, Deserialize};
 
 /// Unique identifier for a topic
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TopicId(pub String);
 
 impl Display for TopicId {
@@ -13,7 +14,7 @@ impl Display for TopicId {
 }
 
 /// Topic metadata and configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Topic {
     /// Unique identifier for the topic
     pub id: TopicId,
@@ -63,7 +64,7 @@ impl Topic {
 }
 
 /// Configuration for a topic
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicConfig {
     /// Message cache history size
     pub history_size: usize,
@@ -90,7 +91,7 @@ impl Default for TopicConfig {
 }
 
 /// A topic specifically for streaming content
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamTopic {
     /// Base topic
     pub topic: Topic,
@@ -129,7 +130,7 @@ impl StreamTopic {
 }
 
 /// Metadata for a stream
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StreamMetadata {
     /// Content type (e.g., "video/webm")
     pub content_type: Option<String>,

@@ -195,7 +195,7 @@ impl HybridOverlay {
                         peer_id: peer_id.clone(), 
                         reason: "Disconnected".to_string()
                     }).await;
-                }
+                            }
                 
                 // Handle disconnection in trees and meshes
                 self.handle_peer_disconnection(&peer_id).await;
@@ -363,8 +363,8 @@ impl HybridOverlay {
         for stream_id in self.trees.keys().cloned().collect::<Vec<_>>() {
             if let Err(e) = self.rebalance_tree(&stream_id).await {
                 warn!("Failed to rebalance tree for stream {:?}: {}", stream_id, e);
+                }
             }
-        }
         
         // Rebalance all meshes
         for mesh in self.meshes.values_mut() {
@@ -438,12 +438,12 @@ impl Overlay for HybridOverlay {
         
         Box::pin(async move {
             if this.running {
-                return Ok(());
-            }
-            
+            return Ok(());
+        }
+        
             let mut cloned = this.clone();
             cloned.running = true;
-            
+        
             // Start the network
             if let Some(network) = &mut cloned.network {
                 network.start().await.map_err(|e| {
@@ -464,8 +464,8 @@ impl Overlay for HybridOverlay {
             // Store the task handle
             // Note: In a real implementation, we would need to mutably borrow self
             // which would require redesigning this to use Arc<RwLock<Self>>
-            
-            Ok(())
+        
+        Ok(())
         })
     }
     
@@ -509,7 +509,7 @@ impl Overlay for HybridOverlay {
                 network.disconnect(&peer_id).await
                     .map_err(|e| OverlayError::ConnectionError(format!("Disconnect failed: {}", e)))?;
                 
-                Ok(())
+        Ok(())
             } else {
                 Err(OverlayError::ConnectionError("Network not initialized".to_string()))
             }
@@ -596,8 +596,8 @@ impl Overlay for HybridOverlay {
                     source: local_peer_id,
                     target: target.clone(),
                 }).await;
-                
-                Ok(())
+            
+            Ok(())
             } else {
                 Err(OverlayError::TopologyError(format!("Stream tree not found: {:?}", stream_id)))
             }

@@ -7,13 +7,21 @@ members = [
 ]
 resolver = "2"
 
+
 [workspace.dependencies]
 tokio = { version = "1.28", features = ["full"] }
+# Explicitly specify subtle version to resolve conflicts
+subtle = "2.5.0"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 thiserror = "1.0"
 anyhow = "1.0"
-libp2p = { version = "0.55.0", features = ["async-std", "tcp", "dns", "mdns", "gossipsub", "identify", "kad", "noise"] }
+# Using a local version of ed25519-dalek to resolve dependency conflicts
+# Using an older version of libp2p to resolve dependency conflicts
+libp2p = { version = "0.53.0", features = ["async-std", "tcp", "dns", "mdns", "gossipsub", "identify", "kad", "noise"] }
 webrtc = "0.7"
-axum = "0.6" 
+axum = "0.6"
+
+[patch.crates-io]
+ed25519-dalek = { path = "../ed25519-dalek" }

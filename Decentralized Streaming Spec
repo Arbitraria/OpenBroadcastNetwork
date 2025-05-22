@@ -1,0 +1,169 @@
+**Requirements and Specification Document: Decentralized Live Streaming CDN**
+
+---
+
+**1. Overview**
+
+**1.1 Purpose**
+To design and implement a decentralized, peer-to-peer (P2P) content delivery network (CDN) for live streaming that scales to millions of concurrent users, is privacy-conscious, cross-platform, and incentivizes network participation. The infrastructure should be reusable for video-on-demand (VOD) in future iterations.
+
+**1.2 Scope**
+
+* Primary focus: Live streaming of audio/video content.
+* Future scope: Extend architecture for VOD (Version 2.0).
+* Dual use: Open CDN for general use and a flagship streaming application built atop it.
+
+**1.3 Stakeholders**
+
+* Project team (designers, developers, product leads)
+* General public (streamers/viewers)
+* Relay participants and potential moderators
+* Incentivized network contributors
+
+---
+
+**2. Functional Requirements**
+
+**2.1 Streaming and Networking**
+
+* Viewers are by default P2P nodes.
+* Not all nodes need to be viewers (headless relays permitted).
+* Hybrid relay tree-mesh topology.
+* Nodes dynamically reconfigure to optimize latency and bandwidth based on geolocation and performance.
+* End-to-end encryption for all video content using existing protocols (e.g., libp2p Noise).
+
+**2.2 Pub/Sub Messaging and Data Routing**
+
+* Streams identified by name/ID.
+* Use of pub/sub system for peer discovery, event notification, and metadata distribution.
+* GossipSub or equivalent protocol considered for distribution efficiency.
+
+**2.3 Stream Discovery and Subscriptions**
+
+* Public registry of active streams.
+* Streams can be named, tagged, and browsed.
+* Subscription mechanism for streamers.
+
+**2.4 Moderation and Abuse Control**
+
+* Blacklists/whitelists per peer, configurable and shareable.
+* User interface for flagging abusive streams/nodes.
+* Rate-limiting or CAPTCHA on stream creation/account creation to slow spam.
+
+**2.5 Logging and Observability**
+
+* Lightweight metadata logging (e.g., peer stats, relay hops, stream bitrate).
+* Peer-side only, optional and anonymized.
+
+**2.6 Token and Incentive System (Planned)**
+
+* Tokens rewarded for:
+
+  * Relaying video
+  * Providing original content
+  * Participating in moderation
+* Some tolerance for leeching.
+* Optional support for crypto tipping (e.g., ETH, BTC).
+
+---
+
+**3. Non-Functional Requirements**
+
+**3.1 Scalability**
+
+* Must scale to millions of concurrent viewers.
+* Designed with future geographic sharding in mind.
+
+**3.2 Performance**
+
+* Maximum stream latency target: 5–10 minutes.
+* Lower-latency protocols (QUIC, UDP) preferred for long-term use.
+
+**3.3 Platform Compatibility**
+
+* Initial platform: modern web browsers (WebRTC-compatible).
+* Future support: native apps (desktop, mobile).
+
+**3.4 Security and Privacy**
+
+* One-hop removal from streamer and viewer identity.
+* No persistent identity required to view streams.
+* Hop-level anonymity preserved.
+
+**3.5 Modularity and Extensibility**
+
+* Backend protocol is frontend-agnostic.
+* Modular design to allow integration with other applications.
+
+**3.6 Dependency Management**
+
+* Crate versions must be pinned to specific versions in Cargo.toml.
+* A DEPENDENCIES.md file must be maintained with rationale for each dependency.
+* For libp2p 0.55.0, only use compatible features (async-std, tcp, quic, dns, mdns, gossipsub).
+* Developers should consult docs.rs for each dependency's supported features before usage.
+* Dependencies with potential licensing issues must be reviewed and documented.
+
+---
+
+**4. System Architecture**
+
+**4.1 Peer Topology**
+
+* Tree-based primary relay structure with mesh fallback.
+* Geo-optimized, periodically rebalanced.
+
+**4.2 Discovery Layer**
+
+* Distributed pub/sub overlay.
+* Bootstrap nodes allowed initially, replaced over time by peer-based gossip.
+
+**4.3 Communication Protocols**
+
+* Libp2p stack (preferred).
+* PubSub: GossipSub or FloodSub.
+* Transport: WebRTC for browser, QUIC/UDP for native.
+
+**4.4 Encryption & Privacy**
+
+* End-to-end video encryption.
+* Pub/sub channel metadata lightly obfuscated.
+
+---
+
+**5. Development Plan**
+
+**5.1 MVP Goals**
+
+* Fully functional P2P streaming of live video.
+* Bootstrap-based peer connection and discovery.
+* Minimal web-based frontend for stream viewing and broadcasting.
+
+**5.2 Production Goals**
+
+* Cross-platform support.
+* Geo-sharded scaling.
+* Native token economy.
+* Moderation trust networks.
+* YouTube-style reference frontend.
+
+---
+
+**6. Risks and Mitigations**
+
+* **NAT traversal failure**: Use fallback TURN servers.
+* **Malicious peers**: Flagging, blacklists, trust clustering.
+* **Latency spikes**: Dynamic peer rebalancing.
+* **Spam**: Throttling stream/account creation.
+
+---
+
+**7. Open Questions (to be resolved in planning)**
+
+* Exact stream naming/discovery schema.
+* Token smart contract implementation details.
+* Identity system (if needed later).
+* Criteria for trust clustering.
+
+---
+
+**End of Document**

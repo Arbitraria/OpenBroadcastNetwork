@@ -1,8 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures::StreamExt;
 use libp2p::identity::Keypair;
+use tokio::time;
 
-use crate::pubsub::interface::{PubSub, PubSubConfig, PubSubError};
+use crate::pubsub::gossipsub::GossipSubService;
+use crate::pubsub::interface::{AsyncPubSub, PubSub, PubSubConfig, PubSubError};
+use crate::pubsub::topic::Topic;
 use crate::pubsub::gossipsub::{GossipSubService, GossipSubConfig};
 use crate::pubsub::topic::{Topic, TopicId, TopicConfig, StreamTopic, StreamMetadata};
 use crate::pubsub::message::{Message, MessageType, MessagePayload};
@@ -116,8 +121,8 @@ fn test_basic_validator() {
     assert_eq!(validator.validate(&oversized_msg, None), ValidationResult::Reject);
 }
 
-#[test]
-fn test_gossipsub_service() {
+#[tokio::test]
+async fn test_gossipsub_service() {
     // Create a keypair for the service
     let keypair = Keypair::generate_ed25519();
     
@@ -126,7 +131,7 @@ fn test_gossipsub_service() {
     
     // Test topic subscription
     let topic = Topic::new("test-topic", "Test Topic");
-    assert!(service.subscribe(&topic).is_ok());
+    assert!(AsyncPubSub::subscribe(&mut service, &topic).await.is_ok());
     
     // Test listing subscriptions
     let subscriptions = service.list_subscriptions();
@@ -134,20 +139,17 @@ fn test_gossipsub_service() {
     assert_eq!(subscriptions[0].0, "test-topic");
     
     // Test publishing
-    let result = service.publish(&topic.id, vec![1, 2, 3, 4]);
+    let result = AsyncPubSub::publish(&mut service, &topic.id, vec![1, 2, 3, 4]).await;
     assert!(result.is_ok());
     
     // Test unsubscribing
-    assert!(service.unsubscribe(&topic.id).is_ok());
+    assert!(AsyncPubSub::unsubscribe(&mut service, &topic.id).await.is_ok());
     assert_eq!(service.list_subscriptions().len(), 0);
 }
 
 // Integration test for message flow
 #[tokio::test]
 async fn test_async_gossipsub() {
-    // This test would require a more complex setup with actual network connections
-    // For simplicity, we'll just test the async interface methods
-    
     // Create a keypair for the service
     let keypair = Keypair::generate_ed25519();
     
@@ -162,18 +164,34 @@ async fn test_async_gossipsub() {
     let topic = Topic::new("async-topic", "Async Topic");
     let topic_id = topic.id.clone();
     
-    let sub_result = service.subscribe(&topic).await;
+    // Import the AsyncPubSub trait
+    use crate::pubsub::interface::AsyncPubSub;
+    
+    // Test subscribe
+    let sub_result = AsyncPubSub::subscribe(&mut service, &topic).await;
     assert!(sub_result.is_ok());
     
     // Get event stream
-    let stream_result = service.event_stream().await;
-    assert!(stream_result.is_ok());
+    let mut stream = match AsyncPubSub::event_stream(&mut service).await {
+        Ok(stream) => stream,
+        Err(_) => panic!("Failed to get event stream"),
+    };
     
-    // Publish a message
-    let pub_result = service.publish(&topic_id, vec![5, 6, 7, 8]).await;
+    // Test publish
+    let pub_result = AsyncPubSub::publish(&mut service, &topic_id, vec![5, 6, 7, 8]).await;
     assert!(pub_result.is_ok());
     
-    // Unsubscribe
-    let unsub_result = service.unsubscribe(&topic_id).await;
+    // Test that we can receive the published message
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        stream.next()
+    ).await {
+        Ok(Some(_)) => { /* Message received successfully */ },
+        Ok(None) => panic!("Stream ended unexpectedly"),
+        Err(_) => panic!("Timeout waiting for message"),
+    };
+    
+    // Test unsubscribe
+    let unsub_result = AsyncPubSub::unsubscribe(&mut service, &topic_id).await;
     assert!(unsub_result.is_ok());
-} 
+}

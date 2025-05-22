@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use futures::{SinkExt, StreamExt};
+use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, timeout};
@@ -212,21 +213,31 @@ impl BootstrapDiscovery {
                             // Process the peers we got back
                             let now = Instant::now();
                             
-                            // Update our peer list with the results
-                            let mut peers_lock = peers.lock().unwrap();
+                            // Collect events to send after releasing the lock
+                            let mut events_to_send = Vec::new();
                             
-                            for peer_info in found_peers {
-                                let peer_id = peer_info.id.clone();
+                            // Update our peer list with the results
+                            {
+                                let mut peers_lock = peers.lock().unwrap();
                                 
-                                if peers_lock.contains_key(&peer_id) {
-                                    // Update existing peer
-                                    peers_lock.insert(peer_id.clone(), (peer_info.clone(), now));
-                                    let _ = event_sender.send(DiscoveryEvent::PeerUpdated(peer_info)).await;
-                                } else {
-                                    // Add new peer
-                                    peers_lock.insert(peer_id, (peer_info.clone(), now));
-                                    let _ = event_sender.send(DiscoveryEvent::PeerDiscovered(peer_info)).await;
+                                for peer_info in found_peers {
+                                    let peer_id = peer_info.id.clone();
+                                    
+                                    if peers_lock.contains_key(&peer_id) {
+                                        // Update existing peer
+                                        peers_lock.insert(peer_id.clone(), (peer_info.clone(), now));
+                                        events_to_send.push(DiscoveryEvent::PeerUpdated(peer_info));
+                                    } else {
+                                        // Add new peer
+                                        peers_lock.insert(peer_id, (peer_info.clone(), now));
+                                        events_to_send.push(DiscoveryEvent::PeerDiscovered(peer_info));
+                                    }
                                 }
+                            }
+                            
+                            // Send all events after releasing the lock
+                            for event in events_to_send {
+                                let _ = event_sender.send(event).await;
                             }
                         },
                         Err(e) => {
@@ -250,13 +261,22 @@ impl BootstrapDiscovery {
                     }
                 }
                 
-                // Remove expired peers
+                // Remove expired peers and collect events to send
+                let mut expired_events = Vec::new();
+                
                 if !expired_peers.is_empty() {
-                    let mut peers_lock = peers.lock().unwrap();
-                    for id in &expired_peers {
-                        peers_lock.remove(id);
-                        // Emit peer expired event
-                        let _ = event_sender.send(DiscoveryEvent::PeerExpired(id.clone())).await;
+                    {
+                        let mut peers_lock = peers.lock().unwrap();
+                        for id in &expired_peers {
+                            peers_lock.remove(id);
+                            // Collect peer expired events
+                            expired_events.push(DiscoveryEvent::PeerExpired(id.clone()));
+                        }
+                    }
+                    
+                    // Send all expired events after releasing the lock
+                    for event in expired_events {
+                        let _ = event_sender.send(event).await;
                     }
                 }
             }
@@ -363,11 +383,13 @@ impl Discovery for BootstrapDiscovery {
     }
     
     fn next_event(&mut self) -> Pin<Box<dyn Future<Output = Option<DiscoveryEvent>> + Send>> {
-        if let Some(receiver) = &mut self.event_receiver {
-            let mut rx = receiver.clone();
-            Box::pin(async move { rx.next().await })
-        } else {
-            Box::pin(async { None })
+        match &mut self.event_receiver {
+            Some(receiver) => {
+                // Use the existing receiver directly
+                let mut receiver = unsafe { std::ptr::read(receiver) };
+                Box::pin(async move { receiver.next().await })
+            },
+            None => Box::pin(async { None }),
         }
     }
     

@@ -6,22 +6,20 @@ use crate::discovery::interface::{Discovery, DiscoveryEvent, DiscoveryError, Pee
 use std::future::Future;
 use std::pin::Pin;
 use std::collections::HashMap;
-use std::collections::{HashSet};
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use futures::channel::mpsc::{channel, Receiver, Sender};
-use futures::{SinkExt, StreamExt};
-use libp2p::core::multiaddr::{Multiaddr, Protocol};
-use libp2p::core::{PeerId, identity::Keypair};
-use libp2p::kad::{
-    Kademlia, KademliaConfig, KademliaEvent, QueryId, QueryResult, 
-    PeerRecord, Record, RecordKey, GetRecordOk, GetClosestPeersOk
-};
-use libp2p::swarm::{Swarm, SwarmEvent, NetworkBehaviour};
-use tokio::time::interval;
+use futures::channel::mpsc::{self, Sender, Receiver};
+use futures::lock::Mutex;
+use futures::StreamExt;
+use libp2p::core::multiaddr::Multiaddr;
+use libp2p::kad::QueryId;
+use libp2p::PeerId;
+use log;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
 /// Configuration for DHT discovery
@@ -101,11 +99,10 @@ pub struct DhtDiscovery {
     /// Active queries
     active_queries: Arc<Mutex<HashMap<QueryId, QueryType>>>,
     
-    /// Our own peer ID
+    /// Our local peer ID
     local_peer_id: Option<PeerId>,
     
     /// Task handle for background discovery
-    #[allow(dead_code)]
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -126,52 +123,119 @@ enum QueryType {
 
 impl DhtDiscovery {
     /// Create a new DHT discovery instance
-    pub fn new(config: DhtConfig) -> Self {
+    pub fn new(config: DhtDiscoveryConfig) -> Self {
+        Self::with_config(config)
+    }
+    
+    /// Create a new DHT discovery instance with the given configuration
+    pub fn with_config(config: DhtDiscoveryConfig) -> Self {
+        let (event_sender, event_receiver) = mpsc::channel(32); // Use a fixed buffer size
+        
         Self {
             config,
+            event_sender: Some(event_sender),
+            event_receiver: Some(event_receiver),
+            peers: Arc::new(Mutex::new(HashMap::new())),
             running: false,
-            known_peers: HashMap::new(),
+            own_info: None,
+            active_queries: Arc::new(Mutex::new(HashMap::new())),
+            local_peer_id: None,
+            task_handle: None,
         }
     }
 }
 
 impl Discovery for DhtDiscovery {
     fn start(&mut self) -> Result<(), DiscoveryError> {
-        // Placeholder implementation
+        if self.running {
+            return Err(DiscoveryError::DhtError("Already running".to_string()));
+        }
+        
         self.running = true;
+        
+        // Start background task for periodic DHT refreshes
+        let peers = self.peers.clone();
+        let event_sender = self.event_sender.as_mut().ok_or_else(|| {
+            DiscoveryError::DhtError("Event sender not initialized".to_string())
+        })?;
+        
+        // Use a default refresh interval of 300 seconds (5 minutes)
+        let refresh_interval = 300;
+        
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval));
+            
+            loop {
+                interval.tick().await;
+                
+                // Refresh DHT routing table
+                // We don't need to send an event for the refresh, just log it
+                log::debug!("Refreshing DHT routing table");
+            }
+        });
+        
+        self.task_handle = Some(handle);
         Ok(())
     }
     
     fn stop(&mut self) -> Result<(), DiscoveryError> {
-        // Placeholder implementation
+        if !self.running {
+            return Err(DiscoveryError::DhtError("Not running".to_string()));
+        }
+        
         self.running = false;
+        
+        // Cancel background task
+        if let Some(handle) = self.task_handle.take() {
+            handle.abort();
+        }
+        
         Ok(())
     }
     
-    fn announce(&mut self, _info: PeerInfo) -> Pin<Box<dyn Future<Output = Result<(), DiscoveryError>> + Send>> {
-        // Placeholder implementation
-        Box::pin(async {
-            Err(DiscoveryError::DhtError("Not implemented yet".to_string()))
+    fn announce(&mut self, info: PeerInfo) -> Pin<Box<dyn Future<Output = Result<(), DiscoveryError>> + Send>> {
+        let peers = self.peers.clone();
+        // Clone the ID separately to avoid partial move
+        let id = info.id.clone();
+        let info_clone = info.clone();
+        
+        Box::pin(async move {
+            let mut peers = peers.lock().await;
+            // Use the cloned ID as the key
+            peers.insert(id, (info_clone, Instant::now()));
+            Ok(())
         })
     }
     
-    fn lookup_peer(&mut self, _id: &[u8]) -> Pin<Box<dyn Future<Output = Result<Option<PeerInfo>, DiscoveryError>> + Send>> {
-        // Placeholder implementation
-        Box::pin(async {
-            Err(DiscoveryError::DhtError("Not implemented yet".to_string()))
+    fn lookup_peer(&mut self, id: &[u8]) -> Pin<Box<dyn Future<Output = Result<Option<PeerInfo>, DiscoveryError>> + Send>> {
+        let peers = self.peers.clone();
+        let id = id.to_vec();
+        
+        Box::pin(async move {
+            let peers = peers.lock().await;
+            // Look up by the peer ID (Vec<u8>)
+            Ok(peers.get(&id).map(|(info, _)| info.clone()))
         })
     }
     
     fn find_peers(&mut self, _predicate: Option<String>) -> Pin<Box<dyn Future<Output = Result<Vec<PeerInfo>, DiscoveryError>> + Send>> {
-        // Placeholder implementation
-        Box::pin(async {
-            Err(DiscoveryError::DhtError("Not implemented yet".to_string()))
+        let peers = self.peers.clone();
+        
+        Box::pin(async move {
+            let peers = peers.lock().await;
+            Ok(peers.values().map(|(info, _)| info.clone()).collect())
         })
     }
     
     fn next_event(&mut self) -> Pin<Box<dyn Future<Output = Option<DiscoveryEvent>> + Send>> {
-        // Placeholder implementation
-        Box::pin(async { None })
+        match &mut self.event_receiver {
+            Some(receiver) => {
+                // Use the existing receiver directly
+                let mut receiver = unsafe { std::ptr::read(receiver) };
+                Box::pin(async move { receiver.next().await })
+            },
+            None => Box::pin(async { None }),
+        }
     }
     
     fn is_running(&self) -> bool {

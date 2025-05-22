@@ -1,0 +1,169 @@
+## 🛠️ Development Roadmap: Decentralized Live Streaming CDN (AI-First, Rust-Based)
+
+---
+
+### Phase 0: Environment and AI Workflow Foundation
+
+**Goal:** Prepare the foundation for efficient solo development using AI tools (Claude, Cursor).
+
+**Tasks:**
+
+* [ ] Set up `rustup`, `cargo`, `wasm-pack`, and `trunk` for Rust + WASM development.
+* [ ] Create a mono-repo with structured workspace: `/core`, `/node`, `/ui`, `/proto`, `/scripts`.
+* [ ] Choose initial dependencies:
+
+  * `tokio`, `serde`, `tracing`, `thiserror`, `anyhow`, `libp2p`, `webrtc`, `axum` (if minimal API is needed)
+* [ ] Setup GitHub repo with:
+
+  * GitHub Actions for `cargo check`, `cargo test`, `wasm-pack build`
+  * `.editorconfig`, `.cargo/config.toml`, `.gitignore`
+* [ ] Configure Cursor for inline code generation
+* [ ] Create `README.md` with:
+
+  * Project purpose
+  * Contribution/usage notes
+  * AI prompt style guide for code generation
+* [ ] Dependency Management & Libp2p Features:
+  * Pin all crate versions in Cargo.toml
+  * Create and maintain DEPENDENCIES.md with rationale for each dependency
+  * Remove unsupported features like `async-io` from libp2p 0.55.0
+  * Use only compatible features (async-std, tcp, quic, dns, mdns, gossipsub)
+  * Document any potential licensing issues
+
+---
+
+### Phase 1: Core Peer Protocol and Topology Layer
+
+**Goal:** Implement basic P2P communication and relay tree using libp2p.
+
+**Features:**
+
+* [ ] Peer discovery (mDNS or DHT bootstrap)
+* [ ] Pub/Sub topic creation and subscription (GossipSub)
+* [ ] Basic tree-mesh hybrid relay logic
+* [ ] Periodic geo-aware rebalancing stub (can simulate latency)
+* [ ] Relay node CLI for logging/visualizing peer mesh
+
+**AI Tasks:**
+
+* Scaffold libp2p Swarm
+* Generate tests for peer connection logic
+* Simulate \~10 fake peers, log relay behavior
+
+---
+
+### Phase 2: Streaming Pipeline (Prototype)
+
+**Goal:** Establish a basic live stream pipeline with browser-compatible ingest and playback.
+
+**Features:**
+
+* [ ] Audio/video source → encoder → chunker → broadcaster (Rust)
+* [ ] Chunk distribution via pub/sub topics
+* [ ] Web-based viewer pulls and plays chunks via WebRTC or MSE
+* [ ] WASM module to connect to Rust backend and serve chunks
+
+**AI Tasks:**
+
+* Scaffold stream chunker (WebM + fragmenting)
+* Generate MVP front end with playback + stream ID input
+* Prototype chunk validation logic
+
+---
+
+### Phase 3: Minimal UI and CLI Toolkit
+
+**Goal:** Let users stream and watch through simple interfaces.
+
+**Features:**
+
+* [ ] CLI tool to broadcast a stream from a local file/webcam
+* [ ] Web UI to view streams, list peers, and subscribe
+* [ ] Stream registry (ephemeral, in-memory for now)
+
+**AI Tasks:**
+
+* Tailwind-based stream list UI
+* Axum or Tauri interface
+* CLI logs with hops, bitrate, etc.
+
+---
+
+### Phase 4: Privacy, Moderation, and Light Observability
+
+**Goal:** Add basic anonymization, flagging, blacklisting, and logging.
+
+**Features:**
+
+* [ ] Hop-removal (1-step obfuscation)
+* [ ] Per-node whitelists/blacklists (sharable format)
+* [ ] UI toggle to flag a stream
+* [ ] Relay logs: stream ID, relay count, basic stats
+
+**AI Tasks:**
+
+* Log formatting templates
+* Config file loaders with error handling
+* Blacklist sharing via URL or QR
+
+---
+
+### Phase 5: CI/CD and Deployment Automation
+
+**Goal:** Ship working MVP continuously.
+
+**Features:**
+
+* [ ] GitHub Actions for build/test/deploy (WASM + CLI)
+* [ ] Auto-deploy to Cloudflare Pages or Netlify (viewer UI)
+* [ ] Docker build for CLI relay node
+
+**AI Tasks:**
+
+* Dockerfile for node
+* CI YAMLs for build/test/lint/deploy
+* Release note generator
+
+---
+
+### Phase 6: Token Layer and Incentives (Experimental)
+
+**Goal:** Add test incentives to bootstrap a proto economy.
+
+**Features:**
+
+* [ ] Basic token ledger (no chain at first)
+* [ ] Token rewards for: relaying, streaming, moderation
+* [ ] Optional tipping interface with BTC/ETH
+
+**AI Tasks:**
+
+* Ledger backed by JSON store
+* Smart contract scaffold (optional)
+* Mock dashboard for token flow
+
+---
+
+### Phase 7+: Production Readiness and Scaling
+
+**Goal:** Expand system for real-world use and open contribution.
+
+**Tasks:**
+
+* [ ] Shard by region/topic
+* [ ] Replace bootstraps with peer-discovered DHT
+* [ ] Add persistent stream naming and social features
+* [ ] Native clients (Rust + egui/Tauri/Mobile)
+* [ ] Hardening (auth, encryption, trust clustering)
+
+---
+
+### 🧠 AI Prompt Best Practices (Claude, Cursor)
+
+* Be explicit about architecture (traits, modules, file names)
+* Ask for unit + property-based tests
+* Sketch-then-complete approach
+* Keep tasks modular
+* Limit file length (300-500 lines/request)
+
+---

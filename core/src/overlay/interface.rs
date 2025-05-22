@@ -29,6 +29,18 @@ pub enum OverlayError {
     #[error("Topology error: {0}")]
     TopologyError(String),
     
+    /// Operation not possible when not running
+    #[error("Operation not possible: not running")]
+    NotRunning,
+    
+    /// Stream not found error
+    #[error("Stream not found: {0:?}")]
+    StreamNotFound(StreamId),
+    
+    /// No chunk handler available
+    #[error("No chunk handler available")]
+    NoChunkHandler,
+    
     /// Operation timeout
     #[error("Operation timed out after {0:?}")]
     Timeout(Duration),
@@ -77,6 +89,16 @@ impl StreamId {
     /// Get the inner bytes
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl fmt::Display for StreamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Convert the bytes to a hex string for display
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
 

@@ -3,15 +3,20 @@ mod visualization;
 
 use clap::{Parser, Subcommand};
 use decentralized_stream_core::prelude::*;
+use decentralized_stream_core::discovery::{DiscoveryManager, DiscoveryManagerConfig};
+use decentralized_stream_core::pubsub::{TopicManager, TopicManagerConfig, GossipSubService};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::signal;
+use tokio::sync::Mutex;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
-use visualization::{create_peer_table, create_stream_table, format_bytes, format_duration, PeerDisplayInfo, StreamInfo, visualize_tree};
+use visualization::{create_peer_table, create_stream_table, format_bytes, format_duration, 
+                    PeerDisplayInfo, StreamInfo, visualize_tree, build_stream_tree, generate_dot_graph, TreeNode};
 
 /// Decentralized Streaming Relay Node CLI
 #[derive(Parser, Debug)]
@@ -161,36 +166,55 @@ async fn run_relay_node(
     let overlay = HybridOverlay::new(overlay_config).await?;
     overlay.start().await?;
     
-    // Setup discovery mechanism
-    if enable_mdns {
-        let mut mdns = MdnsDiscovery::new();
-        mdns.start()?;
-        info!("mDNS discovery enabled");
-    }
+    // Setup discovery manager
+    let mut discovery_config = DiscoveryManagerConfig::default();
+    discovery_config.enable_mdns = enable_mdns;
+    discovery_config.enable_dht = enable_dht;
+    discovery_config.enable_bootstrap = !bootstrap_nodes.is_empty();
     
-    if enable_dht {
-        let config = DhtDiscoveryConfig {
-            bootstrap_peers: bootstrap_nodes.iter()
-                .map(|addr| addr.parse().expect("Invalid multiaddr"))
-                .collect(),
-            ..Default::default()
-        };
-        
-        let mut dht = DhtDiscovery::with_config(config);
-        dht.start()?;
-        info!("DHT discovery enabled with {} bootstrap peers", bootstrap_nodes.len());
-    }
-    
-    // If neither is enabled, use bootstrap discovery
-    if !enable_mdns && !enable_dht && !bootstrap_nodes.is_empty() {
+    if !bootstrap_nodes.is_empty() {
         let mut bootstrap_config = BootstrapDiscoveryConfig::default();
         bootstrap_config.bootstrap_nodes = bootstrap_nodes.iter()
             .filter_map(|addr| addr.parse::<SocketAddr>().ok())
             .collect();
-            
-        let mut bootstrap = BootstrapDiscovery::with_config(bootstrap_config);
-        bootstrap.start()?;
-        info!("Bootstrap discovery enabled with {} nodes", bootstrap_config.bootstrap_nodes.len());
+        
+        discovery_config.bootstrap_config = Some(bootstrap_config);
+    }
+    
+    // Create and start discovery manager
+    let mut discovery_manager = DiscoveryManager::new(discovery_config);
+    discovery_manager.start().await?;
+    
+    // Set up PubSub service
+    let keypair = generate_identity().await?;
+    let gossipsub = GossipSubService::new(keypair);
+    let pubsub = Arc::new(Mutex::new(gossipsub));
+    
+    // Start pubsub
+    {
+        let mut pubsub_lock = pubsub.lock().await;
+        pubsub_lock.start()?;
+    }
+    
+    // Setup topic manager
+    let topic_manager = TopicManager::new(pubsub.clone(), TopicManagerConfig::default());
+    topic_manager.start().await?;
+    
+    // Create the discovery topic
+    let discovery_topic = topic_manager.create_topic("discovery").await?;
+    info!("Subscribed to discovery topic");
+    
+    // Create a stream for demo purposes (if running as publisher)
+    if peer_role == PeerRole::Publisher || peer_role == PeerRole::HybridRelay {
+        let stream_id = StreamId::new_random();
+        let (data_topic, control_topic) = topic_manager.create_stream_topic(&stream_id, "Demo Stream").await?;
+        
+        info!("Created demo stream with ID: {:?}", stream_id);
+        info!("Data topic: {}", data_topic.id.0);
+        info!("Control topic: {}", control_topic.id.0);
+        
+        // Publish stream to the overlay
+        overlay.publish_stream(&stream_id).await?;
     }
     
     info!("Relay node running with role: {:?}", peer_role);
@@ -198,49 +222,159 @@ async fn run_relay_node(
     // Setup periodic status display
     let mut status_interval = time::interval(Duration::from_secs(30));
     
-    // Process events and handle signals
+    // Main loop
+    let mut peer_count = 0;
+    let mut stream_count = 0;
+    
     loop {
         tokio::select! {
-            _ = signal::ctrl_c() => {
-                info!("Received Ctrl+C, shutting down...");
-                break;
-            }
             _ = status_interval.tick() => {
-                // Display node status
-                if let Ok(stats) = overlay.stats().await {
-                    info!("Status: {} peers, {} streams, {}MB relayed", 
-                        stats.connected_peers,
-                        stats.active_streams,
-                        stats.outgoing_bandwidth / 1_000_000);
+                // Get overlay stats
+                let stats = overlay.stats().await?;
+                let peers = overlay.connected_peers().await?;
+                let streams = overlay.active_streams().await?;
+                
+                // Update metrics
+                peer_count = peers.len();
+                stream_count = streams.len();
+                
+                // Display stats
+                info!("Node Status:");
+                info!("  Uptime: {}", format_duration(Duration::from_secs((Instant::now() - metrics.start_time).as_secs())));
+                info!("  Connected Peers: {}", peer_count);
+                info!("  Active Streams: {}", stream_count);
+                info!("  Bandwidth: ↑ {}/s ↓ {}/s", 
+                     format_bytes(stats.outgoing_bandwidth), 
+                     format_bytes(stats.incoming_bandwidth));
+                info!("  Relay Score: {:.2}", stats.relay_score);
+                
+                // Display stream tree for each active stream (if any)
+                for stream_id in &streams {
+                    if let Some(publisher) = overlay.get_stream_publisher(stream_id).await? {
+                        let peers_map = overlay.get_stream_peers(stream_id).await?;
+                        if !peers_map.is_empty() {
+                            if let Some(tree) = build_stream_tree(stream_id, &peers_map, &publisher) {
+                                info!("Stream Tree for {}:", stream_id.short_id());
+                                let mut buffer = Vec::new();
+                                visualize_tree(&tree, &mut buffer)?;
+                                let tree_text = String::from_utf8_lossy(&buffer);
+                                for line in tree_text.lines() {
+                                    info!("  {}", line);
+                                }
+                            }
+                        }
+                    }
                 }
             }
+            
+            // Handle overlay events
             Some(event) = overlay.next_event() => {
                 match event {
-                    OverlayEvent::StreamPublished { stream_id, publisher } => {
-                        info!("New stream published: {:?} by {}", stream_id, publisher);
-                    }
-                    OverlayEvent::StreamRelayed { stream_id, source, target } => {
-                        debug!("Relaying stream {:?} from {} to {}", stream_id, source, target);
-                    }
-                    OverlayEvent::StreamStopped { stream_id, reason } => {
-                        info!("Stream stopped: {:?} - {}", stream_id, reason);
-                    }
                     OverlayEvent::PeerConnected { peer_id, info } => {
-                        info!("Peer connected: {} ({})", peer_id, info.role);
-                    }
+                        info!("Peer connected: {} ({})", peer_id.short_id(), info.role);
+                        
+                        // Announce to discovery
+                        let peer_info = PeerInfo {
+                            id: peer_id.as_bytes().to_vec(),
+                            addresses: info.addresses.iter()
+                                .filter_map(|a| a.parse().ok())
+                                .collect(),
+                            protocols: info.protocols,
+                            metadata: HashMap::new(),
+                        };
+                        
+                        discovery_manager.announce(peer_info).await?;
+                    },
                     OverlayEvent::PeerDisconnected { peer_id, reason } => {
-                        info!("Peer disconnected: {} - {}", peer_id, reason);
-                    }
-                    OverlayEvent::Error(e) => {
-                        error!("Overlay error: {}", e);
-                    }
+                        info!("Peer disconnected: {} ({})", peer_id.short_id(), reason);
+                    },
+                    OverlayEvent::StreamPublished { stream_id, publisher } => {
+                        info!("Stream published: {} by {}", stream_id.short_id(), publisher.short_id());
+                    },
+                    OverlayEvent::StreamRelayed { stream_id, source, target } => {
+                        debug!("Stream relayed: {} from {} to {}", 
+                               stream_id.short_id(), source.short_id(), target.short_id());
+                    },
+                    OverlayEvent::StreamStopped { stream_id, reason } => {
+                        info!("Stream stopped: {} ({})", stream_id.short_id(), reason);
+                    },
                     _ => {}
                 }
+            }
+            
+            // Handle discovery events
+            Some(event) = discovery_manager.next_event() => {
+                match event {
+                    DiscoveryEvent::PeerDiscovered(info) => {
+                        let id_str = hex::encode(&info.id);
+                        let addresses: Vec<String> = info.addresses.iter()
+                            .map(|a| a.to_string())
+                            .collect();
+                        
+                        debug!("Discovered peer: {} at {}", id_str, addresses.join(", "));
+                        
+                        // Connect to the discovered peer if we're not already connected
+                        if let Ok(peer_id) = PeerId::from_bytes(info.id) {
+                            let peers = overlay.connected_peers().await?;
+                            if !peers.iter().any(|p| p.id == peer_id) {
+                                for addr in addresses {
+                                    // Try to connect
+                                    match overlay.connect_peer(&addr).await {
+                                        Ok(_) => {
+                                            debug!("Connected to discovered peer: {}", addr);
+                                            break;
+                                        },
+                                        Err(e) => {
+                                            debug!("Failed to connect to discovered peer: {} - {}", addr, e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    DiscoveryEvent::PeerExpired(id) => {
+                        let id_str = hex::encode(&id);
+                        debug!("Peer expired: {}", id_str);
+                    },
+                    _ => {}
+                }
+            }
+            
+            // Handel exit signal
+            _ = signal::ctrl_c() => {
+                info!("Received shutdown signal");
+                break;
             }
         }
     }
     
+    // Shutdown
+    info!("Shutting down node...");
+    
+    // Stop topic manager
+    topic_manager.stop().await?;
+    
+    // Stop pubsub
+    {
+        let mut pubsub_lock = pubsub.lock().await;
+        pubsub_lock.stop()?;
+    }
+    
+    // Stop discovery
+    discovery_manager.stop().await?;
+    
+    // Stop overlay
+    overlay.stop().await?;
+    
+    info!("Node shutdown complete");
+    
     Ok(())
+}
+
+// Generate a libp2p identity keypair
+async fn generate_identity() -> Result<libp2p::identity::Keypair, anyhow::Error> {
+    let keypair = libp2p::identity::Keypair::generate_ed25519();
+    Ok(keypair)
 }
 
 /// Generate a text visualization of the network topology

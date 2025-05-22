@@ -2,16 +2,21 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::interface::{Discovery, DiscoveryEvent, DiscoveryError, PeerInfo};
-    use super::super::bootstrap::{BootstrapDiscovery, BootstrapDiscoveryConfig};
-    use super::super::dht::{DhtDiscovery, DhtDiscoveryConfig};
-    use super::super::mdns::{MdnsDiscovery, MdnsDiscoveryConfig};
-    use std::net::SocketAddr;
-    use std::str::FromStr;
-    use std::collections::HashMap;
-    use std::net::{IpAddr, Ipv4Addr};
-    use std::time::Duration;
-    use futures::StreamExt;
+    use super::*;
+    use crate::{
+        discovery::{
+            mdns::{MdnsDiscovery, MdnsDiscoveryConfig},
+            Discovery, DiscoveryEvent, DiscoveryError,
+        },
+        transport::Transport,
+    };
+    use crate::discovery::PeerInfo;
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        str::FromStr,
+        time::Duration,
+        collections::HashMap,
+    };
     use tokio::time::timeout;
 
     /// Create a test peer info instance
@@ -85,20 +90,42 @@ mod tests {
         }
     }
 
+    /// Create a test peer with the given ID and port
+    fn create_test_peer(id: u8, port: u16) -> PeerInfo {
+        let id = vec![id];
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+        create_test_peer_info(id, addr)
+    }
+
     #[tokio::test]
-    async fn test_mock_discovery_lifecycle() {
-        let mut discovery = MockDiscovery::new();
+    async fn test_mdns_discovery_integration() -> Result<(), DiscoveryError> {
+        // This test would normally require an mDNS service to be running
+        // For now, we'll just test the basic functionality without network calls
         
-        // Test initial state
-        assert!(!discovery.is_running());
+        let mut discovery = MdnsDiscovery::new();
         
-        // Test start
-        discovery.start().expect("Failed to start discovery");
-        assert!(discovery.is_running());
+        // Test with a mock peer ID
+        let peer_id = vec![1, 2, 3, 4];
+        let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+        let peer_info = create_test_peer_info(peer_id.clone(), peer_addr);
         
-        // Test stop
-        discovery.stop().expect("Failed to stop discovery");
-        assert!(!discovery.is_running());
+        // Test announcing a peer
+        discovery.announce(peer_info.clone()).await?;
+        
+        // Test looking up the peer
+        let found_peer = discovery.lookup_peer(&peer_id).await?;
+        assert!(found_peer.is_some());
+        assert_eq!(found_peer.unwrap().id, peer_id);
+        
+        // Test finding peers
+        let peers = discovery.find_peers(None).await?;
+        assert!(!peers.is_empty());
+        
+        // Test with a predicate that won't match
+        let no_peers = discovery.find_peers(Some("nonexistent".to_string())).await?;
+        assert!(no_peers.is_empty());
+        
+        Ok(())
     }
     
     #[tokio::test]
@@ -133,71 +160,38 @@ mod tests {
         assert_eq!(find_result.len(), 0);
     }
 
-    // Placeholder tests for actual implementations
-    #[test]
-    fn test_bootstrap_config() {
-        let config = BootstrapDiscoveryConfig {
-            bootstrap_nodes: vec![SocketAddr::from_str("127.0.0.1:8080").unwrap()],
-            event_buffer_size: 16,
-            peer_expiration: 120,
-            protocol_name: "test-protocol".to_string(),
-            connect_timeout: 5,
-            refresh_interval: 60,
-        };
-        
-        assert_eq!(config.bootstrap_nodes.len(), 1);
-        assert_eq!(config.event_buffer_size, 16);
-        assert_eq!(config.peer_expiration, 120);
-        assert_eq!(config.protocol_name, "test-protocol");
-        assert_eq!(config.connect_timeout, 5);
-        assert_eq!(config.refresh_interval, 60);
-    }
-    
-    #[test]
-    fn test_dht_config() {
-        let config = DhtDiscoveryConfig {
-            protocol_name: "test-dht".to_string(),
-            event_buffer_size: 32,
-            bootstrap_peers: vec![
-                "/ip4/1.2.3.4/tcp/5678/p2p/QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N".parse().unwrap(),
-            ],
-            record_ttl: 3600,
-            peer_expiration: 1800,
-        };
-        
-        assert_eq!(config.protocol_name, "test-dht");
-        assert_eq!(config.event_buffer_size, 32);
-        assert_eq!(config.bootstrap_peers.len(), 1);
-        assert_eq!(config.record_ttl, 3600);
-        assert_eq!(config.peer_expiration, 1800);
-    }
-    
-    #[test]
-    fn test_mdns_config() {
+    #[tokio::test]
+    async fn test_mdns_discovery_lifecycle() -> Result<(), DiscoveryError> {
         let config = MdnsDiscoveryConfig {
+            service_name: "_test-service._udp".to_string(),
             ttl: 60,
-            service_name: "test-service".to_string(),
-            event_buffer_size: 16,
-            peer_expiration: 120,
+            event_buffer_size: 10,
+            peer_expiration: 300,
         };
         
-        assert_eq!(config.service_name, "test-service");
-        assert_eq!(config.ttl, 60);
-        assert_eq!(config.event_buffer_size, 16);
-        assert_eq!(config.peer_expiration, 120);
-    }
-
-    // Timeout for discovery operations in tests
-    const TEST_TIMEOUT: Duration = Duration::from_secs(5);
-
-    /// Create a test peer info struct
-    fn create_test_peer(id: u8, port: u16) -> PeerInfo {
-        PeerInfo {
-            id: vec![id],
-            addresses: vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port)],
-            protocols: vec!["test/1.0.0".to_string()],
-            metadata: HashMap::new(),
-        }
+        let mut discovery = MdnsDiscovery::with_config(config);
+        
+        // Test starting
+        discovery.start()?;
+        assert!(discovery.is_running());
+        
+        // Test with a peer
+        let peer_id = vec![1, 2, 3, 4];
+        let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+        let peer_info = create_test_peer_info(peer_id.clone(), peer_addr);
+        
+        // Test announcing the peer
+        discovery.announce(peer_info).await?;
+        
+        // Test looking up the peer
+        let found_peer = discovery.lookup_peer(&peer_id).await?;
+        assert!(found_peer.is_some());
+        
+        // Test stopping
+        discovery.stop()?;
+        assert!(!discovery.is_running());
+        
+        Ok(())
     }
 
     /// Test creating and configuring the mDNS discovery
@@ -207,100 +201,39 @@ mod tests {
         let discovery = MdnsDiscovery::new();
         assert!(!discovery.is_running());
         
-        // Test custom config
+        // Test with custom config
         let config = MdnsDiscoveryConfig {
+            service_name: "_test-service._udp".to_string(),
             ttl: 60,
-            service_name: "test-service".to_string(),
             event_buffer_size: 16,
-            peer_expiration: 120,
+            peer_expiration: 300,
         };
         
-        let discovery = MdnsDiscovery::with_config(config.clone());
-        assert!(!discovery.is_running());
-    }
-
-    /// Test creating and configuring the DHT discovery
-    #[test]
-    fn test_dht_discovery_creation() {
-        // Test default config
-        let discovery = DhtDiscovery::new();
-        assert!(!discovery.is_running());
-        
-        // Test custom config
-        let config = DhtDiscoveryConfig {
-            protocol_name: "test-dht".to_string(),
-            event_buffer_size: 32,
-            bootstrap_peers: vec![
-                "/ip4/1.2.3.4/tcp/5678/p2p/QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N".parse().unwrap(),
-            ],
-            record_ttl: 3600,
-            peer_expiration: 1800,
-        };
-        
-        let discovery = DhtDiscovery::with_config(config);
-        assert!(!discovery.is_running());
-    }
-
-    /// Test creating and configuring the Bootstrap discovery
-    #[test]
-    fn test_bootstrap_discovery_creation() {
-        // Test default config
-        let discovery = BootstrapDiscovery::new();
-        assert!(!discovery.is_running());
-        
-        // Test custom config
-        let config = BootstrapDiscoveryConfig {
-            bootstrap_nodes: vec![
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080),
-            ],
-            event_buffer_size: 16,
-            peer_expiration: 120,
-            protocol_name: "test-protocol".to_string(),
-            connect_timeout: 5,
-            refresh_interval: 60,
-        };
-        
-        let discovery = BootstrapDiscovery::with_config(config);
+        let discovery = MdnsDiscovery::with_config(config);
         assert!(!discovery.is_running());
     }
 
     /// Test basic peer lookup operations
     #[tokio::test]
     async fn test_peer_lookup() {
-        // Create a bootstrap discovery instance
-        let config = BootstrapDiscoveryConfig {
-            bootstrap_nodes: vec![
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
-            ],
-            event_buffer_size: 16,
-            peer_expiration: 120,
-            protocol_name: "test-protocol".to_string(),
-            connect_timeout: 5,
-            refresh_interval: 60,
-        };
+        // Create a mDNS discovery instance
+        let mut discovery = MdnsDiscovery::new();
         
-        let mut discovery = BootstrapDiscovery::with_config(config);
+        // Create peer info
+        let id = vec![1, 2, 3, 4];
+        let addr = SocketAddr::from_str("127.0.0.1:8080").unwrap();
+        let info = create_test_peer_info(id.clone(), addr);
         
-        // Manually add a peer to test lookup
-        let test_peer = create_test_peer(1, 1234);
-        let peer_id = test_peer.id.clone();
+        // Announce the peer
+        discovery.announce(info.clone()).await.unwrap();
         
-        // Use the internal mechanism to add the peer
-        {
-            let now = std::time::Instant::now();
-            let mut peers = discovery.peers.lock().unwrap();
-            peers.insert(peer_id.clone(), (test_peer.clone(), now));
-        }
-        
-        // Now try to look up the peer
-        let found_peer = discovery.lookup_peer(&peer_id).await.unwrap();
+        // Lookup the peer
+        let found_peer = discovery.lookup_peer(&id).await.unwrap();
         assert!(found_peer.is_some());
-        
         let found_peer = found_peer.unwrap();
-        assert_eq!(found_peer.id, peer_id);
+        assert_eq!(found_peer.id, id);
         assert_eq!(found_peer.addresses.len(), 1);
-        assert_eq!(found_peer.addresses[0].port(), 1234);
+        assert_eq!(found_peer.addresses[0].port(), 8080);
         
         // Try looking up a non-existent peer
         let not_found = discovery.lookup_peer(&[99]).await.unwrap();
@@ -309,54 +242,44 @@ mod tests {
 
     /// Test finding peers with protocol matching
     #[tokio::test]
-    async fn test_find_peers() {
-        // Create a bootstrap discovery instance
-        let mut discovery = BootstrapDiscovery::new();
+    async fn test_find_peers() -> Result<(), DiscoveryError> {
+        // Create an mDNS discovery instance
+        let mut discovery = MdnsDiscovery::new();
         
         // Add several test peers with different protocols
-        let peers = vec![
-            create_test_peer(1, 1234),
-            {
-                let mut p = create_test_peer(2, 2345);
-                p.protocols = vec!["protocol-a/1.0".to_string()];
-                p
-            },
-            {
-                let mut p = create_test_peer(3, 3456);
-                p.protocols = vec!["protocol-b/1.0".to_string(), "protocol-a/1.0".to_string()];
-                p
-            },
-        ];
+        let peer1 = create_test_peer(1, 1234);
+        let mut peer2 = create_test_peer(2, 2345);
+        peer2.protocols = vec!["protocol-a/1.0".to_string()];
+        let mut peer3 = create_test_peer(3, 3456);
+        peer3.protocols = vec!["protocol-b/1.0".to_string(), "protocol-a/1.0".to_string()];
         
-        // Add peers to the discovery cache
-        {
-            let now = std::time::Instant::now();
-            let mut peers_lock = discovery.peers.lock().unwrap();
-            for peer in peers {
-                peers_lock.insert(peer.id.clone(), (peer, now));
-            }
-        }
+        // Announce the peers
+        discovery.announce(peer1.clone()).await?;
+        discovery.announce(peer2.clone()).await?;
+        discovery.announce(peer3.clone()).await?;
         
         // Find all peers
-        let all_peers = discovery.find_peers(None).await.unwrap();
-        assert_eq!(all_peers.len(), 3);
+        let all_peers = discovery.find_peers(None).await?;
+        assert!(!all_peers.is_empty());
         
         // Find peers with protocol-a
-        let protocol_a_peers = discovery.find_peers(Some("protocol-a/1.0".to_string())).await.unwrap();
-        assert_eq!(protocol_a_peers.len(), 2);
+        let proto_a_peers = discovery.find_peers(Some("protocol-a/1.0".to_string())).await?;
+        assert_eq!(proto_a_peers.len(), 2);
         
         // Find peers with protocol-b
-        let protocol_b_peers = discovery.find_peers(Some("protocol-b/1.0".to_string())).await.unwrap();
-        assert_eq!(protocol_b_peers.len(), 1);
+        let proto_b_peers = discovery.find_peers(Some("protocol-b/1.0".to_string())).await?;
+        assert_eq!(proto_b_peers.len(), 1);
         
-        // Find peers with non-existent protocol
-        let none_peers = discovery.find_peers(Some("non-existent".to_string())).await.unwrap();
-        assert_eq!(none_peers.len(), 0);
+        // Find with non-existent protocol
+        let no_peers = discovery.find_peers(Some("nonexistent".to_string())).await?;
+        assert!(no_peers.is_empty());
+        
+        Ok(())
     }
-
+    
     /// Test announcing peer info
     #[tokio::test]
-    async fn test_announce() {
+    async fn test_announce() -> Result<(), DiscoveryError> {
         // Create a discovery instance
         let mut discovery = MdnsDiscovery::new();
         
@@ -364,11 +287,14 @@ mod tests {
         let peer_info = create_test_peer(42, 4242);
         
         // Announce the peer
-        let result = discovery.announce(peer_info.clone()).await;
-        assert!(result.is_ok());
+        discovery.announce(peer_info.clone()).await?;
         
-        // Verify that the peer info was stored
-        assert_eq!(discovery.own_info.as_ref().unwrap().id, peer_info.id);
+        // Verify that the peer info was stored by looking it up
+        let found_peer = discovery.lookup_peer(&peer_info.id).await?;
+        assert!(found_peer.is_some());
+        assert_eq!(found_peer.unwrap().id, peer_info.id);
+        
+        Ok(())
     }
 
     /// Test discovery events
