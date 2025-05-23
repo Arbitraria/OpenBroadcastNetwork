@@ -23,6 +23,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::discovery::interface::{
     ConnectionStatus, Discovery, DiscoveryError, DiscoveryEvent, PeerInfo,
 };
+use crate::discovery::utils::{self, DiscoveryUtilsError};
 
 /// Re-export for convenience
 pub use libp2p::mdns::Config as MdnsConfig;
@@ -258,29 +259,26 @@ impl MdnsDiscovery {
     
     /// Convert a PeerId to a byte vector
     fn peer_id_to_bytes(peer_id: &Libp2pPeerId) -> Vec<u8> {
-        peer_id.to_bytes()
+        utils::peer_id_to_bytes(peer_id)
     }
     
     /// Convert a byte vector to a PeerId
     fn bytes_to_peer_id(bytes: &[u8]) -> Result<Libp2pPeerId, DiscoveryError> {
-        Libp2pPeerId::from_bytes(bytes)
-            .map_err(|e| DiscoveryError::PeerIdError(e.to_string()))
+        utils::bytes_to_peer_id(bytes).map_err(|e| match e {
+            DiscoveryUtilsError::EmptyPeerId => DiscoveryError::InvalidPeerId("Empty peer ID".into()),
+            DiscoveryUtilsError::PeerIdConversion(e) => DiscoveryError::InvalidPeerId(e),
+            _ => DiscoveryError::Other(e.to_string()),
+        })
     }
     
     /// Convert a Multiaddr to a SocketAddr if possible
     fn multiaddr_to_socket_addr(addr: &Multiaddr) -> Option<SocketAddr> {
-        addr.iter().find_map(|p| match p {
-            Protocol::Ip4(ip) => Some(SocketAddr::new(ip.into(), 0)),
-            Protocol::Ip6(ip) => Some(SocketAddr::new(ip.into(), 0)),
-            Protocol::Dns4(host) => None, // Can't resolve DNS names here
-            Protocol::Dns6(host) => None, // Can't resolve DNS names here
-            _ => None,
-        })
+        utils::multiaddr_to_socket_addr(addr)
     }
     
     /// Convert a PeerInfo to a libp2p PeerId
     fn peer_info_to_peer_id(info: &PeerInfo) -> Result<Libp2pPeerId, DiscoveryError> {
-        Self::bytes_to_peer_id(&info.id)
+        utils::peer_info_to_peer_id(info).map_err(|e| DiscoveryError::InvalidPeerId(e.to_string()))
     }
     
     /// Handle an mDNS event

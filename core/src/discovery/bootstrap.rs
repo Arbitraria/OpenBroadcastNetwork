@@ -3,21 +3,15 @@
 //! This module provides peer discovery via well-known bootstrap nodes.
 
 use crate::discovery::interface::{Discovery, DiscoveryEvent, DiscoveryError, PeerInfo};
-use std::future::Future;
-use std::pin::Pin;
-use std::net::SocketAddr;
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
 use async_trait::async_trait;
 use futures::channel::mpsc::{channel, Receiver, Sender};
-use futures::{SinkExt, StreamExt};
-use std::pin::Pin;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
+use futures::SinkExt;
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::time::{interval, sleep, timeout};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info};
 
 /// Connection timeout for bootstrap nodes
 const BOOTSTRAP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -84,6 +78,9 @@ pub struct BootstrapDiscovery {
     /// Task handle for background discovery
     #[allow(dead_code)]
     task_handle: Option<tokio::task::JoinHandle<()>>,
+    
+    /// Sender to signal the background task to stop
+    stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl BootstrapDiscovery {
@@ -92,9 +89,15 @@ impl BootstrapDiscovery {
         Self::with_config(BootstrapDiscoveryConfig::default())
     }
     
+    /// Get the local peer ID if available
+    fn get_local_peer_id(&self) -> Option<Vec<u8>> {
+        self.own_info.as_ref().map(|info| info.id.clone())
+    }
+    
     /// Create a new bootstrap discovery service with custom configuration
     pub fn with_config(config: BootstrapDiscoveryConfig) -> Self {
         let (tx, rx) = channel(config.event_buffer_size);
+        let (stop_tx, _) = tokio::sync::oneshot::channel();
         
         Self {
             config,
@@ -104,6 +107,7 @@ impl BootstrapDiscovery {
             running: false,
             own_info: None,
             task_handle: None,
+            stop_tx: Some(stop_tx),
         }
     }
     
@@ -147,11 +151,15 @@ impl BootstrapDiscovery {
             let mut peers = Vec::new();
             
             // Add the bootstrap node itself
+            let now = std::time::SystemTime::now();
             let bootstrap_peer = PeerInfo {
                 id: Self::generate_peer_id(&addr),
                 addresses: vec![addr],
                 protocols: vec![protocol_name.clone()],
                 metadata: HashMap::new(),
+                first_seen: Some(now),
+                last_seen: Some(now),
+                connection_status: crate::discovery::interface::ConnectionStatus::Disconnected,
             };
             
             peers.push(bootstrap_peer);
@@ -161,11 +169,15 @@ impl BootstrapDiscovery {
                 let port = 10000 + i;
                 let peer_addr = SocketAddr::new(addr.ip(), port as u16);
                 
+                let now = std::time::SystemTime::now();
                 let peer_info = PeerInfo {
                     id: Self::generate_peer_id(&peer_addr),
                     addresses: vec![peer_addr],
                     protocols: vec![protocol_name.clone()],
                     metadata: HashMap::new(),
+                    first_seen: Some(now),
+                    last_seen: Some(now),
+                    connection_status: crate::discovery::interface::ConnectionStatus::Disconnected,
                 };
                 
                 peers.push(peer_info);
@@ -177,9 +189,9 @@ impl BootstrapDiscovery {
         // Apply timeout to the connection attempt
         match timeout(connect_timeout, connect_future).await {
             Ok(result) => result,
-            Err(_) => Err(DiscoveryError::BootstrapError(format!(
-                "Connection timeout to bootstrap node: {}", addr
-            ))),
+            Err(_) => Err(DiscoveryError::BootstrapError(
+                format!("Connection timeout to bootstrap node: {}", addr).into()
+            )),
         }
     }
     
@@ -200,7 +212,7 @@ impl BootstrapDiscovery {
         // Define the task for periodic bootstrap refresh
         let task = tokio::spawn(async move {
             let mut refresh_timer = interval(refresh_interval);
-            let mut expired_peers = HashSet::new();
+            let _expired_peers: HashSet<Vec<u8>> = HashSet::new();
             
             loop {
                 // Wait for the refresh interval
@@ -243,40 +255,56 @@ impl BootstrapDiscovery {
                         Err(e) => {
                             // Log the error but continue with other bootstrap nodes
                             error!("Failed to connect to bootstrap node {}: {}", addr, e);
-                            let _ = event_sender.send(DiscoveryEvent::Error(e)).await;
+                            let _ = event_sender.send(DiscoveryEvent::Error(e.to_string())).await;
                         },
                     }
                 }
                 
                 // Check for expired peers
                 let now = Instant::now();
-                expired_peers.clear();
                 
-                {
-                    let peers_lock = peers.lock().unwrap();
-                    for (id, (_, last_seen)) in peers_lock.iter() {
-                        if now.duration_since(*last_seen) > peer_expiration {
-                            expired_peers.insert(id.clone());
+                // Get a list of expired peer IDs
+                let expired_peers: Vec<Vec<u8>> = {
+                    let peers_guard = match peers.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            error!("Failed to lock peers");
+                            continue;
                         }
+                    };
+                    
+                    peers_guard
+                        .iter()
+                        .filter_map(|(peer_id, (_, last_seen))| {
+                            if now.duration_since(*last_seen) > peer_expiration {
+                                Some(peer_id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+                
+                // Remove expired peers
+                if !expired_peers.is_empty() {
+                    let mut peers_guard = match peers.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            error!("Failed to lock peers");
+                            continue;
+                        }
+                    };
+                    
+                    for peer_id in &expired_peers {
+                        peers_guard.remove(peer_id);
                     }
                 }
                 
-                // Remove expired peers and collect events to send
-                let mut expired_events = Vec::new();
-                
-                if !expired_peers.is_empty() {
-                    {
-                        let mut peers_lock = peers.lock().unwrap();
-                        for id in &expired_peers {
-                            peers_lock.remove(id);
-                            // Collect peer expired events
-                            expired_events.push(DiscoveryEvent::PeerExpired(id.clone()));
-                        }
-                    }
-                    
-                    // Send all expired events after releasing the lock
-                    for event in expired_events {
-                        let _ = event_sender.send(event).await;
+                // Send all expired events after releasing the lock
+                for peer_id in expired_peers {
+                    if let Err(e) = event_sender.try_send(DiscoveryEvent::PeerExpired(peer_id)) {
+                        error!(target: "bootstrap", "Failed to send peer expired event: {}", e);
+                        break;
                     }
                 }
             }
@@ -286,8 +314,9 @@ impl BootstrapDiscovery {
     }
 }
 
+#[async_trait::async_trait]
 impl Discovery for BootstrapDiscovery {
-    fn start(&mut self) -> Result<(), DiscoveryError> {
+    async fn start(&mut self) -> Result<(), DiscoveryError> {
         if self.running {
             return Ok(());
         }
@@ -302,7 +331,7 @@ impl Discovery for BootstrapDiscovery {
         // If no bootstrap nodes configured, we can't do discovery
         if self.config.bootstrap_nodes.is_empty() {
             return Err(DiscoveryError::BootstrapError(
-                "No bootstrap nodes configured".to_string()
+                anyhow::anyhow!("No bootstrap nodes configured").into()
             ));
         }
         
@@ -321,79 +350,108 @@ impl Discovery for BootstrapDiscovery {
         Ok(())
     }
     
-    fn stop(&mut self) -> Result<(), DiscoveryError> {
+    async fn stop(&mut self) -> Result<(), DiscoveryError> {
         if !self.running {
             return Ok(());
         }
         
-        // Cancel the discovery task
-        if let Some(handle) = self.task_handle.take() {
-            handle.abort();
+        self.running = false;
+        
+        // Signal the background task to stop
+        if let Some(sender) = self.stop_tx.take() {
+            // Ignore the error if the receiver is already dropped
+            let _ = sender.send(());
         }
         
-        self.running = false;
+        // Wait for the background task to complete if it exists
+        if let Some(handle) = self.task_handle.take() {
+            if let Err(e) = handle.await {
+                error!("Error in background task: {:?}", e);
+                return Err(DiscoveryError::Other("Background task error".into()));
+            }
+        }
+        
         Ok(())
     }
     
-    fn announce(&mut self, info: PeerInfo) -> Pin<Box<dyn Future<Output = Result<(), DiscoveryError>> + Send>> {
-        self.own_info = Some(info);
-        
-        // Bootstrap discovery doesn't actively announce, it just connects to bootstrap nodes
-        // and gets peer information. In a real implementation, we could inform bootstrap nodes
-        // of our presence so other peers can find us.
-        Box::pin(async { Ok(()) })
+    async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
+        // Store our own info for future reference
+        let mut peers = self.peers.lock().map_err(|_| DiscoveryError::Other("Failed to lock peers".into()))?;
+        peers.insert(info.id.clone(), (info, Instant::now()));
+        Ok(())
     }
     
-    fn lookup_peer(&mut self, id: &[u8]) -> Pin<Box<dyn Future<Output = Result<Option<PeerInfo>, DiscoveryError>> + Send>> {
+    async fn lookup_peer(&self, peer_id: &[u8]) -> Result<Option<PeerInfo>, DiscoveryError> {
         // Look up in our local cache
-        let peer_id = id.to_vec();
-        let peers = self.peers.clone();
+        let peers = self.peers.lock().map_err(|_| DiscoveryError::Other("Failed to lock peers".into()))?;
+        if let Some((info, _)) = peers.get(peer_id) {
+            return Ok(Some(info.clone()));
+        }
         
-        Box::pin(async move {
-            let peers = peers.lock().unwrap();
-            if let Some((info, _)) = peers.get(&peer_id) {
-                return Ok(Some(info.clone()));
-            }
-            
-            // Not found in cache
-            Ok(None)
-        })
+        // Not found in cache
+        Ok(None)
     }
     
-    fn find_peers(&mut self, predicate: Option<String>) -> Pin<Box<dyn Future<Output = Result<Vec<PeerInfo>, DiscoveryError>> + Send>> {
-        let peers = self.peers.clone();
-        let protocol = predicate;
+    async fn find_peers(&self, criteria: &str) -> Result<Vec<PeerInfo>, DiscoveryError> {
+        let peers = self.peers.lock().map_err(|_| DiscoveryError::Other("Failed to lock peers".into()))?;
+        let now = Instant::now();
         
-        Box::pin(async move {
-            let mut result = Vec::new();
-            let peers = peers.lock().unwrap();
+        // Filter peers based on the criteria
+        let result = peers.values()
+            .filter(|(info, last_seen)| {
+                let not_expired = now.duration_since(*last_seen) < Duration::from_secs(self.config.peer_expiration as u64);
+                let matches_criteria = criteria.is_empty() || 
+                    info.protocols.iter().any(|proto| proto.contains(criteria));
+                not_expired && matches_criteria
+            })
+            .map(|(info, _)| info.clone())
+            .collect();
             
-            for (_, (info, _)) in peers.iter() {
-                if let Some(ref proto) = protocol {
-                    if info.protocols.contains(&proto) {
-                        result.push(info.clone());
+        Ok(result)
+    }
+    
+    async fn next_event(&mut self, timeout: Option<Duration>) -> Result<Option<DiscoveryEvent>, DiscoveryError> {
+        use futures::StreamExt;
+        
+        if let Some(receiver) = &mut self.event_receiver {
+            match timeout {
+                Some(duration) => {
+                    match tokio::time::timeout(duration, receiver.next()).await {
+                        Ok(Some(event)) => Ok(Some(event)),
+                        Ok(None) => Ok(None),
+                        Err(_) => Ok(None),
                     }
-                } else {
-                    result.push(info.clone());
+                }
+                None => {
+                    match receiver.next().await {
+                        Some(event) => Ok(Some(event)),
+                        None => Ok(None),
+                    }
                 }
             }
-            
-            Ok(result)
-        })
-    }
-    
-    fn next_event(&mut self) -> Pin<Box<dyn Future<Output = Option<DiscoveryEvent>> + Send>> {
-        match &mut self.event_receiver {
-            Some(receiver) => {
-                // Use the existing receiver directly
-                let mut receiver = unsafe { std::ptr::read(receiver) };
-                Box::pin(async move { receiver.next().await })
-            },
-            None => Box::pin(async { None }),
+        } else {
+            Ok(None)
         }
     }
     
     fn is_running(&self) -> bool {
         self.running
     }
-} 
+    
+    fn local_peer_id(&self) -> Option<Vec<u8>> {
+        self.get_local_peer_id()
+    }
+    
+    async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError> {
+        let peers = self.peers.lock().map_err(|_| DiscoveryError::Other("Failed to lock peers".into()))?;
+        let now = Instant::now();
+        
+        // Return all non-expired peers
+        let result = peers.values()
+            .filter(|(_, last_seen)| now.duration_since(*last_seen) < Duration::from_secs(self.config.peer_expiration as u64))
+            .map(|(info, _)| info.clone())
+            .collect();
+            
+        Ok(result)
+    }
+}

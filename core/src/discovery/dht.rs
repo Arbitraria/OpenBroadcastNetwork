@@ -19,8 +19,11 @@ use libp2p::PeerId;
 use log;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
+use std::future::Future;
+use std::pin::Pin;
 
 /// Configuration for DHT discovery
 #[derive(Debug, Clone)]
@@ -91,7 +94,7 @@ pub struct DhtDiscovery {
     peers: Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
     
     /// Is the discovery service running
-    running: bool,
+    running: Arc<AtomicBool>,
     
     /// Our own peer info for announcements
     own_info: Option<PeerInfo>,
@@ -129,14 +132,14 @@ impl DhtDiscovery {
     
     /// Create a new DHT discovery instance with the given configuration
     pub fn with_config(config: DhtDiscoveryConfig) -> Self {
-        let (event_sender, event_receiver) = mpsc::channel(32); // Use a fixed buffer size
+        let (event_sender, event_receiver) = mpsc::channel(32);
         
-        Self {
+        DhtDiscovery {
             config,
             event_sender: Some(event_sender),
             event_receiver: Some(event_receiver),
             peers: Arc::new(Mutex::new(HashMap::new())),
-            running: false,
+            running: Arc::new(AtomicBool::new(false)),
             own_info: None,
             active_queries: Arc::new(Mutex::new(HashMap::new())),
             local_peer_id: None,
@@ -145,100 +148,116 @@ impl DhtDiscovery {
     }
 }
 
+#[async_trait::async_trait]
 impl Discovery for DhtDiscovery {
-    fn start(&mut self) -> Result<(), DiscoveryError> {
-        if self.running {
-            return Err(DiscoveryError::DhtError("Already running".to_string()));
+    async fn start(&mut self) -> Result<(), DiscoveryError> {
+        if self.running.load(Ordering::SeqCst) {
+            return Err(DiscoveryError::AlreadyRunning);
         }
         
-        self.running = true;
+        // Initialize DHT components
+        debug!(target: "dht", "Starting DHT discovery service");
         
-        // Start background task for periodic DHT refreshes
-        let peers = self.peers.clone();
-        let event_sender = self.event_sender.as_mut().ok_or_else(|| {
-            DiscoveryError::DhtError("Event sender not initialized".to_string())
-        })?;
+        // Store the current peer info
+        let peer_id = match self.local_peer_id.take() {
+            Some(id) => id,
+            None => PeerId::random(),
+        };
         
-        // Use a default refresh interval of 300 seconds (5 minutes)
-        let refresh_interval = 300;
+        // Mark as running
+        self.running.store(true, Ordering::SeqCst);
         
-        let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval));
+        debug!(target: "dht", "DHT discovery service started with peer ID: {:?}", peer_id);
+        Ok(())
+    }
+    
+    async fn stop(&mut self) -> Result<(), DiscoveryError> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(DiscoveryError::NotRunning);
+        }
+        
+        debug!(target: "dht", "Stopping DHT discovery service");
+        
+        // Stop background tasks
+        self.running.store(false, Ordering::SeqCst);
+        
+        // Drop the event sender to close the channel
+        self.event_sender = None;
+        
+        debug!(target: "dht", "DHT discovery service stopped");
+        Ok(())
+    }
+    
+    async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
+        let peer_id = PeerId::from_bytes(&info.id)
+            .map_err(|e| DiscoveryError::Other(format!("Invalid peer ID: {}", e)))?;
             
-            loop {
-                interval.tick().await;
-                
-                // Refresh DHT routing table
-                // We don't need to send an event for the refresh, just log it
-                log::debug!("Refreshing DHT routing table");
-            }
-        });
+        // Convert peer info to DHT record and publish
+        // This is a simplified implementation
+        debug!(target: "dht", "Announcing peer: {:?}", peer_id);
         
-        self.task_handle = Some(handle);
-        Ok(())
-    }
-    
-    fn stop(&mut self) -> Result<(), DiscoveryError> {
-        if !self.running {
-            return Err(DiscoveryError::DhtError("Not running".to_string()));
-        }
-        
-        self.running = false;
-        
-        // Cancel background task
-        if let Some(handle) = self.task_handle.take() {
-            handle.abort();
-        }
+        // Store the peer in our local cache
+        let mut peers = self.peers.lock().await;
+        peers.insert(info.id.clone(), (info, Instant::now()));
         
         Ok(())
     }
     
-    fn announce(&mut self, info: PeerInfo) -> Pin<Box<dyn Future<Output = Result<(), DiscoveryError>> + Send>> {
-        let peers = self.peers.clone();
-        // Clone the ID separately to avoid partial move
-        let id = info.id.clone();
-        let info_clone = info.clone();
-        
-        Box::pin(async move {
-            let mut peers = peers.lock().await;
-            // Use the cloned ID as the key
-            peers.insert(id, (info_clone, Instant::now()));
-            Ok(())
-        })
-    }
-    
-    fn lookup_peer(&mut self, id: &[u8]) -> Pin<Box<dyn Future<Output = Result<Option<PeerInfo>, DiscoveryError>> + Send>> {
-        let peers = self.peers.clone();
-        let id = id.to_vec();
-        
-        Box::pin(async move {
-            let peers = peers.lock().await;
-            // Look up by the peer ID (Vec<u8>)
-            Ok(peers.get(&id).map(|(info, _)| info.clone()))
-        })
-    }
-    
-    fn find_peers(&mut self, _predicate: Option<String>) -> Pin<Box<dyn Future<Output = Result<Vec<PeerInfo>, DiscoveryError>> + Send>> {
-        let peers = self.peers.clone();
-        
-        Box::pin(async move {
-            let peers = peers.lock().await;
-            Ok(peers.values().map(|(info, _)| info.clone()).collect())
-        })
-    }
-    
-    fn next_event(&mut self) -> Pin<Box<dyn Future<Output = Option<DiscoveryEvent>> + Send>> {
-        match &mut self.event_receiver {
-            Some(receiver) => {
-                // Use the existing receiver directly
-                let mut receiver = unsafe { std::ptr::read(receiver) };
-                Box::pin(async move { receiver.next().await })
-            },
-            None => Box::pin(async { None }),
+    async fn lookup_peer(&self, peer_id: &[u8]) -> Result<Option<PeerInfo>, DiscoveryError> {
+        // Check local cache first
+        let peers = self.peers.lock().await;
+        if let Some((info, _)) = peers.get(peer_id) {
+            return Ok(Some(info.clone()));
         }
+        
+        // If not found locally, perform DHT lookup
+        // This is a simplified implementation
+        debug!(target: "dht", "Looking up peer: {:?}", peer_id);
+        
+        Ok(None)
+    }
+    
+    async fn find_peers(&self, criteria: &str) -> Result<Vec<PeerInfo>, DiscoveryError> {
+        // This is a simplified implementation that just returns all known peers
+        // In a real DHT, this would perform a DHT lookup for peers matching the criteria
+        let peers = self.peers.lock().await;
+        let result = peers.values()
+            .filter_map(|(info, _)| {
+                if criteria.is_empty() || info.protocols.iter().any(|p| p.contains(criteria)) {
+                    Some(info.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+            
+        Ok(result)
+    }
+    
+    async fn next_event(&mut self, _timeout: Option<Duration>) -> Result<Option<DiscoveryEvent>, DiscoveryError> {
+        // In a real implementation, this would wait for the next event from the DHT
+        // For now, we'll just return None
+        Ok(None)
     }
     
     fn is_running(&self) -> bool {
-        self.running
+        self.running.load(Ordering::SeqCst)
     }
-} 
+    
+    fn local_peer_id(&self) -> Option<Vec<u8>> {
+        self.local_peer_id.as_ref().map(|id| id.to_bytes())
+    }
+    
+    async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError> {
+        let peers = self.peers.lock().await;
+        let now = Instant::now();
+        
+        // Filter out expired peers
+        let result = peers.values()
+            .filter(|(_, last_seen)| now.duration_since(*last_seen) < PEER_EXPIRATION)
+            .map(|(info, _)| info.clone())
+            .collect();
+            
+        Ok(result)
+    }
+}

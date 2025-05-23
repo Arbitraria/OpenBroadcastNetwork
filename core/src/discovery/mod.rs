@@ -110,21 +110,21 @@ impl DiscoveryManager {
         if self.config.enable_mdns {
             let config = self.config.mdns_config.clone().unwrap_or_default();
             let mut mdns = MdnsDiscovery::with_config(config);
-            mdns.start()?;
+            mdns.start().await?;
             self.mdns = Some(Arc::new(Mutex::new(mdns)));
         }
         
         if self.config.enable_dht {
             let config = self.config.dht_config.clone().unwrap_or_default();
             let mut dht = DhtDiscovery::with_config(config);
-            dht.start()?;
+            dht.start().await?;
             self.dht = Some(Arc::new(Mutex::new(dht)));
         }
         
         if self.config.enable_bootstrap {
             let config = self.config.bootstrap_config.clone().unwrap_or_default();
             let mut bootstrap = BootstrapDiscovery::with_config(config);
-            bootstrap.start()?;
+            bootstrap.start().await?;
             self.bootstrap = Some(Arc::new(Mutex::new(bootstrap)));
         }
         
@@ -143,27 +143,47 @@ impl DiscoveryManager {
             while *running_flag.read().await {
                 interval.tick().await;
                 
-                // Poll mDNS
-                if let Some(mdns_discovery) = &mdns {
-                    let mut mdns = mdns_discovery.lock().await;
-                    if let Some(event) = mdns.next_event().await {
-                        Self::handle_discovery_event(event, &peers, &event_tx).await;
-                    }
-                }
-                
-                // Poll DHT
-                if let Some(dht_discovery) = &dht {
-                    let mut dht = dht_discovery.lock().await;
-                    if let Some(event) = dht.next_event().await {
-                        Self::handle_discovery_event(event, &peers, &event_tx).await;
-                    }
-                }
-                
-                // Poll Bootstrap
-                if let Some(bootstrap_discovery) = &bootstrap {
-                    let mut bootstrap = bootstrap_discovery.lock().await;
-                    if let Some(event) = bootstrap.next_event().await {
-                        Self::handle_discovery_event(event, &peers, &event_tx).await;
+                // Check for discovery events with a 1-second timeout
+                tokio::select! {
+                    // Handle bootstrap events
+                    result = async {
+                        if let Some(bootstrap) = &bootstrap {
+                            bootstrap.lock().await.next_event(Some(Duration::from_secs(1))).await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    } => {
+                        if let Ok(Some(event)) = result {
+                            let _ = event_tx.send(event).await;
+                        }
+                    },
+                    // Handle DHT events
+                    result = async {
+                        if let Some(dht) = &dht {
+                            dht.lock().await.next_event(Some(Duration::from_secs(1))).await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    } => {
+                        if let Ok(Some(event)) = result {
+                            let _ = event_tx.send(event).await;
+                        }
+                    },
+                    // Handle mDNS events
+                    result = async {
+                        if let Some(mdns) = &mdns {
+                            mdns.lock().await.next_event(Some(Duration::from_secs(1))).await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    } => {
+                        if let Ok(Some(event)) = result {
+                            let _ = event_tx.send(event).await;
+                        }
+                    },
+                    // Handle shutdown signal
+                    _ = &mut shutdown_rx => {
+                        break;
                     }
                 }
             }
@@ -180,35 +200,26 @@ impl DiscoveryManager {
     
     /// Stop the discovery manager
     pub async fn stop(&mut self) -> Result<(), DiscoveryError> {
-        let mut running = self.running.write().await;
-        
-        if !*running {
-            return Ok(());
+        // Stop DHT discovery
+        if let Some(dht) = &mut self.dht {
+            dht.lock().await.stop().await?;
         }
         
-        // Stop the worker task
-        if let Some(worker) = self.worker_task.lock().await.take() {
-            worker.abort();
+        // Stop bootstrap discovery
+        if let Some(bootstrap) = &mut self.bootstrap {
+            bootstrap.lock().await.stop().await?;
         }
         
-        // Stop discovery mechanisms
-        if let Some(mdns) = &self.mdns {
-            mdns.lock().await.stop()?;
-        }
-        
-        if let Some(dht) = &self.dht {
-            dht.lock().await.stop()?;
-        }
-        
-        if let Some(bootstrap) = &self.bootstrap {
-            bootstrap.lock().await.stop()?;
+        // Stop mDNS discovery
+        if let Some(mdns) = &mut self.mdns {
+            mdns.lock().await.stop().await?;
         }
         
         // Clear known peers
         self.peers.write().await.clear();
         
-        // Mark as not running
-        *running = false;
+        // Set running to false
+        *self.running.write().await = false;
         
         info!("Discovery manager stopped");
         
@@ -217,6 +228,7 @@ impl DiscoveryManager {
     
     /// Handle a discovery event
     async fn handle_discovery_event(
+        &self,
         event: DiscoveryEvent,
         peers: &Arc<RwLock<HashMap<Vec<u8>, PeerInfo>>>,
         event_tx: &mpsc::Sender<DiscoveryEvent>,
@@ -229,16 +241,37 @@ impl DiscoveryManager {
                 debug!("Discovered peer: {:?}", info);
             },
             DiscoveryEvent::PeerUpdated(info) => {
-                // Update known peer
+                // Update existing peer info
                 let mut peers_lock = peers.write().await;
-                peers_lock.insert(info.id.clone(), info.clone());
-                debug!("Updated peer: {:?}", info);
+                if let Some(existing) = peers_lock.get_mut(&info.id) {
+                    *existing = info.clone();
+                    debug!("Updated peer: {:?}", info);
+                }
             },
-            DiscoveryEvent::PeerExpired(id) => {
-                // Remove from known peers
+            DiscoveryEvent::PeerExpired(peer_id) => {
+                // Remove expired peer
                 let mut peers_lock = peers.write().await;
-                peers_lock.remove(id);
-                debug!("Peer expired: {:?}", id);
+                if peers_lock.remove(peer_id).is_some() {
+                    debug!("Peer expired: {:?}", peer_id);
+                }
+            },
+            DiscoveryEvent::PeerConnectionStatusChanged { peer_id, status, error } => {
+                // Update connection status for the peer
+                let mut peers_lock = peers.write().await;
+                if let Some(peer_info) = peers_lock.get_mut(peer_id) {
+                    peer_info.connection_status = status.clone();
+                    if let Some(err) = error {
+                        debug!("Peer connection status changed: {:?} -> {:?} (error: {})", peer_id, status, err);
+                    } else {
+                        debug!("Peer connection status changed: {:?} -> {:?}", peer_id, status);
+                    }
+                }
+            },
+            DiscoveryEvent::ServiceStarted => {
+                debug!("Discovery service started");
+            },
+            DiscoveryEvent::ServiceStopped => {
+                debug!("Discovery service stopped");
             },
             DiscoveryEvent::Error(e) => {
                 error!("Discovery error: {}", e);
