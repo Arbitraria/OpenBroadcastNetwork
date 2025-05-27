@@ -19,6 +19,7 @@ use crate::pubsub::message::{Message, MessageId, MessagePayload, MessageType};
 use crate::pubsub::validation::{MessageValidator, ValidationResult, BasicValidator};
 use crate::pubsub::metrics::{PubSubMetrics, PubSubStats};
 use crate::overlay::peer::LocalPeerId;
+use std::convert::{TryFrom, TryInto};
 
 /// Configuration for GossipSub
 #[derive(Debug, Clone)]
@@ -179,15 +180,14 @@ impl GossipSubService {
     
     /// Convert libp2p PeerId to our LocalPeerId
     fn from_libp2p_peer_id(peer_id: &libp2p::PeerId) -> LocalPeerId {
-        // Convert the libp2p PeerId to bytes and create our LocalPeerId
-        let bytes = peer_id.to_bytes();
-        LocalPeerId::from_bytes(bytes.to_vec())
+        // Use the From trait implementation
+        LocalPeerId::from(peer_id)
     }
     
     /// Convert our LocalPeerId to libp2p PeerId
     fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<libp2p::PeerId, PubSubError> {
-        // Convert our LocalPeerId bytes to a libp2p PeerId
-        libp2p::PeerId::from_bytes(&peer_id.0)
+        // Use the TryFrom trait implementation
+        libp2p::PeerId::try_from(peer_id)
             .map_err(|e| PubSubError::PeerIdError(e.to_string()))
     }
     

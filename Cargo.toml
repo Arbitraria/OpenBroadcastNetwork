@@ -17,11 +17,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 thiserror = "1.0"
 anyhow = "1.0"
-# Using a local version of ed25519-dalek to resolve dependency conflicts
-# Using an older version of libp2p to resolve dependency conflicts
-libp2p = { version = "0.53.0", features = ["async-std", "tcp", "dns", "mdns", "gossipsub", "identify", "kad", "noise"] }
+# Using version 0.53.0 of libp2p to ensure compatibility
+libp2p = { version = "0.53.0", features = ["tokio", "tcp", "dns", "mdns", "gossipsub", "identify", "kad", "noise"] }
 webrtc = "0.7"
 axum = "0.6"
-
-[patch.crates-io]
-ed25519-dalek = { path = "../ed25519-dalek" }

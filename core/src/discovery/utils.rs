@@ -3,7 +3,9 @@
 use libp2p::core::multiaddr::{Multiaddr, Protocol};
 use libp2p::PeerId as Libp2pPeerId;
 use std::net::SocketAddr;
+use std::convert::{TryFrom, TryInto};
 use thiserror::Error;
+use crate::overlay::peer::LocalPeerId;
 
 /// Error type for discovery utilities
 #[derive(Debug, Error)]
@@ -29,6 +31,17 @@ pub(crate) fn bytes_to_peer_id(bytes: &[u8]) -> Result<Libp2pPeerId, DiscoveryUt
         return Err(DiscoveryUtilsError::EmptyPeerId);
     }
     Libp2pPeerId::from_bytes(bytes).map_err(|e| DiscoveryUtilsError::PeerIdConversion(e.to_string()))
+}
+
+/// Convert LocalPeerId to libp2p::PeerId
+pub fn local_to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<Libp2pPeerId, DiscoveryUtilsError> {
+    Libp2pPeerId::try_from(peer_id)
+        .map_err(|e| DiscoveryUtilsError::PeerIdConversion(e.to_string()))
+}
+
+/// Convert libp2p::PeerId to LocalPeerId
+pub fn libp2p_to_local_peer_id(peer_id: &Libp2pPeerId) -> LocalPeerId {
+    LocalPeerId::from(peer_id)
 }
 
 /// Convert a Multiaddr to a SocketAddr if possible

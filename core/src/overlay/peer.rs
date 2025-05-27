@@ -7,12 +7,13 @@ use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use std::convert::{TryFrom, TryInto};
 
 /// A unique peer identifier
 /// 
 /// This is a wrapper around a byte vector that represents a peer's unique identifier.
 /// It implements common traits like Debug, Clone, PartialEq, Eq, Hash, Serialize, and Deserialize.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LocalPeerId(pub Vec<u8>);
 
 impl LocalPeerId {
@@ -61,6 +62,38 @@ impl fmt::Debug for LocalPeerId {
 impl fmt::Display for LocalPeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_base58())
+    }
+}
+
+// Implement conversion from libp2p::PeerId to LocalPeerId
+impl From<libp2p::PeerId> for LocalPeerId {
+    fn from(peer_id: libp2p::PeerId) -> Self {
+        Self(peer_id.to_bytes())
+    }
+}
+
+// Implement conversion from &libp2p::PeerId to LocalPeerId
+impl From<&libp2p::PeerId> for LocalPeerId {
+    fn from(peer_id: &libp2p::PeerId) -> Self {
+        Self(peer_id.to_bytes())
+    }
+}
+
+// Implement conversion from LocalPeerId to libp2p::PeerId (fallible)
+impl TryFrom<LocalPeerId> for libp2p::PeerId {
+    type Error = libp2p::core::identity::DecodingError;
+    
+    fn try_from(peer_id: LocalPeerId) -> Result<Self, Self::Error> {
+        libp2p::PeerId::from_bytes(&peer_id.0)
+    }
+}
+
+// Implement conversion from &LocalPeerId to libp2p::PeerId (fallible)
+impl TryFrom<&LocalPeerId> for libp2p::PeerId {
+    type Error = libp2p::core::identity::DecodingError;
+    
+    fn try_from(peer_id: &LocalPeerId) -> Result<Self, Self::Error> {
+        libp2p::PeerId::from_bytes(&peer_id.0)
     }
 }
 
@@ -163,8 +196,11 @@ pub struct PeerConnection {
     /// Whether this is an outbound connection
     pub is_outbound: bool,
     
+    /// Connection status
+    pub status: ConnectionStatus,
+    
     /// When the connection was established
-    pub connected_at: Instant,
+    pub connected_at: Option<Instant>,
     
     /// Last time data was sent or received
     pub last_activity: Instant,
@@ -193,10 +229,12 @@ impl PeerConnection {
             status: ConnectionStatus::Connecting,
             connected_at: None,
             last_activity: Instant::now(),
-            latency_ms: 0,
+            latency_ms: None,
             bytes_sent: 0,
             bytes_received: 0,
             is_outbound,
+            failed_attempts: 0,
+            is_blocked: false,
         }
     }
     
@@ -230,7 +268,7 @@ impl PeerConnection {
     
     /// Update the measured latency
     pub fn update_latency(&mut self, latency_ms: u64) {
-        self.latency_ms = latency_ms;
+        self.latency_ms = Some(latency_ms);
     }
 }
 
@@ -258,6 +296,12 @@ pub struct Peer {
     /// Whether the peer is whitelisted
     pub is_whitelisted: bool,
     
+    /// When the peer was last connected
+    pub last_connected: Option<Instant>,
+    
+    /// Whether the peer is blocked
+    pub is_blocked: bool,
+    
     /// Additional peer-specific settings
     pub settings: HashMap<String, String>,
 }
@@ -269,8 +313,11 @@ impl Peer {
             id,
             info,
             connection: None,
-            last_connected: None,
+            discovered_at: Instant::now(),
             connection_attempts: 0,
+            last_error: None,
+            is_whitelisted: false,
+            last_connected: None,
             is_blocked: false,
             settings: HashMap::new(),
         }

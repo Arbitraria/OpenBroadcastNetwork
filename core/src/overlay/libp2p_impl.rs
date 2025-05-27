@@ -41,18 +41,19 @@ use crate::overlay::{
 
 // Re-export for local use
 use crate::overlay::peer::PeerId as LocalPeerId;
+use std::convert::{TryFrom, TryInto};
 
 /// Convert our LocalPeerId to libp2p's PeerId
 fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<Libp2pPeerId, OverlayError> {
-    let bytes = peer_id.0.as_slice();
-    let libp2p_peer_id = Libp2pPeerId::from_bytes(bytes)
-        .map_err(|e| OverlayError::Other(format!("Invalid peer ID: {}", e)))?;
-    Ok(libp2p_peer_id)
+    // Use the TryFrom trait implementation
+    Libp2pPeerId::try_from(peer_id)
+        .map_err(|e| OverlayError::Other(format!("Invalid peer ID: {}", e)))
 }
 
 /// Convert libp2p's PeerId to our LocalPeerId
 fn from_libp2p_peer_id(peer_id: &Libp2pPeerId) -> LocalPeerId {
-    LocalPeerId(peer_id.to_bytes())
+    // Use the From trait implementation
+    LocalPeerId::from(peer_id)
 }
 
 /// Topics for the pub/sub system

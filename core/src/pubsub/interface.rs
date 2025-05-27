@@ -26,6 +26,9 @@ pub enum PubSubError {
     #[error("Message validation error: {0}")]
     ValidationError(String),
     
+    #[error("Peer ID error: {0}")]
+    PeerIdError(String),
+    
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
