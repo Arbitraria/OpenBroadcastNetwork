@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::pubsub::topic::{Topic, TopicId};
 use crate::pubsub::message::{Message, MessageId};
-use crate::overlay::peer::PeerId;
+use crate::overlay::peer::LocalPeerId;
 
 /// Error types for pub/sub operations
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +37,7 @@ pub enum PubSubEvent {
     MessageReceived {
         topic: TopicId,
         message: Arc<Message>,
-        source: Option<PeerId>,
+        source: Option<LocalPeerId>,
     },
     
     /// A message was successfully published to a topic
@@ -49,13 +49,13 @@ pub enum PubSubEvent {
     /// A new peer has joined a topic
     PeerJoined {
         topic: TopicId,
-        peer: PeerId,
+        peer_id: LocalPeerId,
     },
     
     /// A peer has left a topic
     PeerLeft {
         topic: TopicId,
-        peer: PeerId,
+        peer_id: LocalPeerId,
     },
     
     /// Topic subscription changed
@@ -102,7 +102,7 @@ pub trait PubSub: Send + Sync {
     fn publish_message(&mut self, topic_id: &TopicId, message: Message) -> Result<MessageId, PubSubError>;
     
     /// Get the list of peers subscribed to a topic
-    fn list_peers(&self, topic_id: &TopicId) -> Vec<PeerId>;
+    fn list_peers(&self, topic_id: &TopicId) -> Vec<LocalPeerId>;
     
     /// Get the list of topics this node is subscribed to
     fn list_subscriptions(&self) -> Vec<TopicId>;

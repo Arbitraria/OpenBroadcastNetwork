@@ -3,9 +3,6 @@
 use std::time::Duration;
 use tokio::sync::oneshot::Sender as OneshotSender;
 
-/// Default service name for mDNS discovery
-const DEFAULT_SERVICE_NAME: &str = "_decentralized-stream._udp";
-
 /// Default TTL for mDNS records in seconds
 const DEFAULT_TTL: u32 = 120;
 
@@ -16,13 +13,10 @@ const DEFAULT_EVENT_BUFFER_SIZE: usize = 100;
 const DEFAULT_PEER_EXPIRATION: u64 = 300; // 5 minutes
 
 /// Configuration for mDNS discovery
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MdnsDiscoveryConfig {
     /// TTL for mDNS records in seconds
     pub ttl: u32,
-    
-    /// Service name for discovery
-    pub service_name: String,
     
     /// Maximum number of events to buffer
     pub event_buffer_size: usize,
@@ -31,17 +25,27 @@ pub struct MdnsDiscoveryConfig {
     pub peer_expiration: u64,
     
     /// Sender for the shutdown signal (used internally)
-    shutdown_sender: Option<OneshotSender<()>>,
+    pub shutdown_sender: Option<OneshotSender<()>>,
 }
 
 impl Default for MdnsDiscoveryConfig {
     fn default() -> Self {
         Self {
             ttl: DEFAULT_TTL,
-            service_name: DEFAULT_SERVICE_NAME.to_string(),
             event_buffer_size: DEFAULT_EVENT_BUFFER_SIZE,
             peer_expiration: DEFAULT_PEER_EXPIRATION,
             shutdown_sender: None,
+        }
+    }
+}
+
+impl Clone for MdnsDiscoveryConfig {
+    fn clone(&self) -> Self {
+        Self {
+            ttl: self.ttl,
+            event_buffer_size: self.event_buffer_size,
+            peer_expiration: self.peer_expiration,
+            shutdown_sender: None, // Don't clone the sender as it's not Clone
         }
     }
 }
@@ -55,12 +59,6 @@ impl MdnsDiscoveryConfig {
     /// Set the TTL for mDNS records
     pub fn with_ttl(mut self, ttl: u32) -> Self {
         self.ttl = ttl;
-        self
-    }
-    
-    /// Set the service name for discovery
-    pub fn with_service_name<S: Into<String>>(mut self, service_name: S) -> Self {
-        self.service_name = service_name.into();
         self
     }
     
@@ -89,8 +87,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = MdnsDiscoveryConfig::default();
+        
         assert_eq!(config.ttl, DEFAULT_TTL);
-        assert_eq!(config.service_name, DEFAULT_SERVICE_NAME);
         assert_eq!(config.event_buffer_size, DEFAULT_EVENT_BUFFER_SIZE);
         assert_eq!(config.peer_expiration, DEFAULT_PEER_EXPIRATION);
         assert!(config.shutdown_sender.is_none());
@@ -100,12 +98,10 @@ mod tests {
     fn test_builder_pattern() {
         let config = MdnsDiscoveryConfig::new()
             .with_ttl(60)
-            .with_service_name("_test-service._udp")
             .with_event_buffer_size(50)
             .with_peer_expiration(60);
         
         assert_eq!(config.ttl, 60);
-        assert_eq!(config.service_name, "_test-service._udp");
         assert_eq!(config.event_buffer_size, 50);
         assert_eq!(config.peer_expiration, 60);
     }

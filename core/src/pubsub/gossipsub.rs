@@ -9,7 +9,7 @@ use libp2p::gossipsub::{
     Gossipsub, GossipsubMessage, GossipsubEvent, MessageId as LibP2PMessageId,
     IdentTopic as LibP2PTopic, MessageAuthenticity, ValidationMode, GossipsubConfig as LibP2PGossipsubConfig
 };
-use libp2p::core::{PeerId as LibP2PPeerId, identity::Keypair};
+use libp2p::core::{identity::Keypair};
 use libp2p::swarm::NetworkBehaviour;
 use tracing::{debug, error, info, trace, warn};
 
@@ -18,7 +18,7 @@ use crate::pubsub::topic::{Topic, TopicId};
 use crate::pubsub::message::{Message, MessageId, MessagePayload, MessageType};
 use crate::pubsub::validation::{MessageValidator, ValidationResult, BasicValidator};
 use crate::pubsub::metrics::{PubSubMetrics, PubSubStats};
-use crate::overlay::peer::PeerId;
+use crate::overlay::peer::LocalPeerId;
 
 /// Configuration for GossipSub
 #[derive(Debug, Clone)]
@@ -107,8 +107,8 @@ pub struct GossipSubService {
     /// Node keypair for message signing
     keypair: Keypair,
     
-    /// Known peers
-    peers: RwLock<HashSet<PeerId>>,
+    /// Peers connected to this node
+    peers: RwLock<HashSet<LocalPeerId>>,
     
     /// Is the service started
     started: std::sync::atomic::AtomicBool,
@@ -177,18 +177,18 @@ impl GossipSubService {
         LibP2PTopic::new(topic_id.0.clone())
     }
     
-    /// Convert libp2p PeerId to our PeerId
-    fn from_libp2p_peer_id(peer_id: &LibP2PPeerId) -> PeerId {
-        // Convert the libp2p PeerId to bytes and create our PeerId
+    /// Convert libp2p PeerId to our LocalPeerId
+    fn from_libp2p_peer_id(peer_id: &libp2p::PeerId) -> LocalPeerId {
+        // Convert the libp2p PeerId to bytes and create our LocalPeerId
         let bytes = peer_id.to_bytes();
-        PeerId::from_bytes(bytes.to_vec())
+        LocalPeerId::from_bytes(bytes.to_vec())
     }
     
-    /// Convert our PeerId to libp2p PeerId
-    fn to_libp2p_peer_id(peer_id: &PeerId) -> Result<LibP2PPeerId, PubSubError> {
-        // Convert our PeerId bytes to a libp2p PeerId
-        LibP2PPeerId::from_bytes(&peer_id.0)
-            .map_err(|e| PubSubError::InvalidTopic(format!("Invalid peer ID: {}", e)))
+    /// Convert our LocalPeerId to libp2p PeerId
+    fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<libp2p::PeerId, PubSubError> {
+        // Convert our LocalPeerId bytes to a libp2p PeerId
+        libp2p::PeerId::from_bytes(&peer_id.0)
+            .map_err(|e| PubSubError::PeerIdError(e.to_string()))
     }
     
     /// Convert Message to GossipsubMessage
@@ -218,7 +218,7 @@ impl GossipSubService {
         &self,
         topic_id: TopicId,
         gossipsub_msg: &GossipsubMessage,
-        source: Option<LibP2PPeerId>,
+        source: Option<libp2p::PeerId>,
     ) -> Result<Message, PubSubError> {
         // Try to deserialize the message
         match serde_json::from_slice::<Message>(&gossipsub_msg.data) {
@@ -331,7 +331,7 @@ impl PubSub for GossipSubService {
         Ok(message.id.clone())
     }
     
-    fn list_peers(&self, topic_id: &TopicId) -> Vec<PeerId> {
+    fn list_peers(&self, topic_id: &TopicId) -> Vec<LocalPeerId> {
         match self.peers.read() {
             Ok(peers) => peers.iter().cloned().collect(),
             Err(_) => Vec::new(),

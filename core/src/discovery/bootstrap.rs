@@ -374,7 +374,7 @@ impl Discovery for BootstrapDiscovery {
         Ok(())
     }
     
-    async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
+    async fn announce(&mut self, info: PeerInfo) -> Result<(), DiscoveryError> {
         // Store our own info for future reference
         let mut peers = self.peers.lock().map_err(|_| DiscoveryError::Other("Failed to lock peers".into()))?;
         peers.insert(info.id.clone(), (info, Instant::now()));

@@ -41,7 +41,7 @@ pub struct MdnsService {
     running: Arc<AtomicBool>,
     
     /// Local peer ID
-    local_peer_id: Option<Vec<u8>>,
+    pub local_peer_id: Option<Vec<u8>>,
     
     /// Handle to the background task
     task_handle: Option<tokio::task::JoinHandle<()>>,
@@ -70,9 +70,10 @@ impl MdnsService {
             return Ok(());
         }
         
-        let config = libp2p::mdns::Config::default()
-            .ttl(self.config.ttl)
-            .service_name(self.config.service_name.clone());
+        let config = libp2p::mdns::Config {
+            ttl: Duration::from_secs(self.config.ttl.into()),
+            ..Default::default()
+        };
             
         let mdns = Mdns::new(config)
             .await
@@ -135,7 +136,11 @@ impl MdnsService {
                     
                     // Handle periodic peer expiration check
                     _ = interval.tick() => {
-                        if let Err(e) = Self::check_peer_expiration(&peers, &event_sender, self.config.peer_expiration_duration()).await {
+                        if let Err(e) = Self::check_peer_expiration(
+                            &peers, 
+                            &mut event_sender.clone(), 
+                            self.config.peer_expiration_duration()
+                        ).await {
                             error!("Error checking peer expiration: {}", e);
                         }
                     }
@@ -257,7 +262,7 @@ impl MdnsService {
     /// Check for expired peers and remove them
     async fn check_peer_expiration(
         peers: &Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
-        event_sender: &Sender<DiscoveryEvent>,
+        event_sender: &mut Sender<DiscoveryEvent>,
         peer_expiration: Duration,
     ) -> Result<(), DiscoveryError> {
         let now = Instant::now();
@@ -303,7 +308,7 @@ impl MdnsService {
         // Send shutdown signal
         if let Some(sender) = self.config.shutdown_sender.take() {
             if let Err(e) = sender.send(()) {
-                warn!("Failed to send shutdown signal: {}", e);
+                warn!("Failed to send shutdown signal: {:?}", e);
             }
         }
         
@@ -343,8 +348,12 @@ impl MdnsService {
     }
     
     /// Get the list of discovered peers
-    pub fn discovered_peers(&self) -> Vec<PeerInfo> {
-        self.peers.lock().values().map(|(info, _)| info.clone()).collect()
+    pub async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(DiscoveryError::NotRunning);
+        }
+        
+        Ok(self.peers.lock().values().map(|(info, _)| info.clone()).collect())
     }
 }
 

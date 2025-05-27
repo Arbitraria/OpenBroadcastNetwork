@@ -188,7 +188,7 @@ impl Discovery for DhtDiscovery {
         Ok(())
     }
     
-    async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
+    async fn announce(&mut self, info: PeerInfo) -> Result<(), DiscoveryError> {
         let peer_id = PeerId::from_bytes(&info.id)
             .map_err(|e| DiscoveryError::Other(format!("Invalid peer ID: {}", e)))?;
             

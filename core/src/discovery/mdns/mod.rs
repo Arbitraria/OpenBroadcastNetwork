@@ -8,6 +8,7 @@ mod service;
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -114,7 +115,7 @@ impl Discovery for MdnsDiscovery {
     }
     
     /// Announce a peer to the network
-    async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
+    async fn announce(&mut self, info: PeerInfo) -> Result<(), DiscoveryError> {
         if !self.running.load(Ordering::SeqCst) {
             return Err(DiscoveryError::NotRunning);
         }
@@ -135,9 +136,8 @@ impl Discovery for MdnsDiscovery {
             return Err(DiscoveryError::NotRunning);
         }
         
-        // Check if we have the peer in our cache
-        let peers = self.service.discovered_peers();
-        let peer = peers.into_iter().find(|p| p.id == peer_id);
+        let peers = self.service.discovered_peers().await?;
+        let peer = peers.into_iter().find(|p| p.id == *peer_id);
         
         Ok(peer)
     }
@@ -148,7 +148,7 @@ impl Discovery for MdnsDiscovery {
             return Err(DiscoveryError::NotRunning);
         }
         
-        let peers = self.service.discovered_peers();
+        let peers = self.service.discovered_peers().await?;
         
         // If no criteria is provided, return all peers
         if criteria.is_empty() {
@@ -157,16 +157,16 @@ impl Discovery for MdnsDiscovery {
         
         // Filter peers based on criteria (case-insensitive)
         let criteria = criteria.to_lowercase();
-        let filtered_peers = peers
+        let filtered_peers: Vec<PeerInfo> = peers
             .into_iter()
             .filter(|peer| {
                 // Check if any protocol matches the criteria
                 let protocol_match = peer.protocols.iter()
-                    .any(|p| p.to_lowercase().contains(&criteria));
+                    .any(|p| p.to_ascii_lowercase().contains(&criteria));
                 
                 // Check if any metadata value matches the criteria
                 let metadata_match = peer.metadata.values()
-                    .any(|v| v.to_lowercase().contains(&criteria));
+                    .any(|v| String::from_utf8_lossy(v).to_ascii_lowercase().contains(&criteria));
                 
                 protocol_match || metadata_match
             })
@@ -218,7 +218,7 @@ impl Discovery for MdnsDiscovery {
             return Err(DiscoveryError::NotRunning);
         }
         
-        Ok(self.service.discovered_peers())
+        self.service.discovered_peers().await
     }
 }
 
@@ -227,7 +227,8 @@ mod tests {
     use super::*;
     use libp2p::identity::Keypair;
     use libp2p::PeerId;
-    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::collections::HashMap;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
     use std::time::Duration;
     
     // Helper function to create a test peer

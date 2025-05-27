@@ -2,17 +2,15 @@
 //!
 //! This module implements the Overlay trait using libp2p.
 
-use crate::overlay::interface::{Overlay, OverlayEvent, OverlayError, OverlayConfig, OverlayStats, StreamId};
-use crate::overlay::peer::{Peer, PeerId, PeerInfo, PeerRole, ConnectionStatus};
-use crate::overlay::topology::{TopologyManager, TopologyConfig};
-use crate::overlay::relay::{RelayManager, RelayConfig, StreamChunk};
-use crate::overlay::mesh::{MeshNetwork, MeshConfig};
-
+// Core library imports
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, Mutex};
-use tokio::time;
+use std::pin::Pin;
+use std::future::Future;
+
+// External crate imports
+use async_trait::async_trait;
 use futures::{StreamExt, FutureExt};
 use libp2p::{
     core::upgrade,
@@ -23,26 +21,38 @@ use libp2p::{
     noise,
     swarm::{
         NetworkBehaviour, SwarmBuilder, SwarmEvent, ConnectionHandlerUpgrErr, ListenError, 
-        ConnectionId, DialError, SwarmParams, SwarmBuilder, Swarm, ConnectionHandler
+        ConnectionId, DialError, SwarmParams, Swarm, ConnectionHandler
     },
     tcp::{GenTcpConfig, TcpTransport},
     Multiaddr, PeerId as Libp2pPeerId, Transport, identity, yamux
 };
+use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::time;
 use tracing::{debug, info, warn, error};
-use std::pin::Pin;
-use std::future::Future;
 
-/// Convert our PeerId to libp2p's PeerId
-fn to_libp2p_peer_id(peer_id: &PeerId) -> Result<Libp2pPeerId, OverlayError> {
-    let bytes = peer_id.as_bytes();
+// Local crate imports
+use crate::overlay::{
+    interface::{Overlay, OverlayEvent, OverlayError, OverlayConfig, OverlayStats, StreamId},
+    peer::{Peer, PeerInfo, PeerRole, ConnectionStatus},
+    topology::{TopologyManager, TopologyConfig},
+    relay::{RelayManager, RelayConfig, StreamChunk},
+    mesh::{MeshNetwork, MeshConfig}
+};
+
+// Re-export for local use
+use crate::overlay::peer::PeerId as LocalPeerId;
+
+/// Convert our LocalPeerId to libp2p's PeerId
+fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<Libp2pPeerId, OverlayError> {
+    let bytes = peer_id.0.as_slice();
     let libp2p_peer_id = Libp2pPeerId::from_bytes(bytes)
         .map_err(|e| OverlayError::Other(format!("Invalid peer ID: {}", e)))?;
     Ok(libp2p_peer_id)
 }
 
-/// Convert libp2p's PeerId to our PeerId
-fn from_libp2p_peer_id(peer_id: &Libp2pPeerId) -> PeerId {
-    PeerId::from_bytes(peer_id.to_bytes())
+/// Convert libp2p's PeerId to our LocalPeerId
+fn from_libp2p_peer_id(peer_id: &Libp2pPeerId) -> LocalPeerId {
+    LocalPeerId(peer_id.to_bytes())
 }
 
 /// Topics for the pub/sub system
@@ -93,12 +103,12 @@ struct OverlayBehavior {
 
 /// libp2p implementation of the overlay network
 pub struct Libp2pOverlay {
-    /// Local peer ID
-    local_peer_id: PeerId,
-    /// libp2p peer ID
-    libp2p_peer_id: Libp2pPeerId,
     /// Configuration
     config: OverlayConfig,
+    /// Local peer ID
+    local_peer_id: LocalPeerId,
+    /// libp2p peer ID
+    libp2p_peer_id: Libp2pPeerId,
     /// Swarm
     swarm: Mutex<Option<Swarm<OverlayBehavior>>>,
     /// Topology manager
@@ -107,8 +117,8 @@ pub struct Libp2pOverlay {
     relay: Arc<RelayManager>,
     /// Mesh network
     mesh: Arc<MeshNetwork>,
-    /// Known peers
-    peers: RwLock<HashMap<PeerId, Peer>>,
+    /// Peers
+    peers: RwLock<HashMap<LocalPeerId, Peer>>,
     /// Active streams
     streams: RwLock<HashSet<StreamId>>,
     /// Event channel sender
@@ -654,7 +664,7 @@ impl Overlay for Libp2pOverlay {
         })
     }
     
-    fn local_peer_id(&self) -> PeerId {
+    fn local_peer_id(&self) -> LocalPeerId {
         self.local_peer_id.clone()
     }
     
@@ -689,7 +699,7 @@ impl Overlay for Libp2pOverlay {
         })
     }
     
-    fn disconnect_peer(&self, peer_id: &PeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
+    fn disconnect_peer(&self, peer_id: &LocalPeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
         let peer_id = peer_id.clone();
         
         Box::pin(async move {
@@ -764,7 +774,7 @@ impl Overlay for Libp2pOverlay {
         })
     }
     
-    fn relay_stream(&self, stream_id: &StreamId, target: &PeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
+    fn relay_stream(&self, stream_id: &StreamId, target: &LocalPeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
         let stream_id = stream_id.clone();
         let target = target.clone();
         let local_peer_id = self.local_peer_id.clone();

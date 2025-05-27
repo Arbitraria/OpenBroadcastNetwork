@@ -121,6 +121,10 @@ pub enum DiscoveryError {
     #[error("Configuration error: {0}")]
     ConfigError(String),
     
+    /// Task execution error
+    #[error("Task error: {0}")]
+    TaskError(String),
+    
     /// Already running
     #[error("Service is already running")]
     AlreadyRunning,
@@ -176,7 +180,7 @@ pub trait Discovery: Send + Sync + 'static {
     /// - The service is not running
     /// - Invalid peer information provided
     /// - Failed to send announcement
-    async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError>;
+    async fn announce(&mut self, info: PeerInfo) -> Result<(), DiscoveryError>;
     
     /// Lookup a peer by ID
     /// 

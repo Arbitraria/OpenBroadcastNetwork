@@ -204,10 +204,10 @@ pub trait Discovery: Send + Sync + 'static {
     async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError>;
 }
 
-// Re-export the mDNS module
+// Re-export the mDNS module (modular version)
 pub mod mdns;
 
-// Re-export commonly used types
+// Re-export commonly used types from the modular implementation
 pub use mdns::{MdnsDiscovery, MdnsDiscoveryConfig};
 
 /// Default discovery implementation (mDNS)

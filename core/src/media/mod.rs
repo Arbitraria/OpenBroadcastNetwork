@@ -1,26 +1,35 @@
-// Media pipeline for decentralized streaming
-//
-// This module handles media streaming functionality including
-// sources, sinks, codecs, and buffer management.
+//! Media streaming functionality for the decentralized streaming CDN.
+//!
+//! This module provides a comprehensive set of tools for handling media streaming,
+//! including sources, sinks, codecs, and buffer management. It's designed to be
+//! flexible and extensible, supporting various media formats and protocols.
 
-pub mod interface;
-pub mod codec;
+#![warn(missing_docs)]
+#![warn(rustdoc::missing_crate_level_docs)]
+
 pub mod buffer;
-pub mod stream;
+pub mod codec;
+pub mod interface;
 pub mod pipeline;
 pub mod quality;
-pub mod source;
 pub mod sink;
+pub mod source;
+pub mod stream;
 
 #[cfg(test)]
 mod tests;
 
-// Re-export main types
-pub use interface::{MediaStream, MediaSource, MediaSink, MediaFormat, MediaError};
-pub use codec::{Codec, CodecRegistry, AudioCodec, VideoCodec};
-pub use buffer::{MediaBuffer, BufferConfig, BufferError};
-pub use stream::{StreamHandler, StreamSegment, StreamInfo};
-pub use pipeline::{MediaPipeline, PipelineConfig, PipelineEvent};
-pub use quality::{QualityLevel, QualitySelector, AdaptiveQuality};
-pub use source::{FileSource, NetworkSource, MemorySource};
-pub use sink::{FileSink, NetworkSink, MemorySink}; 
+// Re-export main types for easy access
+pub use buffer::{BufferConfig, BufferError, MediaBuffer};
+pub use codec::{AudioCodec, Codec, CodecError, CodecRegistry, VideoCodec};
+pub use interface::{
+    MediaError, MediaFormat, MediaSink, MediaSource, MediaStream,
+};
+pub use pipeline::{MediaPipeline, PipelineStage, PassThroughStage};
+pub use quality::{BandwidthMonitor, QualityConfig, QualityLevel, QualityManager};
+pub use sink::{FileSink, MemorySink, NullSink};
+pub use source::{FileSource, MemorySource, NetworkSource};
+pub use stream::MediaStreamImpl;
+
+/// Convenience type alias for Result<T, MediaError>
+pub type Result<T> = std::result::Result<T, MediaError>;

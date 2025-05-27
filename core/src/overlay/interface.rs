@@ -3,7 +3,7 @@
 //! This module defines the fundamental interfaces for the overlay network
 //! used in the decentralized streaming system.
 
-use crate::overlay::peer::{Peer, PeerId, PeerInfo};
+use crate::overlay::peer::{Peer, LocalPeerId, PeerInfo};
 use std::fmt;
 use std::error::Error;
 use std::future::Future;
@@ -108,7 +108,7 @@ pub enum OverlayEvent {
     /// A new peer has been discovered
     PeerDiscovered {
         /// Peer ID
-        peer_id: PeerId,
+        peer_id: LocalPeerId,
         /// Peer information
         info: PeerInfo,
     },
@@ -116,7 +116,7 @@ pub enum OverlayEvent {
     /// A peer has connected
     PeerConnected {
         /// Peer ID
-        peer_id: PeerId,
+        peer_id: LocalPeerId,
         /// Peer information
         info: PeerInfo,
     },
@@ -124,7 +124,7 @@ pub enum OverlayEvent {
     /// A peer has disconnected
     PeerDisconnected {
         /// Peer ID
-        peer_id: PeerId,
+        peer_id: LocalPeerId,
         /// Reason for disconnection
         reason: String,
     },
@@ -134,7 +134,7 @@ pub enum OverlayEvent {
         /// Stream ID
         stream_id: StreamId,
         /// Publisher peer ID
-        publisher: PeerId,
+        publisher: LocalPeerId,
     },
     
     /// A stream has been relayed
@@ -142,9 +142,9 @@ pub enum OverlayEvent {
         /// Stream ID
         stream_id: StreamId,
         /// Source peer ID
-        source: PeerId,
+        source: LocalPeerId,
         /// Target peer ID
-        target: PeerId,
+        target: LocalPeerId,
     },
     
     /// A stream has been stopped
@@ -168,7 +168,7 @@ pub enum OverlayEvent {
 #[derive(Debug, Clone)]
 pub struct OverlayConfig {
     /// Local peer ID
-    pub local_peer_id: PeerId,
+    pub local_peer_id: LocalPeerId,
     /// Bootstrap peers to connect to
     pub bootstrap_peers: Vec<String>,
     /// Whether to use mDNS for local peer discovery
@@ -190,8 +190,8 @@ pub struct OverlayConfig {
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self {
-            local_peer_id: PeerId::new_random(),
-            bootstrap_peers: Vec::new(),
+            local_peer_id: LocalPeerId::new_random(),
+            bootstrap_peers: vec![],
             enable_mdns: true,
             enable_kademlia: true,
             max_connections: 50,
@@ -234,14 +234,14 @@ pub trait Overlay {
     fn is_running(&self) -> bool;
     
     /// Get the local peer ID
-    fn local_peer_id(&self) -> PeerId;
+    fn local_peer_id(&self) -> LocalPeerId;
     
     /// Connect to a peer
     fn connect_peer(&self, addr: &str) 
         -> Pin<Box<dyn Future<Output = Result<PeerInfo, OverlayError>> + Send>>;
     
     /// Disconnect from a peer
-    fn disconnect_peer(&self, peer_id: &PeerId) 
+    fn disconnect_peer(&self, peer_id: &LocalPeerId) 
         -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
     
     /// Publish a stream
@@ -249,7 +249,7 @@ pub trait Overlay {
         -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
     
     /// Relay a stream to a peer
-    fn relay_stream(&self, stream_id: &StreamId, target: &PeerId) 
+    fn relay_stream(&self, stream_id: &StreamId, target: &LocalPeerId) 
         -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
     
     /// Stop a stream

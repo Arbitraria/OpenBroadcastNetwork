@@ -4,7 +4,7 @@
 //! and resilient distribution network.
 
 use crate::overlay::interface::{Overlay, OverlayEvent, OverlayError, OverlayStats, StreamId};
-use crate::overlay::peer::{Peer, PeerId, PeerInfo, PeerRole};
+use crate::overlay::peer::{Peer, LocalPeerId, PeerInfo, PeerRole};
 use crate::overlay::tree::{StreamTree, TreeNode, TreeStats};
 use crate::overlay::mesh::{StreamMesh, MeshStats};
 use crate::overlay::topology::{TopologyManager, TopologyConfig, RelayScoreWeights};
@@ -62,20 +62,22 @@ impl Default for HybridOverlayConfig {
 /// Stream metadata
 #[derive(Debug, Clone)]
 pub struct StreamMetadata {
-    /// The stream ID
-    pub id: StreamId,
-    /// When the stream was created
-    pub created_at: Instant,
-    /// The publisher's peer ID
-    pub publisher: PeerId,
-    /// Current active subscribers count
-    pub subscribers: usize,
-    /// Whether this node is the publisher
-    pub is_publisher: bool,
-    /// Whether this node is subscribed
-    pub is_subscribed: bool,
+    /// Unique stream ID
+    pub stream_id: StreamId,
+    /// Publisher peer ID
+    pub publisher: LocalPeerId,
+    /// Stream metadata (codec, bitrate, etc.)
+    pub metadata: HashMap<String, String>,
+    /// Timestamp when the stream was published
+    pub timestamp: u64,
+    /// List of relay peers
+    pub relay_peers: Vec<LocalPeerId>,
     /// Stream quality metrics
     pub quality: StreamQuality,
+    /// Whether the stream is active
+    pub is_active: bool,
+    /// Whether this node is subscribed
+    pub is_subscribed: bool,
 }
 
 /// Stream quality metrics
@@ -95,32 +97,38 @@ pub struct StreamQuality {
 pub struct HybridOverlay {
     /// Stream trees (primary distribution)
     trees: HashMap<StreamId, StreamTree>,
-    /// Stream meshes (backup/resilience)
-    meshes: HashMap<StreamId, StreamMesh>,
-    /// Stream metadata
-    streams: HashMap<StreamId, StreamMetadata>,
-    /// Topology manager for organizing peers
-    topology: Arc<TopologyManager>,
-    /// Network layer
-    network: Option<Network>,
     /// Configuration
     config: HybridOverlayConfig,
+    
     /// Local peer ID
-    local_peer_id: Option<PeerId>,
-    /// Local peer info
-    local_peer_info: Option<PeerInfo>,
+    local_peer_id: Option<LocalPeerId>,
+    
+    /// Network layer
+    network: Network,
+    
+    /// Active streams
+    streams: Arc<RwLock<HashMap<StreamId, StreamMetadata>>>,
+    
     /// Known peers
-    peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
-    /// Event channel sender
-    event_sender: mpsc::Sender<OverlayEvent>,
-    /// Event channel receiver
-    event_receiver: mpsc::Receiver<OverlayEvent>,
-    /// Is the overlay running
-    running: bool,
-    /// Last rebalance time
-    last_rebalance: Instant,
-    /// Background task handles
-    task_handles: Vec<tokio::task::JoinHandle<()>>,
+    peers: Arc<RwLock<HashMap<LocalPeerId, Peer>>>,
+    
+    /// Event sender
+    event_tx: mpsc::Sender<OverlayEvent>,
+    
+    /// Event receiver
+    event_rx: Option<mpsc::Receiver<OverlayEvent>>,
+    
+    /// Whether the overlay is running
+    is_running: Arc<std::sync::atomic::AtomicBool>,
+    
+    /// Topology manager
+    topology: TopologyManager,
+    
+    /// Tree overlays
+    trees: Arc<RwLock<HashMap<StreamId, StreamTree>>>,
+    
+    /// Mesh overlays
+    meshes: Arc<RwLock<HashMap<StreamId, StreamMesh>>>,
 }
 
 impl HybridOverlay {
@@ -216,49 +224,58 @@ impl HybridOverlay {
     }
     
     /// Update a peer's connection status
-    async fn update_peer_connection_status(&self, peer_id: &PeerId, connected: bool) -> Option<PeerInfo> {
-        let mut peers = self.peers.write().await;
+    fn update_peer_connection_status(&self, peer_id: &LocalPeerId, connected: bool) -> Option<PeerInfo> {
+        let mut peers = match self.peers.write() {
+            Ok(peers) => peers,
+            Err(_) => return None,
+        };
         
         if let Some(peer) = peers.get_mut(peer_id) {
-            if connected {
-                // Update connection information
-                peer.info.last_seen = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                
-                return Some(peer.info.clone());
-            } else {
-                // Mark as disconnected
-                peer.set_disconnected();
-                return Some(peer.info.clone());
-            }
+            peer.connected = connected;
+            peer.last_seen = Some(Instant::now());
+            
+            // Create a copy of the peer info to return
+            let peer_info = PeerInfo {
+                peer_id: peer.peer_id.clone(),
+                role: peer.role,
+                connected: peer.connected,
+                last_seen: peer.last_seen,
+                metadata: peer.metadata.clone(),
+            };
+            
+            Some(peer_info)
+        } else {
+            None
         }
-        
         None
     }
     
     /// Handle peer disconnection in trees and meshes
-    async fn handle_peer_disconnection(&mut self, peer_id: &PeerId) {
-        // Remove peer from all trees
-        for (stream_id, tree) in &mut self.trees {
-            if tree.contains_peer(peer_id) {
-                if tree.remove_peer(peer_id) {
-                    debug!("Removed peer {} from tree for stream {}", peer_id, stream_id);
-                    
-                    // Rebalance the tree
-                    let _ = self.rebalance_tree(stream_id).await;
+    async fn handle_peer_disconnection(&mut self, peer_id: &LocalPeerId) {
+        // Update peer status
+        self.update_peer_connection_status(peer_id, false);
+        
+        // Handle disconnection in trees
+        for tree in self.trees.values_mut() {
+            if let Some(parent) = tree.get_parent(peer_id) {
+                // If the disconnected peer was a parent, try to reconnect to the tree
+                if let Err(e) = tree.reconnect(peer_id, &parent) {
+                    warn!("Failed to reconnect to tree after peer disconnection: {}", e);
                 }
             }
+            
+            // Remove the peer from the tree
+            tree.remove_peer(peer_id);
         }
         
-        // Remove peer from all meshes
-        for (stream_id, mesh) in &mut self.meshes {
-            if mesh.contains_peer(peer_id) {
-                if mesh.remove_peer(peer_id) {
-                    debug!("Removed peer {} from mesh for stream {}", peer_id, stream_id);
-                }
-            }
+        // Handle disconnection in meshes
+        for mesh in self.meshes.values_mut() {
+            mesh.remove_peer(peer_id);
+        }
+        
+        // Notify about the disconnection
+        if let Err(e) = self.event_tx.try_send(OverlayEvent::PeerDisconnected(peer_id.clone())) {
+            warn!("Failed to send peer disconnected event: {}", e);
         }
     }
     
@@ -299,57 +316,148 @@ impl HybridOverlay {
     }
     
     /// Handle stream data packet
-    async fn handle_stream_data(&mut self, stream_id: StreamId, source_peer: PeerId, data: Vec<u8>) {
-        // If we're a relay node, forward the data to our children
-        if let Some(tree) = self.trees.get(&stream_id) {
-            if let Some(node) = tree.nodes.get(&self.local_peer_id.unwrap()) {
-                for child_id in &node.children {
-                    if let Some(network) = &self.network {
-                        let topic = format!("stream/{}/data", stream_id);
-                        if let Err(e) = network.publish(&topic, data.clone()).await {
-                            warn!("Failed to forward stream data to {}: {}", child_id, e);
+    async fn handle_stream_data(
+        &mut self,
+        stream_id: StreamId,
+        source_peer: LocalPeerId,
+        data: Vec<u8>,
+    ) {
+        // Forward the data to subscribers in the tree
+        if let Some(tree) = self.trees.get_mut(&stream_id) {
+            // Forward to children in the tree
+            if let Some(children) = tree.get_children(&source_peer) {
+                for child in children {
+                    if let Err(e) = self.network.send_data(&child, &data).await {
+                        warn!("Failed to forward data to child {}: {}", child, e);
+                    }
+                }
+            }
+            
+            // Forward to peers in the mesh (if any)
+            if let Some(mesh) = self.meshes.get_mut(&stream_id) {
+                for peer in mesh.get_peers() {
+                    if peer != &source_peer {
+                        if let Err(e) = self.network.send_data(peer, &data).await {
+                            warn!("Failed to forward data to mesh peer {}: {}", peer, e);
                         }
                     }
                 }
             }
+            
+            // Notify about the received data
+            if let Err(e) = self.event_tx.send(OverlayEvent::StreamData {
+                stream_id: stream_id.clone(),
+                source: source_peer,
+                data: data.clone(),
+            }).await {
+                warn!("Failed to send stream data event: {}", e);
+            }
+        } else {
+            debug!("Received data for unknown stream: {}", stream_id);
         }
-        
-        // Notify about the data reception
-        let _ = self.event_sender.send(OverlayEvent::StreamRelayed {
-            stream_id: stream_id,
-            source: source_peer,
-            target: self.local_peer_id.unwrap(),
-        }).await;
     }
     
     /// Handle control message
-    async fn handle_control_message(&mut self, stream_id: StreamId, source_peer: PeerId, data: Vec<u8>) {
+    async fn handle_control_message(
+        &mut self,
+        stream_id: StreamId,
+        source_peer: LocalPeerId,
+        data: Vec<u8>,
+    ) {
+        // Parse the control message
+        let control_msg: Result<ControlMessage, _> = serde_json::from_slice(&data);
+        let control_msg = match control_msg {
+            Ok(msg) => msg,
+            Err(e) => {
+                warn!("Failed to parse control message: {}", e);
+                return;
+            }
+        };
+
+        match control_msg {
+            ControlMessage::JoinRequest => {
+                debug!("Received join request from peer {} for stream {}", source_peer, stream_id);
+                
+                // Add the peer to the tree
+                if let Some(tree) = self.trees.get_mut(&stream_id) {
+                    if let Err(e) = tree.add_child(&source_peer, &self.local_peer_id.unwrap()) {
+                        warn!("Failed to add peer {} to tree: {}", source_peer, e);
+                    }
+                }
+                
+                // Add the peer to the mesh (if any)
+                if let Some(mesh) = self.meshes.get_mut(&stream_id) {
+                    if let Err(e) = mesh.add_peer(source_peer.clone()) {
+                        warn!("Failed to add peer {} to mesh: {}", source_peer, e);
+                    }
+                }
+                
+                // Notify about the new peer
+                if let Err(e) = self.event_tx.send(OverlayEvent::PeerJoined {
+                    stream_id: stream_id.clone(),
+                    peer_id: source_peer,
+                }).await {
+                    warn!("Failed to send peer joined event: {}", e);
+                }
+            }
+            ControlMessage::LeaveRequest => {
+                debug!("Received leave request from peer {} for stream {}", source_peer, stream_id);
+                
+                // Remove the peer from the tree
+                if let Some(tree) = self.trees.get_mut(&stream_id) {
+                    tree.remove_peer(&source_peer);
+                }
+                
+                // Remove the peer from the mesh (if any)
+                if let Some(mesh) = self.meshes.get_mut(&stream_id) {
+                    mesh.remove_peer(&source_peer);
+                }
+                
+                // Notify about the peer leaving
+                if let Err(e) = self.event_tx.send(OverlayEvent::PeerLeft {
+                    stream_id: stream_id.clone(),
+                    peer_id: source_peer,
+                }).await {
+                    warn!("Failed to send peer left event: {}", e);
+                }
+            }
+        }
         // Parse control message
         // In a real implementation, we'd deserialize the message and handle various control commands
-        // For now, we'll just log it
-        debug!("Received control message for stream {} from {}", stream_id, source_peer);
-    }
-    
     /// Rebalance a tree
     async fn rebalance_tree(&mut self, stream_id: &StreamId) -> Result<bool, OverlayError> {
-        if let Some(tree) = self.trees.get_mut(stream_id) {
-            // Perform tree rebalancing
-            let changed = tree.rebalance();
-            
-            if changed {
-                // Notify about tree reorganization
-                let _ = self.event_sender.send(OverlayEvent::TopologyChanged {
-                    peer_count: tree.nodes.len(),
-                    relay_count: tree.nodes.values().filter(|n| !n.children.is_empty()).count(),
-                }).await;
-            }
-            
-            Ok(changed)
-        } else {
-            Err(OverlayError::TopologyError(format!("Stream not found: {:?}", stream_id)))
+        // Get the tree for this stream
+        let Some(tree) = self.trees.get_mut(stream_id) else {
+            return Ok(false);
+        };
+        
+        // Get all peers in the tree
+        let peers = tree.get_all_peers();
+        
+        // If there are no peers, nothing to rebalance
+        if peers.is_empty() {
+            return Ok(false);
         }
+        
+        // Rebuild the tree with the same root but rebalanced structure
+        let root = tree.get_root().ok_or_else(|| OverlayError::TreeError("Tree has no root".to_string()))?;
+        let mut new_tree = StreamTree::new(stream_id.clone(), root.clone());
+        
+        // Add peers back to the tree in a balanced way
+        for peer_id in peers {
+            if peer_id != root {
+                if let Err(e) = new_tree.add_peer(&peer_id) {
+                    warn!("Failed to add peer {} to rebalanced tree: {}", peer_id, e);
+                }
+            }
+        }
+        
+        // Replace the old tree with the new one
+        self.trees.insert(stream_id.clone(), new_tree);
+        
+        Ok(true)
     }
-    
+
     /// Rebalance all overlays
     async fn rebalance_overlays(&mut self) {
         let now = Instant::now();
@@ -363,8 +471,8 @@ impl HybridOverlay {
         for stream_id in self.trees.keys().cloned().collect::<Vec<_>>() {
             if let Err(e) = self.rebalance_tree(&stream_id).await {
                 warn!("Failed to rebalance tree for stream {:?}: {}", stream_id, e);
-                }
             }
+        }
         
         // Rebalance all meshes
         for mesh in self.meshes.values_mut() {
@@ -391,13 +499,29 @@ impl HybridOverlay {
                 } => {
                     this.handle_network_event(network_event).await;
                 }
+                
                 _ = rebalance_interval.tick() => {
                     this.rebalance_overlays().await;
                 }
+                
                 _ = heartbeat_interval.tick() => {
-                    // Send heartbeats to connected peers
                     this.send_heartbeats().await;
                 }
+                
+                Some(event) = this.event_receiver.recv() => {
+                    // Handle internal events
+                    match event {
+                        OverlayEvent::PeerConnected { peer_id } => {
+                            debug!("Peer connected: {}", peer_id);
+                        }
+                        OverlayEvent::PeerDisconnected { peer_id } => {
+                            debug!("Peer disconnected: {}", peer_id);
+                            this.handle_peer_disconnection(&peer_id).await;
+                        }
+                        _ => {}
+                    }
+                }
+                
                 else => {
                     break;
                 }
@@ -405,30 +529,6 @@ impl HybridOverlay {
         }
         
         Ok(())
-    }
-    
-    /// Send heartbeats to connected peers
-    async fn send_heartbeats(&self) {
-        // Implement heartbeat mechanism for connection maintenance
-        if let Some(network) = &self.network {
-            // For each stream
-            for (stream_id, _) in &self.streams {
-                // Send a heartbeat on the control channel
-                let topic = format!("stream/{}/control", stream_id);
-                let heartbeat = serde_json::json!({
-                    "type": "heartbeat",
-                    "peer_id": self.local_peer_id.as_ref().unwrap().to_string(),
-                    "timestamp": std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                }).to_string().into_bytes();
-                
-                if let Err(e) = network.publish(&topic, heartbeat).await {
-                    warn!("Failed to send heartbeat for stream {}: {}", stream_id, e);
-                }
-            }
-        }
     }
 }
 
@@ -480,8 +580,8 @@ impl Overlay for HybridOverlay {
         self.running
     }
     
-    fn local_peer_id(&self) -> PeerId {
-        self.local_peer_id.clone().unwrap()
+    fn local_peer_id(&self) -> LocalPeerId {
+        self.local_peer_id.clone().unwrap_or_else(|| LocalPeerId::random())
     }
     
     fn connect_peer(&self, addr: &str) -> Pin<Box<dyn Future<Output = Result<PeerInfo, OverlayError>> + Send>> {
@@ -500,18 +600,17 @@ impl Overlay for HybridOverlay {
         })
     }
     
-    fn disconnect_peer(&self, peer_id: &PeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
+    fn disconnect_peer(&self, peer_id: &LocalPeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
         let peer_id = peer_id.clone();
         let network = self.network.clone();
         
         Box::pin(async move {
             if let Some(network) = network {
-                network.disconnect(&peer_id).await
-                    .map_err(|e| OverlayError::ConnectionError(format!("Disconnect failed: {}", e)))?;
-                
-        Ok(())
+                network.disconnect_peer(&peer_id).await.map_err(|e| {
+                    OverlayError::ConnectionError(format!("Failed to disconnect peer: {}", e))
+                })
             } else {
-                Err(OverlayError::ConnectionError("Network not initialized".to_string()))
+                Err(OverlayError::NotStarted)
             }
         })
     }
@@ -570,7 +669,7 @@ impl Overlay for HybridOverlay {
         })
     }
     
-    fn relay_stream(&self, stream_id: &StreamId, target: &PeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
+    fn relay_stream(&self, stream_id: &StreamId, target: &LocalPeerId) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
         let stream_id = stream_id.clone();
         let target = target.clone();
         let this = self.clone();
@@ -582,7 +681,7 @@ impl Overlay for HybridOverlay {
             }
             
             // Add target peer to the tree
-            if let Some(tree) = this.trees.get_mut(&stream_id) {
+            if let Some(_tree) = this.trees.get_mut(&stream_id) {
                 // In a real implementation, we'd add the peer to the tree
                 // tree.add_peer(target.clone(), PeerRole::Consumer, 0);
                 
@@ -590,16 +689,20 @@ impl Overlay for HybridOverlay {
                 this.topology.add_peer_to_stream(&stream_id, target.clone()).await?;
                 
                 // Start relaying data to this peer
-                let local_peer_id = this.local_peer_id.clone().unwrap();
-                let _ = this.event_sender.send(OverlayEvent::StreamRelayed {
-                    stream_id: stream_id.clone(),
-                    source: local_peer_id,
-                    target: target.clone(),
-                }).await;
+                let local_peer_id = this.local_peer_id();
+                
+                // Notify about the new relay
+                if let Some(sender) = &this.event_sender {
+                    let _ = sender.send(OverlayEvent::StreamRelayed {
+                        stream_id: stream_id.clone(),
+                        source: local_peer_id,
+                        target: target.clone(),
+                    }).await;
+                }
             
             Ok(())
             } else {
-                Err(OverlayError::TopologyError(format!("Stream tree not found: {:?}", stream_id)))
+                Err(OverlayError::TopologyError(format!("No tree for stream: {:?}", stream_id)))
             }
         })
     }
@@ -650,21 +753,26 @@ impl Overlay for HybridOverlay {
         })
     }
     
-    fn connected_peers(&self) -> Pin<Box<dyn Future<Output = Result<Vec<PeerInfo>, OverlayError>> + Send>> {
-        let peers = self.peers.clone();
+    fn connected_peers(&self) -> Pin<Box<dyn Future<Output = Result<Vec<PeerInfo>, OverlayError>> + Send>>> {
+        let this = self.clone();
         
         Box::pin(async move {
-            let peers_lock = peers.read().await;
-            let connected: Vec<PeerInfo> = peers_lock.values()
-                .filter(|p| p.is_connected())
-                .map(|p| p.info.clone())
-                .collect();
-                
-            Ok(connected)
+            let mut peers = Vec::new();
+            
+            // Get connected peers from the network
+            if let Some(network) = &this.network {
+                for peer_id in network.connected_peers().await? {
+                    if let Some(info) = this.peer_store.get_peer(&peer_id) {
+                        peers.push(info.clone());
+                    }
+                }
+            }
+            
+            Ok(peers)
         })
     }
     
-    fn active_streams(&self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamId>, OverlayError>> + Send>> {
+    fn active_streams(&self) -> Pin<Box<dyn Future<Output = Result<Vec<StreamId>, OverlayError>> + Send>>> {
         let streams = self.streams.keys().cloned().collect();
         
         Box::pin(async move {
@@ -672,34 +780,46 @@ impl Overlay for HybridOverlay {
         })
     }
     
-    fn stats(&self) -> Pin<Box<dyn Future<Output = Result<OverlayStats, OverlayError>> + Send>> {
-        Box::pin(async {
-            // In a real implementation, we'd gather actual metrics
-            let stats = OverlayStats {
-                connected_peers: self.peers.read().await.values()
-                    .filter(|p| p.is_connected())
-                    .count(),
-                discovered_peers: self.peers.read().await.len(),
-                active_streams: self.streams.len(),
-                relay_nodes: self.peers.read().await.values()
-                    .filter(|p| matches!(p.info.role, PeerRole::Relay))
-                    .count(),
-                incoming_bandwidth: 0, // Would track actual bandwidth
-                outgoing_bandwidth: 0,
-                average_latency_ms: 0, // Would calculate from actual measurements
-            };
+    fn stats(&self) -> Pin<Box<dyn Future<Output = Result<OverlayStats, OverlayError>> + Send>>> {
+        let this = self.clone();
+        
+        Box::pin(async move {
+            let mut stats = OverlayStats::default();
+            
+            // Get network stats if available
+            if let Some(network) = &this.network {
+                let network_stats = network.stats().await?;
+                stats.connected_peers = network_stats.connected_peers_count;
+                stats.total_bytes_sent = network_stats.total_bytes_sent;
+                stats.total_bytes_received = network_stats.total_bytes_received;
+            }
+            
+            // Add stream stats
+            stats.active_streams = this.streams.len() as u32;
+            
+            // Add tree stats
+            stats.tree_peers = this.trees.values()
+                .map(|t| t.size() as u32)
+                .sum();
+                
+            // Add mesh stats
+            stats.mesh_peers = this.meshes.values()
+                .map(|m| m.size() as u32)
+                .sum();
             
             Ok(stats)
         })
     }
     
-    fn rebalance_topology(&self) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>> {
+    fn rebalance_topology(&self) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>> {
         let this = self.clone();
         
         Box::pin(async move {
-            for stream_id in this.streams.keys() {
-                this.topology.rebalance_stream(stream_id).await?;
-            }
+            // Trigger rebalancing of all overlays
+            this.rebalance_overlays().await;
+            
+            // In a real implementation, we'd also rebalance the topology manager
+            this.topology.rebalance().await?;
             
             Ok(())
         })
@@ -711,20 +831,18 @@ impl Overlay for HybridOverlay {
 impl Clone for HybridOverlay {
     fn clone(&self) -> Self {
         Self {
-            trees: self.trees.clone(),
-            meshes: self.meshes.clone(),
-            streams: self.streams.clone(),
-            topology: self.topology.clone(),
-            network: self.network.clone(),
             config: self.config.clone(),
             local_peer_id: self.local_peer_id.clone(),
-            local_peer_info: self.local_peer_info.clone(),
-            peers: self.peers.clone(),
+            network: self.network.clone(),
+            peer_store: self.peer_store.clone(),
+            streams: self.streams.clone(),
+            trees: self.trees.clone(),
+            meshes: self.meshes.clone(),
+            topology: self.topology.clone(),
             event_sender: self.event_sender.clone(),
             event_receiver: self.event_receiver.clone(),
             running: self.running,
             last_rebalance: self.last_rebalance,
-            task_handles: Vec::new(), // Note: We don't clone task handles
         }
     }
-} 
+}

@@ -45,7 +45,7 @@ mod tests {
         }
         
         /// Add a peer to the mock discovery
-        pub async fn add_peer(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
+        pub async fn add_peer(&mut self, info: PeerInfo) -> Result<(), DiscoveryError> {
             let mut peers = self.peers.lock().await;
             peers.insert(info.id.clone(), info);
             Ok(())
@@ -79,7 +79,7 @@ mod tests {
             Ok(())
         }
 
-        async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
+        async fn announce(&mut self, info: PeerInfo) -> Result<(), DiscoveryError> {
             let mut peers = self.peers.lock().await;
             peers.insert(info.id.clone(), info);
             Ok(())
@@ -125,6 +125,7 @@ mod tests {
             // Return a fixed peer ID for testing
             Some(vec![0x01, 0x02, 0x03, 0x04])
         }
+
 
         async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError> {
             let peers = self.peers.lock().await;

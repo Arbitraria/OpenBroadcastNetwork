@@ -9,10 +9,13 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
 /// A unique peer identifier
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PeerId(pub Vec<u8>);
+/// 
+/// This is a wrapper around a byte vector that represents a peer's unique identifier.
+/// It implements common traits like Debug, Clone, PartialEq, Eq, Hash, Serialize, and Deserialize.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LocalPeerId(pub Vec<u8>);
 
-impl PeerId {
+impl LocalPeerId {
     /// Create a new random peer ID
     pub fn new_random() -> Self {
         use rand::Rng;
@@ -49,13 +52,13 @@ impl PeerId {
     }
 }
 
-impl fmt::Debug for PeerId {
+impl fmt::Debug for LocalPeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PeerId({})", self.to_base58())
+        write!(f, "LocalPeerId({})", self.to_base58())
     }
 }
 
-impl fmt::Display for PeerId {
+impl fmt::Display for LocalPeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_base58())
     }
@@ -100,24 +103,33 @@ pub enum ConnectionStatus {
 /// Detailed information about a peer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerInfo {
-    /// Peer ID
-    pub id: PeerId,
-    /// Available addresses to connect to this peer
+    /// The peer's unique identifier
+    pub id: LocalPeerId,
+    
+    /// The peer's network addresses
     pub addresses: Vec<String>,
-    /// Peer role in the network
+    
+    /// The peer's role in the network
     pub role: PeerRole,
-    /// Connection status
+    
+    /// The peer's connection status
     pub status: ConnectionStatus,
-    /// Protocol versions supported
+    
+    /// When the peer was last seen
+    pub last_seen: u64,
+    
+    /// The peer's supported protocols
     pub protocols: Vec<String>,
+    
     /// Peer metadata/capabilities
     pub metadata: HashMap<String, String>,
+    
     /// Connection latency in milliseconds (if measured)
     pub latency_ms: Option<u64>,
-    /// Last seen timestamp (seconds since UNIX epoch)
-    pub last_seen: u64,
+    
     /// Geographic region (if known)
     pub region: Option<String>,
+    
     /// Bandwidth capacity (if advertised)
     pub bandwidth_capacity: Option<u64>,
 }
@@ -125,7 +137,7 @@ pub struct PeerInfo {
 impl Default for PeerInfo {
     fn default() -> Self {
         Self {
-            id: PeerId::new_random(),
+            id: LocalPeerId::new_random(),
             addresses: Vec::new(),
             role: PeerRole::Unknown,
             status: ConnectionStatus::Disconnected,
@@ -145,27 +157,37 @@ impl Default for PeerInfo {
 /// A connection to a peer
 #[derive(Debug)]
 pub struct PeerConnection {
-    /// Remote peer ID
-    pub peer_id: PeerId,
-    /// Connection status
-    pub status: ConnectionStatus,
-    /// When the connection was established
-    pub connected_at: Option<Instant>,
-    /// Last activity timestamp
-    pub last_activity: Instant,
-    /// Connection latency in milliseconds
-    pub latency_ms: u64,
-    /// Bytes sent
-    pub bytes_sent: u64,
-    /// Bytes received
-    pub bytes_received: u64,
+    /// The peer's ID
+    pub peer_id: LocalPeerId,
+    
     /// Whether this is an outbound connection
     pub is_outbound: bool,
+    
+    /// When the connection was established
+    pub connected_at: Instant,
+    
+    /// Last time data was sent or received
+    pub last_activity: Instant,
+    
+    /// Total bytes sent
+    pub bytes_sent: u64,
+    
+    /// Total bytes received
+    pub bytes_received: u64,
+    
+    /// Measured latency in milliseconds
+    pub latency_ms: Option<u64>,
+    
+    /// Number of failed connection attempts
+    pub failed_attempts: u32,
+    
+    /// Whether the peer is blocked
+    pub is_blocked: bool,
 }
 
 impl PeerConnection {
     /// Create a new peer connection
-    pub fn new(peer_id: PeerId, is_outbound: bool) -> Self {
+    pub fn new(peer_id: LocalPeerId, is_outbound: bool) -> Self {
         Self {
             peer_id,
             status: ConnectionStatus::Connecting,
@@ -215,25 +237,34 @@ impl PeerConnection {
 /// Full peer object including connection information
 #[derive(Debug)]
 pub struct Peer {
-    /// Peer ID
-    pub id: PeerId,
+    /// Peer's unique identifier
+    pub id: LocalPeerId,
+    
     /// Peer information
     pub info: PeerInfo,
-    /// Active connection (if any)
+    
+    /// Connection status
     pub connection: Option<PeerConnection>,
-    /// Last successful connection timestamp
-    pub last_connected: Option<Instant>,
-    /// Connection attempts count
+    
+    /// When the peer was first discovered
+    pub discovered_at: Instant,
+    
+    /// Number of connection attempts
     pub connection_attempts: u32,
-    /// Whether this peer is in the blocklist
-    pub is_blocked: bool,
+    
+    /// Last connection error, if any
+    pub last_error: Option<String>,
+    
+    /// Whether the peer is whitelisted
+    pub is_whitelisted: bool,
+    
     /// Additional peer-specific settings
     pub settings: HashMap<String, String>,
 }
 
 impl Peer {
     /// Create a new peer
-    pub fn new(id: PeerId, info: PeerInfo) -> Self {
+    pub fn new(id: LocalPeerId, info: PeerInfo) -> Self {
         Self {
             id,
             info,
