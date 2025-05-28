@@ -3,27 +3,19 @@
 //! This module provides peer discovery via a Distributed Hash Table (Kademlia).
 
 use crate::discovery::interface::{Discovery, DiscoveryEvent, DiscoveryError, PeerInfo};
-use std::future::Future;
-use std::pin::Pin;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::channel::mpsc::{self, Sender, Receiver};
 use futures::lock::Mutex;
-use futures::StreamExt;
+// Only use futures::Stream when needed, not StreamExt
 use libp2p::core::multiaddr::Multiaddr;
 use libp2p::kad::QueryId;
 use libp2p::PeerId;
-use log;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info, trace, warn};
-use std::future::Future;
-use std::pin::Pin;
+use tracing::debug;
 
 /// Configuration for DHT discovery
 #[derive(Debug, Clone)]

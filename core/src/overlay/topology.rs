@@ -3,18 +3,30 @@
 //! This module handles the organization of peers into an efficient
 //! tree-mesh hybrid structure for stream relay.
 
-use crate::overlay::peer::{Peer, PeerId, PeerInfo, PeerRole};
+use crate::overlay::peer::{Peer, PeerRole};
 use crate::overlay::interface::{StreamId, OverlayError};
+use libp2p::PeerId;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::info;
 use std::cmp::Ordering;
 use std::str::FromStr;
 use std::net::IpAddr;
-use rand::Rng;
-use geo_ip::GeoIP;
+
+// Commenting out GeoIP until a working implementation is provided
+// use geo_ip::GeoIP;
+
+// Placeholder for GeoIP until we have a proper implementation
+struct GeoIP;
+
+impl GeoIP {
+    fn lookup(&self, _ip: IpAddr) -> Option<String> {
+        // Default to Unknown region
+        Some("XX".to_string())
+    }
+}
 
 /// Geographic region codes (simplified)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1095,8 +1107,14 @@ impl TopologyManager {
     /// Update peer information
     pub async fn update_peer(&self, peer: Peer) -> Result<(), OverlayError> {
         let mut peers = self.peers.write().await;
-        peers.insert(peer.id.clone(), peer);
-        Ok(())
+        // Convert LocalPeerId to PeerId for map key
+        match (&peer.id).try_into() {
+            Ok(peer_id) => {
+                peers.insert(peer_id, peer);
+                Ok(())
+            }
+            Err(e) => Err(OverlayError::InvalidPeerId(format!("Failed to convert peer ID: {}", e)))
+        }
     }
     
     /// Remove a peer

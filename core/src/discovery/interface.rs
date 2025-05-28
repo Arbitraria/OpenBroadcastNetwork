@@ -1,19 +1,35 @@
 //! Discovery interface definitions
 //!
-//! This module defines common interfaces for peer discovery mechanisms.
+//! This module defines common interfaces for peer discovery mechanisms in the
+//! decentralized streaming network. These interfaces provide a unified API for
+//! different discovery implementations (bootstrap servers, DHT, mDNS) to allow
+//! applications to use them interchangeably or in combination.
+//!
+//! The discovery system is responsible for:
+//! - Finding peers on the network
+//! - Tracking peer availability and connection status
+//! - Providing metadata about discovered peers
+//! - Announcing the local peer to the network
 
 use std::net::SocketAddr;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use async_trait::async_trait;
+// Will be used when implementing Discovery trait with async methods
 use serde::{Serialize, Deserialize};
 
 /// Re-export for convenience
 pub use libp2p::core::multiaddr::Multiaddr;
 pub use libp2p::PeerId as Libp2pPeerId;
 
-/// Information about a discovered peer
+/// Information about a discovered peer in the network
+/// 
+/// Contains all the necessary information to identify, connect to, and
+/// interact with a peer in the decentralized network. This includes
+/// identifiers, network addresses, protocol support, and connection status.
+/// 
+/// This struct is used throughout the discovery system to represent peers
+/// and exchange peer information between different network components.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeerInfo {
     /// Unique identifier for the peer
@@ -40,7 +56,12 @@ pub struct PeerInfo {
     pub connection_status: ConnectionStatus,
 }
 
-/// Connection status of a peer
+/// Connection status of a peer in the network
+/// 
+/// Represents the current connection state of a peer from the perspective
+/// of the local node. This status is used to track peer availability and
+/// to make decisions about connection attempts and peer selection for
+/// the overlay network construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConnectionStatus {
     /// Not currently connected
@@ -57,6 +78,11 @@ pub enum ConnectionStatus {
 }
 
 /// Events emitted by discovery mechanisms
+/// 
+/// These events notify the application about changes in the peer discovery
+/// process, such as new peers being found, peers being updated or expiring,
+/// and changes in the discovery service state. Applications can subscribe to
+/// these events to react to changes in the network topology.
 #[derive(Debug)]
 pub enum DiscoveryEvent {
     /// A new peer was discovered
@@ -107,7 +133,11 @@ pub enum DiscoveryError {
     
     /// mDNS error
     #[error("mDNS error: {0}")]
-    MdnsError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    MdnsError(Box<dyn std::error::Error + Send + Sync + 'static>),
+    
+    /// Service already started
+    #[error("Service already started: {0}")]
+    AlreadyStarted(String),
     
     /// I/O error
     #[error("I/O error: {0}")]
@@ -151,6 +181,16 @@ pub enum DiscoveryError {
 }
 
 /// Core discovery trait that all discovery implementations must implement
+/// 
+/// This trait defines the standard interface for peer discovery mechanisms.
+/// It provides methods for starting and stopping the discovery service,
+/// announcing the local peer, looking up specific peers, finding peers
+/// based on criteria, and receiving discovery events.
+/// 
+/// Implementations of this trait include bootstrap-based discovery,
+/// DHT-based discovery, and mDNS-based discovery. Each implementation
+/// provides the same interface but uses different underlying mechanisms
+/// to discover and track peers.
 #[async_trait::async_trait]
 pub trait Discovery: Send + Sync + 'static {
     /// Start the discovery service

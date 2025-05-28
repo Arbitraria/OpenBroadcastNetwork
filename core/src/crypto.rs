@@ -50,14 +50,14 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 }
 
 /// Sign data with a private key
-pub fn sign(private_key: &[u8], data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+pub fn sign(_private_key: &[u8], _data: &[u8]) -> Result<Vec<u8>, CryptoError> {
     // Implementation depends on the cryptographic library you're using
     // This is a placeholder implementation
     Ok(vec![])
 }
 
 /// Verify a signature with a public key
-pub fn verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<bool, CryptoError> {
+pub fn verify(_public_key: &[u8], _data: &[u8], _signature: &[u8]) -> Result<bool, CryptoError> {
     // Implementation depends on the cryptographic library you're using
     // This is a placeholder implementation
     Ok(false)

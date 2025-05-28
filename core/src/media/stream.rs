@@ -3,17 +3,15 @@
 //! This module provides functionality for managing media streams, including
 //! creating, reading, and writing media data.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::media::buffer::{BufferConfig, BufferError, MediaBuffer};
+use crate::media::buffer::{BufferConfig, MediaBuffer};
 use crate::media::codec::{AudioCodec, Codec, CodecRegistry, VideoCodec};
-use crate::media::interface::{MediaError, MediaFormat, MediaSink, MediaSource, MediaStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::media::interface::{MediaError, MediaSink, MediaSource, MediaStream};
 
 /// Implementation of a media stream that can be read from or written to
 #[derive(Debug)]
@@ -41,7 +39,7 @@ impl MediaStreamImpl {
         let codec_registry = codec_registry.unwrap_or_else(|| Arc::new(CodecRegistry::default()));
         
         // Get stream info from the underlying source
-        let stream_info = stream.stream_info();
+        let _stream_info = stream.stream_info();
         let metadata = MediaStream {
             id: "".to_string(), // Will be set by the caller if needed
             format: Default::default(), // Will be set by the caller if needed

@@ -1,16 +1,36 @@
 //! Tree-based overlay implementation
 //!
 //! This module provides a tree-based overlay for efficient distribution of
-//! streaming data from source to viewers.
+//! streaming data from source to viewers. The tree structure creates an efficient
+//! hierarchical distribution pattern that minimizes latency and optimizes bandwidth
+//! utilization across the network.
+//!
+//! Key concepts:
+//! - **Source node**: Root of the tree, publishing original content
+//! - **Relay nodes**: Internal nodes that receive and forward content
+//! - **Consumer nodes**: Leaf nodes that only receive content
+//!
+//! The tree automatically optimizes itself based on network conditions, geographic
+//! proximity, and peer capabilities to ensure reliable and efficient content delivery.
 
-use crate::overlay::interface::{PeerRole, StreamId};
+use crate::overlay::interface::StreamId;
+use crate::overlay::peer::PeerRole;
 use libp2p::PeerId;
 use std::collections::{HashMap, HashSet};
 
 /// Maximum number of children for a node in the tree
 const MAX_CHILDREN: usize = 3;
 
-/// A node in the distribution tree
+/// A node in the content distribution tree
+/// 
+/// Represents a single peer in the tree-based overlay network. Each node maintains
+/// references to its parent and children, forming a hierarchical structure for
+/// efficient content distribution. The tree is constructed to optimize latency
+/// and bandwidth utilization based on peer capabilities and network conditions.
+///
+/// Nodes are positioned in the tree according to their role, bandwidth capacity,
+/// and network proximity to other nodes. This positioning ensures efficient
+/// content distribution from the source (root) to all consumers (leaves).
 #[derive(Debug, Clone)]
 pub struct TreeNode {
     /// Peer ID of this node
@@ -47,7 +67,7 @@ impl TreeNode {
     pub fn source(peer_id: PeerId) -> Self {
         Self {
             peer_id,
-            role: PeerRole::Source,
+            role: PeerRole::Publisher,
             parent: None,
             children: HashSet::new(),
             depth: 0,
@@ -58,7 +78,7 @@ impl TreeNode {
 
     /// Check if this node can accept more children
     pub fn can_accept_children(&self) -> bool {
-        self.role != PeerRole::Leaf && self.children.len() < MAX_CHILDREN
+        self.role != PeerRole::Consumer && self.children.len() < MAX_CHILDREN
     }
 
     /// Add a child to this node
@@ -78,6 +98,15 @@ impl TreeNode {
 }
 
 /// A tree overlay for a single stream
+///
+/// Represents a complete distribution tree for a specific stream. The tree consists of
+/// multiple TreeNode instances arranged in a hierarchical structure with a single source
+/// node at the root and multiple relay and consumer nodes forming the branches and leaves.
+///
+/// The StreamTree manages the entire tree structure, handling node additions, removals,
+/// and optimizations to ensure efficient content distribution. It automatically adjusts
+/// the tree topology based on network conditions, peer capabilities, and geographic location
+/// to minimize latency and maximize throughput.
 #[derive(Debug)]
 pub struct StreamTree {
     /// ID of the stream
@@ -89,7 +118,13 @@ pub struct StreamTree {
 }
 
 impl StreamTree {
-    /// Create a new stream tree
+    /// Create a new empty stream tree for the specified stream
+    ///
+    /// # Arguments
+    /// * `stream_id` - The unique identifier for the stream this tree will distribute
+    ///
+    /// # Returns
+    /// A new StreamTree instance with no nodes
     pub fn new(stream_id: StreamId) -> Self {
         Self {
             stream_id,
@@ -99,6 +134,12 @@ impl StreamTree {
     }
 
     /// Set the source peer for this tree
+    ///
+    /// Establishes a peer as the root of the distribution tree (the content publisher).
+    /// This node will be the original source of all content flowing through the tree.
+    ///
+    /// # Arguments
+    /// * `peer_id` - The ID of the peer to set as the source
     pub fn set_source(&mut self, peer_id: PeerId) -> bool {
         if self.source.is_some() {
             return false;
@@ -120,7 +161,7 @@ impl StreamTree {
         node.bandwidth = bandwidth;
 
         // If this is a leaf node, it can't have children
-        if role == PeerRole::Leaf {
+        if role == PeerRole::Consumer {
             self.nodes.insert(peer_id, node);
             return self.find_parent_for_peer(peer_id);
         }
@@ -233,7 +274,7 @@ impl StreamTree {
         for node in self.nodes.values() {
             match node.role {
                 PeerRole::Relay => stats.relay_count += 1,
-                PeerRole::Leaf => stats.leaf_count += 1,
+                PeerRole::Consumer => stats.leaf_count += 1,
                 _ => {}
             }
             stats.depth = stats.depth.max(node.depth);

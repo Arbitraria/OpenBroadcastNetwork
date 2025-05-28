@@ -42,7 +42,7 @@ mod tests {
             })
         }
         
-        fn send(&mut self, _conn_id: &ConnectionId, data: Vec<u8>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send>> {
+        fn send(&mut self, _conn_id: &ConnectionId, _data: Vec<u8>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send>> {
             // Simulate successful send
             Box::pin(async { Ok(()) })
         }

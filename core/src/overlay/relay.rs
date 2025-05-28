@@ -2,9 +2,9 @@
 //!
 //! This module handles the relaying of stream data between peers.
 
-use crate::overlay::peer::{Peer, PeerId, PeerInfo, PeerRole};
+use libp2p::PeerId;
 use crate::overlay::interface::{StreamId, OverlayError};
-use crate::overlay::topology::{TopologyManager, RelayTree};
+use crate::overlay::topology::TopologyManager;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
@@ -13,9 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, Mutex};
-use tokio::time;
 use tracing::{debug, info, warn, error};
-use async_trait::async_trait;
 
 /// Buffer for stream chunks
 type StreamBuffer = VecDeque<StreamChunk>;

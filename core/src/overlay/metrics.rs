@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::RwLock;
 use tokio::time;
 
 /// A simple counter metric

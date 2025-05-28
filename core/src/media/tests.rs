@@ -44,7 +44,8 @@ async fn test_media_stream() {
 async fn test_media_pipeline() {
     // Create a pass-through pipeline
     let mut pipeline = pipeline::MediaPipeline::new();
-    pipeline.add_stage(Box::new(pipeline::PassThroughStage::new("test")));
+    // Pass the stage directly without pre-boxing it
+    pipeline.add_stage(pipeline::PassThroughStage::new("test"));
     
     // Process some data
     let data = b"test data".to_vec();

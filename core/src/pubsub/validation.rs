@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 
-use crate::pubsub::message::Message;
-use crate::pubsub::topic::{Topic, TopicId};
-use crate::overlay::peer::PeerId;
+use crate::pubsub::message::{Message, SerializablePeerId};
+use crate::pubsub::topic::TopicId;
+use libp2p::PeerId;
 
 /// Result of message validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,10 +100,13 @@ impl BasicValidator {
     }
     
     /// Check if a publisher is allowed for a topic
-    fn is_publisher_allowed(&self, topic_id: &TopicId, publisher: &PeerId) -> bool {
+    fn is_publisher_allowed(&self, topic_id: &TopicId, publisher: &SerializablePeerId) -> bool {
         if let Some(rules) = self.topic_rules.get(topic_id) {
             if !rules.allowed_publishers.is_empty() {
-                return rules.allowed_publishers.contains(publisher);
+                // For now, just compare publisher IDs as strings
+                // In a real implementation, we would convert and use proper PeerId comparison
+                let publisher_str = &publisher.0;
+                return rules.allowed_publishers.iter().any(|p| p.to_string() == *publisher_str);
             }
         }
         true
@@ -112,7 +115,7 @@ impl BasicValidator {
 
 #[async_trait]
 impl MessageValidator for BasicValidator {
-    fn validate(&self, message: &Message, source: Option<&PeerId>) -> ValidationResult {
+    fn validate(&self, message: &Message, _source: Option<&PeerId>) -> ValidationResult {
         // Check message size
         let max_size = self.get_max_message_size(&message.topic);
         if message.size() > max_size {
@@ -136,7 +139,7 @@ impl MessageValidator for BasicValidator {
         ValidationResult::Accept
     }
     
-    async fn async_validate(&self, message: Arc<Message>, source: Option<PeerId>) -> ValidationResult {
+    async fn async_validate(&self, _message: Arc<Message>, _source: Option<PeerId>) -> ValidationResult {
         // The basic validator performs all checks synchronously
         // This is a placeholder for more complex async validation
         ValidationResult::Accept

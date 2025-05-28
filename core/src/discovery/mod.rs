@@ -1,10 +1,24 @@
 //! Peer discovery implementation
 //!
-//! This module provides mechanisms for discovering peers in the network.
+//! This module provides mechanisms for discovering peers in the decentralized network.
+//! Peer discovery is a critical component that enables nodes to find and connect with
+//! other participating nodes without centralized coordination.
+//!
+//! The discovery system supports multiple complementary mechanisms:
+//! - **Bootstrap discovery**: Uses well-known bootstrap servers to find initial peers
+//! - **DHT discovery**: Distributed Hash Table-based peer discovery for scalable lookup
+//! - **mDNS discovery**: Local network discovery using multicast DNS
+//!
+//! These mechanisms can be used individually or in combination to provide robust
+//! peer discovery across different network environments and topologies.
 
+/// Bootstrap server-based peer discovery implementation
 pub mod bootstrap;
+/// Distributed Hash Table (DHT) based peer discovery
 pub mod dht;
+/// Multicast DNS based local network peer discovery
 pub mod mdns;
+/// Core interfaces and types for peer discovery
 pub mod interface;
 
 #[cfg(test)]
@@ -23,7 +37,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock, Mutex};
 use tokio::time;
 use std::time::Duration;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, error};
 
 /// Configuration for the discovery manager
 #[derive(Debug, Clone)]
@@ -78,6 +92,8 @@ pub struct DiscoveryManager {
     running: Arc<RwLock<bool>>,
     /// Worker task handle
     worker_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Shutdown signal sender
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl DiscoveryManager {
@@ -95,6 +111,7 @@ impl DiscoveryManager {
             event_rx: Mutex::new(event_rx),
             running: Arc::new(RwLock::new(false)),
             worker_task: Mutex::new(None),
+            shutdown_tx: None,
         }
     }
     
@@ -132,10 +149,14 @@ impl DiscoveryManager {
         let mdns = self.mdns.clone();
         let dht = self.dht.clone();
         let bootstrap = self.bootstrap.clone();
-        let peers = self.peers.clone();
+        let _peers = self.peers.clone(); // Kept for future implementation
         let event_tx = self.event_tx.clone();
         let running_flag = self.running.clone();
         let poll_interval = Duration::from_millis(self.config.poll_interval_ms);
+        
+        // Create a shutdown channel
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        self.shutdown_tx = Some(shutdown_tx);
         
         let worker = tokio::spawn(async move {
             let mut interval = time::interval(poll_interval);

@@ -1,6 +1,5 @@
 use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::hash::Hash;
 use serde::{Serialize, Deserialize};
 
 /// Unique identifier for a topic

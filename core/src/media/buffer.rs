@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::media::interface::MediaError;
+// MediaError will be used in future implementations
 
 /// Configuration for media buffering
 #[derive(Debug, Clone)]

@@ -3,11 +3,12 @@
 //! This module handles peer identification, information, and connections.
 
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
+use libp2p::identity;
 
 /// A unique peer identifier
 /// 
@@ -81,23 +82,32 @@ impl From<&libp2p::PeerId> for LocalPeerId {
 
 // Implement conversion from LocalPeerId to libp2p::PeerId (fallible)
 impl TryFrom<LocalPeerId> for libp2p::PeerId {
-    type Error = libp2p::core::identity::DecodingError;
+    type Error = String;
     
     fn try_from(peer_id: LocalPeerId) -> Result<Self, Self::Error> {
         libp2p::PeerId::from_bytes(&peer_id.0)
+            .map_err(|e| format!("Failed to convert to PeerId: {}", e))
     }
 }
 
 // Implement conversion from &LocalPeerId to libp2p::PeerId (fallible)
 impl TryFrom<&LocalPeerId> for libp2p::PeerId {
-    type Error = libp2p::core::identity::DecodingError;
+    type Error = String;
     
     fn try_from(peer_id: &LocalPeerId) -> Result<Self, Self::Error> {
         libp2p::PeerId::from_bytes(&peer_id.0)
+            .map_err(|e| format!("Failed to convert to PeerId: {}", e))
     }
 }
 
-/// Role of a peer in the network
+/// Role of a peer in the decentralized streaming network
+/// 
+/// Defines the functional role and capabilities of a peer within the overlay network topology.
+/// Each role determines how the peer participates in the streaming process, including its position
+/// in the distribution tree, connection limitations, and bandwidth requirements.
+/// 
+/// The role affects how peers connect to each other and how data flows through the network,
+/// creating an efficient distribution structure for live streaming content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PeerRole {
     /// Source/publisher of content

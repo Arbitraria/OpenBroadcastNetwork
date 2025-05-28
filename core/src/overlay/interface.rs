@@ -3,9 +3,8 @@
 //! This module defines the fundamental interfaces for the overlay network
 //! used in the decentralized streaming system.
 
-use crate::overlay::peer::{Peer, LocalPeerId, PeerInfo};
+use crate::overlay::peer::{LocalPeerId, PeerInfo};
 use std::fmt;
-use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -28,6 +27,10 @@ pub enum OverlayError {
     /// Topology error
     #[error("Topology error: {0}")]
     TopologyError(String),
+    
+    /// Invalid peer ID
+    #[error("Invalid peer ID: {0}")]
+    InvalidPeerId(String),
     
     /// Operation not possible when not running
     #[error("Operation not possible: not running")]

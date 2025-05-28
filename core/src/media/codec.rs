@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::media::interface::MediaError;
+// Will use MediaError when implementing actual codec functionality
 
 /// Error type for codec operations
 #[derive(Debug)]

@@ -5,8 +5,9 @@
 #[cfg(test)]
 mod tests {
     use crate::prelude::*;
-    use super::super::tree::{StreamTree, TreeNode, TreeStats};
-    use super::super::mesh::{StreamMesh, MeshNode, MeshStats};
+    // Fix import path for tree and mesh modules
+    use crate::overlay::tree::{StreamTree, TreeNode, TreeStats};
+    use crate::overlay::mesh::{StreamMesh, MeshNode, MeshStats};
     use std::collections::HashSet;
     use std::str::FromStr;
     use libp2p::PeerId;
@@ -64,8 +65,10 @@ mod tests {
         assert!(!node.children.contains(&child2));
         
         // Test adding children
-        let leaf_node = TreeNode::new(random_peer_id(), PeerRole::Consumer);
-        assert!(node.add_child(leaf_node));
+        let leaf_peer_id = random_peer_id();
+        let leaf_node = TreeNode::new(leaf_peer_id.clone(), PeerRole::Consumer);
+        assert!(node.add_child(leaf_peer_id));
+        // Verify the leaf node cannot accept children
         assert!(!leaf_node.can_accept_children());
     }
 

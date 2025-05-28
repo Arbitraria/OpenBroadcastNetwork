@@ -1,11 +1,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use crate::pubsub::topic::TopicId;
 use crate::pubsub::message::MessageId;
-use crate::overlay::peer::PeerId;
+use libp2p::PeerId;
 
 /// Time window for calculating rates
 const TIME_WINDOW_SECONDS: u64 = 60;

@@ -3,7 +3,8 @@
 //! This module provides a mesh-based overlay for resilient distribution
 //! when the tree structure fails or is not optimal.
 
-use crate::overlay::interface::{PeerRole, StreamId};
+use crate::overlay::interface::StreamId;
+use crate::overlay::peer::PeerRole;
 use libp2p::PeerId;
 use std::collections::{HashMap, HashSet};
 
@@ -85,7 +86,7 @@ impl StreamMesh {
             return false;
         }
 
-        let source_node = MeshNode::new(peer_id, PeerRole::Source, true);
+        let source_node = MeshNode::new(peer_id, PeerRole::Publisher, true);
         self.nodes.insert(peer_id, source_node);
         self.source = Some(peer_id);
         true

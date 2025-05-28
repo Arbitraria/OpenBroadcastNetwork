@@ -7,13 +7,21 @@
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
+/// Media buffer implementation for caching and managing streaming data chunks
 pub mod buffer;
+/// Encoding and decoding functionality for various media formats
 pub mod codec;
+/// Core interfaces and traits for the media pipeline components
 pub mod interface;
+/// Media processing pipeline for transforming and forwarding stream data
 pub mod pipeline;
+/// Quality management and adaptive bitrate control
 pub mod quality;
+/// Output destinations for processed media streams
 pub mod sink;
+/// Input sources for media content
 pub mod source;
+/// Stream management and metadata handling
 pub mod stream;
 
 #[cfg(test)]

@@ -5,9 +5,7 @@ use futures::StreamExt;
 use libp2p::identity::Keypair;
 use tokio::time;
 
-use crate::pubsub::gossipsub::GossipSubService;
 use crate::pubsub::interface::{AsyncPubSub, PubSub, PubSubConfig, PubSubError};
-use crate::pubsub::topic::Topic;
 use crate::pubsub::gossipsub::{GossipSubService, GossipSubConfig};
 use crate::pubsub::topic::{Topic, TopicId, TopicConfig, StreamTopic, StreamMetadata};
 use crate::pubsub::message::{Message, MessageType, MessagePayload};

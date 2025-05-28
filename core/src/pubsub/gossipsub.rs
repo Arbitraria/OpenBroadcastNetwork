@@ -1,25 +1,36 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::convert::TryFrom;
 
-use tokio::sync::mpsc::{self, Sender, Receiver};
-use tokio::time;
+// Tokio imports
+use tokio::sync::mpsc::{self, Sender};
+
+// External libraries
 use async_trait::async_trait;
-use libp2p::gossipsub::{
-    Gossipsub, GossipsubMessage, GossipsubEvent, MessageId as LibP2PMessageId,
-    IdentTopic as LibP2PTopic, MessageAuthenticity, ValidationMode, GossipsubConfig as LibP2PGossipsubConfig
-};
-use libp2p::core::{identity::Keypair};
-use libp2p::swarm::NetworkBehaviour;
-use tracing::{debug, error, info, trace, warn};
+use libp2p::identity::Keypair;
 
-use crate::pubsub::interface::{PubSub, PubSubError, PubSubEvent, PubSubConfig, AsyncPubSub, PubSubEventStream};
+// Import basic types from gossipsub module
+use libp2p::gossipsub::IdentTopic as LibP2PTopic;
+use libp2p::gossipsub::MessageAuthenticity;
+use libp2p::gossipsub::MessageId as LibP2PMessageId;
+
+// In libp2p 0.53.0, the Gossipsub behaviour and its components are in libp2p_gossipsub crate
+// which is re-exported as libp2p::gossipsub
+use libp2p::gossipsub::Behaviour as Gossipsub;
+// Import only the components we actually use
+use libp2p::gossipsub::Message as GossipsubMessage;
+use libp2p::gossipsub::ConfigBuilder;
+
+use tracing::error;
+
+// Internal imports
+use crate::pubsub::interface::{PubSub, PubSubError, PubSubEvent, PubSubConfig, AsyncPubSub};
 use crate::pubsub::topic::{Topic, TopicId};
-use crate::pubsub::message::{Message, MessageId, MessagePayload, MessageType};
+use crate::pubsub::message::{Message, MessageId};
 use crate::pubsub::validation::{MessageValidator, ValidationResult, BasicValidator};
-use crate::pubsub::metrics::{PubSubMetrics, PubSubStats};
+use crate::pubsub::metrics::PubSubMetrics;
 use crate::overlay::peer::LocalPeerId;
-use std::convert::{TryFrom, TryInto};
 
 /// Configuration for GossipSub
 #[derive(Debug, Clone)]
@@ -155,21 +166,22 @@ impl GossipSubService {
     
     /// Create a new gossipsub protocol with current configuration
     fn create_gossipsub(&self) -> Gossipsub {
-        let mut config = LibP2PGossipsubConfig::default();
-        
-        // Apply custom configuration
-        config.mesh_n = self.config.mesh_n;
-        config.mesh_n_high = self.config.mesh_n_high;
-        config.mesh_n_low = self.config.mesh_n_low;
-        config.gossip_factor = self.config.gossip_factor;
-        config.fanout_ttl = Duration::from_secs(self.config.fanout_ttl);
-        config.heartbeat_interval = Duration::from_millis(self.config.heartbeat_interval);
-        config.max_transmit_size = self.config.max_message_size;
+        // Use the ConfigBuilder pattern to configure Gossipsub
+        let gossipsub_config = ConfigBuilder::default()
+            .mesh_n(self.config.mesh_n)
+            .mesh_n_low(self.config.mesh_n_low)
+            .mesh_n_high(self.config.mesh_n_high)
+            .gossip_factor(self.config.gossip_factor)
+            .fanout_ttl(Duration::from_secs(self.config.fanout_ttl))
+            .heartbeat_interval(Duration::from_millis(self.config.heartbeat_interval))
+            .max_transmit_size(self.config.max_message_size)
+            .build()
+            .expect("Valid gossipsub config");
         
         // Create the gossipsub instance
         Gossipsub::new(
             MessageAuthenticity::Signed(self.keypair.clone()),
-            config
+            gossipsub_config
         ).expect("Failed to create gossipsub")
     }
     
@@ -178,10 +190,10 @@ impl GossipSubService {
         LibP2PTopic::new(topic_id.0.clone())
     }
     
-    /// Convert libp2p PeerId to our LocalPeerId
-    fn from_libp2p_peer_id(peer_id: &libp2p::PeerId) -> LocalPeerId {
-        // Use the From trait implementation
-        LocalPeerId::from(peer_id)
+    /// Convert libp2p PeerId to SerializablePeerId for Message compatibility
+    fn from_libp2p_peer_id(peer_id: &libp2p::PeerId) -> crate::pubsub::message::SerializablePeerId {
+        // Convert to string representation for serialization
+        crate::pubsub::message::SerializablePeerId(peer_id.to_string())
     }
     
     /// Convert our LocalPeerId to libp2p PeerId
@@ -237,12 +249,10 @@ impl GossipSubService {
                     .expect("Time went backwards")
                     .as_millis() as u64;
                 
+                // In libp2p 0.53.0, the message_id field is no longer directly accessible
+                // Use a timestamp-based ID as a fallback
                 let id = MessageId(
-                    if let Some(msg_id) = &gossipsub_msg.message_id {
-                        hex::encode(msg_id)
-                    } else {
-                        format!("msg-{}-{}", topic_id, timestamp)
-                    }
+                    format!("msg-{}-{}", topic_id, timestamp)
                 );
                 
                 let mut message = Message::binary(topic_id, gossipsub_msg.data.clone());
@@ -305,7 +315,7 @@ impl PubSub for GossipSubService {
         self.publish_message(topic_id, message)
     }
     
-    fn publish_message(&mut self, topic_id: &TopicId, message: Message) -> Result<MessageId, PubSubError> {
+    fn publish_message(&mut self, _topic_id: &TopicId, message: Message) -> Result<MessageId, PubSubError> {
         // Validate the message locally
         match self.validator.validate(&message, None) {
             ValidationResult::Accept => {
@@ -331,7 +341,7 @@ impl PubSub for GossipSubService {
         Ok(message.id.clone())
     }
     
-    fn list_peers(&self, topic_id: &TopicId) -> Vec<LocalPeerId> {
+    fn list_peers(&self, _topic_id: &TopicId) -> Vec<LocalPeerId> {
         match self.peers.read() {
             Ok(peers) => peers.iter().cloned().collect(),
             Err(_) => Vec::new(),
@@ -418,7 +428,7 @@ impl AsyncPubSub for GossipSubService {
     
     fn event_stream<'a>(
         &'a mut self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<crate::pubsub::interface::PubSubEventStream, PubSubError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<PubSubEventStream, PubSubError>> + Send + 'a>> {
         Box::pin(async move {
             // Create a new channel
             let (tx, rx) = mpsc::channel(100);
@@ -431,27 +441,13 @@ impl AsyncPubSub for GossipSubService {
             *event_sender = Some(tx);
             
             // Create and return the event stream
-            Ok(crate::pubsub::interface::PubSubEventStream::new(rx))
+            Ok(PubSubEventStream::new(rx))
         })
     }
 }
 
-// Extend PubSubEventStream to support the actual implementation
-impl PubSubEventStream {
-    /// Create a new event stream
-    pub fn new(receiver: Receiver<PubSubEvent>) -> Self {
-        Self {
-            receiver,
-        }
-    }
-    
-    /// Get the next event
-    pub async fn next(&mut self) -> Option<PubSubEvent> {
-        self.receiver.recv().await
-    }
-}
+// Import PubSubEventStream from interface module for clarity
+use crate::pubsub::interface::PubSubEventStream;
 
-/// Event stream receiver
-pub struct PubSubEventStream {
-    receiver: Receiver<PubSubEvent>,
-} 
+// Extension methods for PubSubEventStream, if needed in the future
+// Currently handled directly in the interface.rs file 

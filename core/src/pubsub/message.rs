@@ -1,10 +1,30 @@
 use std::fmt::{Display, Formatter};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use serde::{Serialize, Deserialize};
+use std::str::FromStr;
 
-use crate::overlay::peer::PeerId;
+use libp2p::PeerId;
 use crate::pubsub::topic::TopicId;
+
+/// Serializable wrapper for PeerId
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SerializablePeerId(pub String);
+
+impl From<PeerId> for SerializablePeerId {
+    fn from(peer_id: PeerId) -> Self {
+        SerializablePeerId(peer_id.to_string())
+    }
+}
+
+impl TryFrom<SerializablePeerId> for PeerId {
+    type Error = String;
+    
+    fn try_from(peer_id: SerializablePeerId) -> Result<Self, Self::Error> {
+        PeerId::from_str(&peer_id.0)
+            .map_err(|e| format!("Failed to parse PeerId: {}", e))
+    }
+}
 
 /// Unique identifier for a message
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -79,7 +99,7 @@ pub struct Message {
     pub topic: TopicId,
     
     /// Publisher of the message
-    pub publisher: Option<PeerId>,
+    pub publisher: Option<SerializablePeerId>,
     
     /// Message type
     pub message_type: MessageType,
@@ -171,7 +191,7 @@ impl Message {
     
     /// Set the publisher of the message
     pub fn with_publisher(mut self, publisher: PeerId) -> Self {
-        self.publisher = Some(publisher);
+        self.publisher = Some(publisher.into());
         self
     }
     
