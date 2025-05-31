@@ -1,13 +1,59 @@
 //! Core interfaces for the overlay network
 //!
 //! This module defines the fundamental interfaces for the overlay network
-//! used in the decentralized streaming system.
+//! used in the decentralized streaming system. These interfaces form the contract
+//! that all overlay implementations must follow.
+//!
+//! # Core Abstractions
+//!
+//! The overlay network is defined by several key abstractions:
+//!
+//! 1. **Overlay Trait** - The primary interface that defines the overlay network capabilities
+//!    including peer discovery, connection management, and stream operations.
+//!
+//! 2. **StreamId** - A unique identifier for data streams in the overlay network.
+//!    Used for creating, tracking, and managing stream data flow.
+//!
+//! 3. **OverlayConfig** - Configuration parameters for initializing an overlay network.
+//!    Controls behavior, networking parameters, and protocol settings.
+//!
+//! 4. **OverlayEvent** - Events emitted by the overlay network that indicate state
+//!    changes, peer connections, and stream data availability.
+//!
+//! 5. **OverlayError** - Error types that can occur during overlay network operations.
+//!    Provides detailed error information for diagnostics and recovery.
+//!
+//! # Implementation Contract
+//!
+//! Any implementation of the `Overlay` trait must provide thread-safe methods that handle:
+//! - Starting and stopping the overlay network
+//! - Connecting to peers by address
+//! - Creating and removing streams
+//! - Adding peers to streams
+//! - Publishing stream data chunks
+//! - Processing incoming events
+//!
+//! # Integration Points
+//!
+//! This module is a cornerstone that is used by:
+//! - `overlay::libp2p_impl` - The primary libp2p-based implementation
+//! - Client applications that interact with the overlay network
+//! - Testing frameworks for verifying overlay network behavior
+//!
+//! # Design Philosophy
+//!
+//! The interfaces are designed with these principles:
+//! - **Async-first** - All network operations are async to support high concurrency
+//! - **Error transparency** - Detailed error types for better diagnostics
+//! - **Abstraction** - Implementation details are hidden behind trait interfaces
+//! - **Configurability** - Extensive configuration options for different deployment scenarios
 
 use crate::overlay::peer::{LocalPeerId, PeerInfo};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
+use serde::{Serialize, Deserialize};
 
 /// Overlay network errors
 #[derive(Debug, thiserror::Error)]
@@ -40,9 +86,21 @@ pub enum OverlayError {
     #[error("Stream not found: {0:?}")]
     StreamNotFound(StreamId),
     
+    /// Stream already exists error
+    #[error("Stream already exists: {0:?}")]
+    StreamAlreadyExists(StreamId),
+    
     /// No chunk handler available
     #[error("No chunk handler available")]
     NoChunkHandler,
+    
+    /// Peer not found error
+    #[error("Peer not found: {0}")]
+    PeerNotFound(libp2p::PeerId),
+    
+    /// Already running error
+    #[error("Operation not possible: already running")]
+    AlreadyRunning,
     
     /// Operation timeout
     #[error("Operation timed out after {0:?}")]
@@ -66,7 +124,7 @@ pub enum OverlayError {
 }
 
 /// A unique stream identifier
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StreamId(pub Vec<u8>);
 
 impl StreamId {

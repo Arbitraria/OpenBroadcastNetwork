@@ -52,6 +52,16 @@ impl LocalPeerId {
         let bytes = bs58::decode(s).into_vec()?;
         Ok(Self(bytes))
     }
+    
+    /// Get a shortened version of the peer ID for display
+    pub fn short_id(&self) -> String {
+        let b58 = self.to_base58();
+        if b58.len() <= 10 {
+            b58
+        } else {
+            format!("{}..", &b58[0..7])
+        }
+    }
 }
 
 impl fmt::Debug for LocalPeerId {

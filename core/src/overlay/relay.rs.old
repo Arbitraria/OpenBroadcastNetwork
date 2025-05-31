@@ -4,6 +4,7 @@
 
 use libp2p::PeerId;
 use crate::overlay::interface::{StreamId, OverlayError};
+// Import the actual TopologyManager implementation
 use crate::overlay::topology::TopologyManager;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -242,7 +243,7 @@ pub struct RelayNode {
     local_peer_id: PeerId,
     /// Configuration
     config: RelayConfig,
-    /// Topology manager
+    /// Topology manager for overlay network management
     topology: Arc<TopologyManager>,
     /// Active streams
     streams: Arc<RwLock<HashMap<StreamId, StreamRelay>>>,
@@ -826,7 +827,7 @@ pub struct RelayManager {
     local_peer_id: PeerId,
     /// Configuration
     config: RelayConfig,
-    /// Topology manager
+    /// Topology manager for overlay network management
     topology: Arc<TopologyManager>,
     /// Local relay node
     relay_node: Arc<RelayNode>,

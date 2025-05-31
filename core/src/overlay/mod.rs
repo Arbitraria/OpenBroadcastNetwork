@@ -16,25 +16,44 @@
 
 /// Core interfaces and types for the overlay network
 pub mod interface;
-/// Network topology management and organization
-pub mod topology;
-/// Relay functionality for forwarding streams between peers
-pub mod relay;
-/// Performance metrics collection and analysis for overlay optimization
-pub mod metrics;
 /// Peer management, roles, and connection handling
 pub mod peer;
-/// Mesh-based overlay implementation for resilient connections
-pub mod mesh;
 /// Tree-based overlay implementation for efficient distribution
 pub mod tree;
+/// Mesh-based overlay implementation for resilient connections
+pub mod mesh;
+// Import discovery module from crate root
+// The discovery module is defined at the crate level, not in the overlay
+/// Performance metrics collection and analysis for overlay optimization
+pub mod metrics;
+/// Relay functionality for forwarding streams between peers
+pub mod relay;
+/// libp2p implementation of the overlay network
+pub mod libp2p_impl;
+/// Implementation of the overlay network using libp2p (modular version)
+pub mod libp2p;
+/// Hybrid tree-mesh overlay implementation (modular version)
+pub mod hybrid;
+/// Legacy relay exports for backward compatibility
+pub mod relay_redirector;
+/// Network topology management and organization (refactored into a modular structure)
+pub mod topology;
+/// Module for testing dynamic overlay features
+#[cfg(test)]
+pub mod dynamic_tests;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export main types
 pub use interface::{Overlay, OverlayEvent, OverlayError};
-pub use topology::{TopologyManager, TopologyConfig, RelayTree};
+// Re-exporting topology types
+pub use topology::{TopologyManager, TopologyConfig};
 pub use peer::{Peer, PeerInfo, PeerRole, PeerConnection, LocalPeerId};
-pub use libp2p::PeerId;
-pub use relay::{RelayNode, RelayManager, RelayStats}; 
+// Re-export PeerId from libp2p
+pub use ::libp2p::PeerId;
+// Re-export our overlay implementation
+pub use crate::overlay::libp2p_impl::Libp2pOverlay;
+pub use relay::{RelayNode, RelayManager, RelayStats};
+// Re-export hybrid overlay types
+pub use hybrid::{HybridOverlay, HybridOverlayConfig, StreamMetadata, StreamQuality};

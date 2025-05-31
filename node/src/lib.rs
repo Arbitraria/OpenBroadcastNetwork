@@ -2,8 +2,8 @@ pub mod visualization;
 
 // Re-export key types
 pub use visualization::{
-    StreamInfo, PeerDisplayInfo, format_bytes, format_duration,
-    create_stream_table, create_peer_table, visualize_tree, dot_to_ascii
+    format_bytes, format_duration,
+    create_stream_table, create_peer_table, visualize_tree
 };
 
 /// Get information about the node

@@ -18,8 +18,14 @@ use crate::overlay::peer::PeerRole;
 use libp2p::PeerId;
 use std::collections::{HashMap, HashSet};
 
-/// Maximum number of children for a node in the tree
-const MAX_CHILDREN: usize = 3;
+/// Default maximum number of children for a node in the tree
+const DEFAULT_MAX_CHILDREN: usize = 3;
+
+/// Absolute maximum number of children for any node in the tree
+const ABSOLUTE_MAX_CHILDREN: usize = 7;
+
+/// Minimum acceptable connection quality score (0.0-1.0)
+const MIN_CONNECTION_QUALITY: f32 = 0.5;
 
 /// A node in the content distribution tree
 /// 
@@ -43,10 +49,18 @@ pub struct TreeNode {
     pub children: HashSet<PeerId>,
     /// Depth in the tree (0 = source)
     pub depth: usize,
-    /// Estimated bandwidth capacity
+    /// Estimated bandwidth capacity (bytes/sec)
     pub bandwidth: u64,
     /// Estimated latency to parent (ms)
     pub latency: u64,
+    /// Maximum number of children this node can support (dynamic)
+    pub max_children: usize,
+    /// Connection quality score (0.0-1.0)
+    pub connection_quality: f32,
+    /// Last time node metrics were updated
+    pub last_updated: std::time::Instant,
+    /// Successive failures count
+    pub failure_count: usize,
 }
 
 impl TreeNode {
@@ -60,6 +74,10 @@ impl TreeNode {
             depth: 0,
             bandwidth: 0,
             latency: 0,
+            max_children: DEFAULT_MAX_CHILDREN,
+            connection_quality: 1.0, // Start with perfect quality
+            last_updated: std::time::Instant::now(),
+            failure_count: 0,
         }
     }
 
@@ -73,12 +91,83 @@ impl TreeNode {
             depth: 0,
             bandwidth: 0,
             latency: 0,
+            // Source nodes can potentially handle more children
+            max_children: DEFAULT_MAX_CHILDREN + 1,
+            connection_quality: 1.0, // Start with perfect quality
+            last_updated: std::time::Instant::now(),
+            failure_count: 0,
         }
     }
 
     /// Check if this node can accept more children
     pub fn can_accept_children(&self) -> bool {
-        self.role != PeerRole::Consumer && self.children.len() < MAX_CHILDREN
+        self.role != PeerRole::Consumer && 
+        self.children.len() < self.max_children &&
+        self.connection_quality >= MIN_CONNECTION_QUALITY
+    }
+    
+    /// Update node metrics and adjust fan-out capacity
+    pub fn update_metrics(&mut self, bandwidth: u64, latency: u64, success_rate: f32) {
+        self.bandwidth = bandwidth;
+        self.latency = latency;
+        self.last_updated = std::time::Instant::now();
+        
+        // Calculate a connection quality score (0.0-1.0) based on latency and success rate
+        // Lower latency and higher success rate = better quality
+        let latency_factor = if latency < 50 {
+            1.0
+        } else if latency < 100 {
+            0.9
+        } else if latency < 200 {
+            0.7
+        } else if latency < 500 {
+            0.5
+        } else {
+            0.3
+        };
+        
+        self.connection_quality = latency_factor * success_rate;
+        
+        // Update max_children based on bandwidth, latency, and connection quality
+        self.adjust_fan_out();
+    }
+    
+    /// Adjust the maximum number of children based on node capabilities
+    pub fn adjust_fan_out(&mut self) {
+        // Base capacity on bandwidth (bytes/sec)
+        // Assuming ~500KB/s per stream is needed for good quality
+        let bandwidth_capacity = (self.bandwidth / 500_000) as usize;
+        
+        // Adjust based on connection quality
+        let quality_adjusted = (bandwidth_capacity as f32 * self.connection_quality) as usize;
+        
+        // Clamp to reasonable values
+        let new_max = quality_adjusted.clamp(1, ABSOLUTE_MAX_CHILDREN);
+        
+        // Publisher nodes always get a minimum capacity
+        if self.role == PeerRole::Publisher {
+            self.max_children = new_max.max(DEFAULT_MAX_CHILDREN);
+        } else {
+            self.max_children = new_max;
+        }
+    }
+    
+    /// Record a connection failure
+    pub fn record_failure(&mut self) {
+        self.failure_count += 1;
+        // Reduce connection quality on failures
+        self.connection_quality *= 0.8;
+        self.adjust_fan_out();
+    }
+    
+    /// Record a connection success
+    pub fn record_success(&mut self) {
+        if self.failure_count > 0 {
+            self.failure_count -= 1;
+        }
+        // Gradually recover connection quality on success
+        self.connection_quality = (self.connection_quality + 0.1).min(1.0);
+        self.adjust_fan_out();
     }
 
     /// Add a child to this node
@@ -115,6 +204,12 @@ pub struct StreamTree {
     pub nodes: HashMap<PeerId, TreeNode>,
     /// Source peer ID
     pub source: Option<PeerId>,
+    /// Disconnected nodes cache (for temporary disconnections)
+    pub disconnected_nodes: HashMap<PeerId, (TreeNode, std::time::Instant)>,
+    /// Last time tree was rebalanced
+    pub last_rebalanced: std::time::Instant,
+    /// Rebalance counter
+    pub rebalance_count: usize,
 }
 
 impl StreamTree {
@@ -130,6 +225,9 @@ impl StreamTree {
             stream_id,
             nodes: HashMap::new(),
             source: None,
+            disconnected_nodes: HashMap::new(),
+            last_rebalanced: std::time::Instant::now(),
+            rebalance_count: 0,
         }
     }
 
@@ -249,7 +347,7 @@ impl StreamTree {
         }
 
         // Remove the peer
-        self.nodes.remove(peer_id);
+        let _node = self.nodes.remove(peer_id).unwrap();
 
         // Reconnect any children to new parents
         for child_id in children {
@@ -260,6 +358,133 @@ impl StreamTree {
         }
 
         true
+    }
+    
+    /// Handle a temporary disconnect by preserving node state
+    pub fn handle_temporary_disconnect(&mut self, peer_id: &PeerId, grace_period: std::time::Duration) -> bool {
+        if !self.nodes.contains_key(peer_id) {
+            return false;
+        }
+        
+        // Can't temporarily disconnect the source
+        if let Some(source_id) = self.source {
+            if *peer_id == source_id {
+                return false;
+            }
+        }
+        
+        // Clone the node before removal
+        let node = self.nodes.get(peer_id).cloned();
+        
+        if let Some(node) = node {
+            // Get the data we need before moving the node
+            let parent = node.parent;
+            let children = node.children.clone();
+            
+            // Save node info with timestamp for potential reconnection
+            self.disconnected_nodes.insert(*peer_id, (node, std::time::Instant::now()));
+            
+            // Remove from parent
+            if let Some(parent_id) = parent {
+                if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
+                    parent_node.remove_child(peer_id);
+                }
+            }
+            
+            // Remove node from active nodes
+            self.nodes.remove(peer_id);
+            
+            // Handle children - either find new parents or keep them waiting
+            for child_id in children {
+                if let Some(child) = self.nodes.get_mut(&child_id) {
+                    child.parent = None;
+                }
+                // Try to find a new parent, but it's not critical in temporary disconnection
+                let _ = self.find_parent_for_peer(child_id);
+            }
+            
+            // Clean up expired disconnections
+            self.cleanup_disconnected_nodes(grace_period);
+            
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Handle a reconnection attempt
+    pub fn handle_reconnection(&mut self, peer_id: &PeerId) -> bool {
+        // Check if this peer is in the disconnected nodes cache
+        if let Some((mut node, _disconnect_time)) = self.disconnected_nodes.remove(peer_id) {
+            // Add the node back to the tree
+            // Note: We'll need to find a new parent and potentially new children
+            node.parent = None; // Clear parent as we'll need to find a new one
+            node.children.clear(); // Clear children as they may have found new parents
+            
+            // Record the reconnection as a success
+            node.record_success();
+            
+            // Add back to the active nodes
+            self.nodes.insert(*peer_id, node);
+            
+            // Find a new parent for this node
+            if !self.find_parent_for_peer(*peer_id) {
+                // If we couldn't find a parent, this is still a success but it's orphaned
+                // It will be picked up in the next rebalance
+            }
+            
+            // Some of the node's original children might want to reconnect to it
+            // This is handled during rebalance
+            
+            true
+        } else {
+            // Node not in disconnected cache, treat as a new connection
+            false
+        }
+    }
+    
+    /// Clean up disconnected nodes that have exceeded their grace period
+    fn cleanup_disconnected_nodes(&mut self, grace_period: std::time::Duration) {
+        let now = std::time::Instant::now();
+        let expired: Vec<PeerId> = self.disconnected_nodes
+            .iter()
+            .filter(|(_, (_, time))| now.duration_since(*time) > grace_period)
+            .map(|(id, _)| *id)
+            .collect();
+        
+        for id in expired {
+            self.disconnected_nodes.remove(&id);
+        }
+    }
+    
+    /// Get a path from source to a peer in the tree
+    pub fn get_path_to_peer(&self, peer_id: &PeerId) -> Option<Vec<PeerId>> {
+        if !self.nodes.contains_key(peer_id) {
+            return None;
+        }
+        
+        let mut path = Vec::new();
+        let mut current = *peer_id;
+        
+        // Build path from peer to source
+        while let Some(node) = self.nodes.get(&current) {
+            path.push(current);
+            
+            if let Some(parent) = node.parent {
+                current = parent;
+            } else {
+                break;
+            }
+        }
+        
+        // Reverse to get path from source to peer
+        path.reverse();
+        
+        if path.is_empty() {
+            None
+        } else {
+            Some(path)
+        }
     }
 
     /// Get tree statistics
@@ -309,9 +534,132 @@ impl StreamTree {
 
     /// Rebalance the tree to optimize distribution
     pub fn rebalance(&mut self) -> bool {
-        // Implementation will be added in a future update
-        // For now we just return true to indicate "success"
-        true
+        self.last_rebalanced = std::time::Instant::now();
+        self.rebalance_count += 1;
+        
+        // 1. Find overloaded nodes (high latency or approaching capacity)
+        let overloaded_nodes: Vec<PeerId> = self.nodes.iter()
+            .filter(|(_, node)| {
+                node.latency > 200 && node.children.len() > 1 || // High latency nodes
+                node.children.len() >= node.max_children.saturating_sub(1) || // Near capacity
+                node.connection_quality < 0.7 // Poor connection quality
+            })
+            .map(|(id, _)| *id)
+            .collect();
+            
+        // 2. Find nodes with capacity for more children
+        let candidates: Vec<(PeerId, usize, u64)> = self.nodes.iter()
+            .filter(|(_, node)| {
+                node.can_accept_children() && 
+                node.children.len() < node.max_children.saturating_sub(1) && 
+                node.connection_quality > 0.8
+            })
+            .map(|(id, node)| (*id, node.depth, node.bandwidth))
+            .collect();
+            
+        if candidates.is_empty() || overloaded_nodes.is_empty() {
+            return false; // No rebalancing possible
+        }
+        
+        let mut changes_made = false;
+        
+        // 3. For each overloaded node, move some children to better parents
+        for overloaded_id in overloaded_nodes {
+            if let Some(overloaded) = self.nodes.get(&overloaded_id) {
+                // Skip if no children to move
+                if overloaded.children.is_empty() {
+                    continue;
+                }
+                
+                // Get children to consider for moving
+                let children: Vec<PeerId> = overloaded.children.iter().cloned().collect();
+                
+                // Try to move up to half the children if heavily overloaded
+                let to_move = if overloaded.connection_quality < 0.5 {
+                    children.len().max(1) / 2 
+                } else {
+                    children.len().max(1) / 3
+                };
+                
+                for i in 0..to_move.min(children.len()) {
+                    let child_id = children[i];
+                    
+                    // Find best new parent for this child
+                    let mut best_parent = None;
+                    let mut best_score = f32::NEG_INFINITY;
+                    
+                    for (candidate_id, depth, bandwidth) in &candidates {
+                        // Skip if candidate is the child itself or already full
+                        if *candidate_id == child_id {
+                            continue;
+                        }
+                        
+                        if let Some(candidate) = self.nodes.get(candidate_id) {
+                            if !candidate.can_accept_children() {
+                                continue;
+                            }
+                            
+                            // Calculate a score based on depth and bandwidth
+                            // Prefer nodes closer to the source with more bandwidth
+                            let depth_factor = 1.0 / (*depth as f32 + 1.0);
+                            let bandwidth_factor = (*bandwidth as f32).log10() / 10.0;
+                            let quality_factor = candidate.connection_quality;
+                            
+                            let score = depth_factor + bandwidth_factor + quality_factor;
+                            
+                            if score > best_score {
+                                best_parent = Some(*candidate_id);
+                                best_score = score;
+                            }
+                        }
+                    }
+                    
+                    // Move the child to the new parent if found
+                    if let Some(new_parent_id) = best_parent {
+                        // First update the data structures
+                        if let Some(overloaded_node) = self.nodes.get_mut(&overloaded_id) {
+                            overloaded_node.remove_child(&child_id);
+                        }
+                        
+                        if let Some(new_parent) = self.nodes.get_mut(&new_parent_id) {
+                            new_parent.add_child(child_id);
+                        }
+                        
+                        // First get the parent's depth before any mutable borrows
+                        let parent_depth = if let Some(parent) = self.nodes.get(&new_parent_id) {
+                            parent.depth
+                        } else {
+                            0
+                        };
+                        
+                        // Now update the child with all the data we need
+                        if let Some(child) = self.nodes.get_mut(&child_id) {
+                            child.parent = Some(new_parent_id);
+                            child.depth = parent_depth + 1;
+                        }
+                        
+                        changes_made = true;
+                    }
+                }
+            }
+        }
+        
+        // 4. Check for orphaned nodes (no parent) and find them a parent
+        let orphans: Vec<PeerId> = self.nodes.iter()
+            .filter(|(id, node)| {
+                node.parent.is_none() && 
+                self.source.map_or(false, |src| **id != src) // Not the source
+            })
+            .map(|(id, _)| *id)
+            .collect();
+            
+        for orphan_id in orphans {
+            if self.find_parent_for_peer(orphan_id) {
+                changes_made = true;
+            }
+        }
+        
+        changes_made
     }
 }
 
