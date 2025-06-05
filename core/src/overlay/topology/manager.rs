@@ -57,7 +57,7 @@ use super::config::TopologyConfig;
 use super::health::ConnectionHealth;
 
 /// Manager for multiple relay trees
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TopologyManager {
     /// Local peer ID
     pub local_peer_id: PeerId,

@@ -349,6 +349,12 @@ impl Peer {
             conn.status == ConnectionStatus::Connected)
     }
     
+    /// Set the peer as connecting
+    pub fn set_connecting(&mut self) {
+        self.info.status = ConnectionStatus::Connecting;
+        self.increment_attempts();
+    }
+    
     /// Set the peer as connected
     pub fn set_connected(&mut self, connection: PeerConnection) {
         self.info.status = ConnectionStatus::Connected;

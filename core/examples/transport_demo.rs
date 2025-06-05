@@ -2,7 +2,7 @@
 //!
 //! This example creates a mock transport and simulates basic operations.
 
-use decentralized_stream_core::transport::{Transport, TransportEvent, TransportError, Connection, ConnectionId};
+use OpenBroadcastNetwork_core::transport::{Transport, TransportEvent, TransportError, Connection, ConnectionId};
 use std::net::SocketAddr;
 use std::str::FromStr;
 

@@ -29,6 +29,28 @@ pub struct MeshConfig {
     pub backoff_time: Duration,
     /// Maximum number of connection attempts before giving up
     pub max_connection_attempts: usize,
+    /// Target number of peers in the mesh 
+    pub target_peers: usize,
+    /// Minimum number of peers in the mesh
+    pub min_peers: usize,
+    /// Maximum number of peers in the mesh
+    pub max_peers: usize,
+    /// Minimum number of outbound connections
+    pub outbound_min: usize,
+    /// Maximum number of outbound connections
+    pub outbound_max: usize,
+    /// Heartbeat interval for mesh maintenance
+    pub heartbeat_interval: Duration,
+    /// Length of message history to keep
+    pub history_length: usize,
+    /// Number of peers to gossip history to
+    pub history_gossip: usize,
+    /// Target mesh size for gossipsub
+    pub mesh_n: usize,
+    /// Lower bound for mesh size
+    pub mesh_n_low: usize,
+    /// Upper bound for mesh size
+    pub mesh_n_high: usize,
 }
 
 impl Default for MeshConfig {
@@ -40,6 +62,17 @@ impl Default for MeshConfig {
             prune_interval: Duration::from_secs(30),
             backoff_time: Duration::from_secs(60),
             max_connection_attempts: 3,
+            target_peers: 8,
+            min_peers: 2,
+            max_peers: 12,
+            outbound_min: 2,
+            outbound_max: 4,
+            heartbeat_interval: Duration::from_secs(1),
+            history_length: 10,
+            history_gossip: 3,
+            mesh_n: 6,
+            mesh_n_low: 4,
+            mesh_n_high: 12,
         }
     }
 }

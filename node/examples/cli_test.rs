@@ -1,6 +1,6 @@
-use decentralized_stream_core::overlay::peer::{PeerId, PeerInfo, PeerRole};
-use decentralized_stream_core::overlay::topology::Region;
-use decentralized_stream_node::visualization::{
+use OpenBroadcastNetwork_core::overlay::peer::{PeerId, PeerInfo, PeerRole};
+use OpenBroadcastNetwork_core::overlay::topology::Region;
+use OpenBroadcastNetwork_node::visualization::{
     PeerDisplayInfo, StreamInfo, create_peer_table, create_stream_table, visualize_tree
 };
 use std::collections::HashMap;

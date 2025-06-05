@@ -1,4 +1,4 @@
-use decentralized_stream_core::overlay::topology::{GeoLocation, Region};
+use OpenBroadcastNetwork_core::overlay::topology::{GeoLocation, Region};
 use std::net::IpAddr;
 use std::str::FromStr;
 

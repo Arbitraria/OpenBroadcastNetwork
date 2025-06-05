@@ -1,7 +1,7 @@
 // STUB IMPLEMENTATION 
 // This file contains stub versions of visualization functions to make compilation work
 
-use decentralized_stream_core::overlay::interface::StreamId;
+use OpenBroadcastNetwork_core::overlay::interface::StreamId;
 
 /// Placeholder for visualization functionality
 pub fn create_stream_table(_streams: &[impl std::fmt::Debug]) -> String {

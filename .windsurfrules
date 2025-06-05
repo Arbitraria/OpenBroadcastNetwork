@@ -1,0 +1,85 @@
+# OpenBroadcastNetwork Wind Surf Rules
+# Version: 1.0.0
+# Date: 2025-06-04
+
+# PROJECT STRUCTURE
+structure:
+  - crates:
+      - core: Foundation library with network overlay and core functionality
+      - node: Relay node implementation for the decentralized CDN
+      - ui: User interface components (WASM-based)
+      - proto: Protocol definitions and serialization
+
+# DEPENDENCIES
+dependencies:
+  - libp2p: "0.53.0"  # Standardize on this version for all crates
+  - tokio: "1.28"     # Use tokio for all async runtime needs
+  - serde: "1.0"      # Serialization framework
+  - tracing: "0.1"    # Logging and instrumentation
+  - anyhow: "1.0"     # Error handling
+  - webrtc: "0.7"     # WebRTC implementation
+
+# CODE STYLE & QUALITY
+code_quality:
+  - use_rustfmt: true
+  - clippy_checks: true
+  - deny_warnings: true
+  - max_line_length: 100
+  - documentation: 
+      - public_items: required
+      - examples: recommended
+
+# TYPE SYSTEM RULES
+types:
+  - follow_type_reference: true  # Adhere to TYPE_REFERENCE.md document
+  - consistent_conversion:
+      - local_peer_id_to_libp2p_peer_id: required
+  - avoid_duplication:
+      - peer_id_types: true
+      - connection_types: true
+  
+# CONCURRENCY
+concurrency:
+  - runtime: tokio  # Standardize on tokio, remove async-std
+  - synchronization:
+      - prefer: tokio::sync
+      - fallback: parking_lot
+  - channels:
+      - prefer: tokio::mpsc
+
+# NETWORKING
+networking:
+  - overlay:
+      - protocol: libp2p
+      - pubsub: gossipsub
+      - discovery: kademlia
+  - transport:
+      - tcp: required
+      - webrtc: recommended
+      - relay: required
+
+# REFACTORING GUIDELINES
+refactoring:
+  - follow_type_reference_md: true
+  - standardize_peer_connection: true
+  - remove_deprecated_dependencies:
+      - ed25519-dalek: true
+  - fix_compilation_issues: true
+  - module_dependencies:
+      - follow_documented_patterns: true
+      - minimize_cross_module_dependencies: true
+
+# TESTING
+testing:
+  - unit_tests: required
+  - integration_tests: required
+  - test_coverage: 75%
+  - test_frameworks:
+      - tokio_test: recommended
+
+# DOCUMENTATION
+documentation:
+  - api_docs: required
+  - examples: recommended
+  - architecture: required
+  - type_reference: maintain

@@ -1,10 +1,10 @@
 // Simplified version for relay node
 
 use clap::{Parser, Subcommand};
-use decentralized_stream_core::prelude::*;
-use decentralized_stream_core::discovery::DiscoveryManager;
-use decentralized_stream_core::overlay::interface::StreamId;
-use decentralized_stream_core::overlay::peer::{PeerRole, PeerInfo};
+use OpenBroadcastNetwork_core::prelude::*;
+use OpenBroadcastNetwork_core::discovery::DiscoveryManager;
+use OpenBroadcastNetwork_core::overlay::interface::StreamId;
+use OpenBroadcastNetwork_core::overlay::peer::{PeerRole, PeerInfo};
 use libp2p::PeerId;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::fmt;
-use decentralized_stream_node::visualization::{format_bytes, format_duration};
+use OpenBroadcastNetwork_node::visualization::{format_bytes, format_duration};
 
 /// Decentralized Streaming Relay Node CLI
 #[derive(Parser, Debug)]
@@ -170,11 +170,9 @@ async fn run_relay_node(
     
     // Initialize discovery subsystem (simplified for compilation)
     // Just create the manager but don't use it in this simplified version
-    let _discovery = DiscoveryManager::new(decentralized_stream_core::discovery::DiscoveryManagerConfig {
+    let _discovery = DiscoveryManager::new(OpenBroadcastNetwork_core::discovery::DiscoveryManagerConfig {
         enable_bootstrap: false,
-        enable_mdns: false,
         enable_dht: false,
-        mdns_config: None,
         dht_config: None,
         bootstrap_config: None,
         poll_interval_ms: 1000,

@@ -7,7 +7,7 @@
 //! The discovery system supports multiple complementary mechanisms:
 //! - **Bootstrap discovery**: Uses well-known bootstrap servers to find initial peers
 //! - **DHT discovery**: Distributed Hash Table-based peer discovery for scalable lookup
-//! - **mDNS discovery**: Local network discovery using multicast DNS
+//! - **Kademlia discovery**: Local network discovery using multicast DNS
 //!
 //! These mechanisms can be used individually or in combination to provide robust
 //! peer discovery across different network environments and topologies.
@@ -17,7 +17,7 @@ pub mod bootstrap;
 /// Distributed Hash Table (DHT) based peer discovery
 pub mod dht;
 /// Multicast DNS based local network peer discovery
-pub mod mdns;
+
 /// Core interfaces and types for peer discovery
 pub mod interface;
 
@@ -30,7 +30,6 @@ pub use interface::{Discovery, DiscoveryEvent, DiscoveryError, PeerInfo};
 // Re-export the discovery implementations
 pub use bootstrap::{BootstrapDiscovery, BootstrapDiscoveryConfig};
 pub use dht::{DhtDiscovery, DhtDiscoveryConfig};
-pub use mdns::{MdnsDiscovery, MdnsDiscoveryConfig};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,14 +41,10 @@ use tracing::{debug, info, error};
 /// Configuration for the discovery manager
 #[derive(Debug, Clone)]
 pub struct DiscoveryManagerConfig {
-    /// Enable mDNS discovery
-    pub enable_mdns: bool,
     /// Enable DHT discovery
     pub enable_dht: bool,
     /// Enable bootstrap discovery
     pub enable_bootstrap: bool,
-    /// mDNS configuration (if enabled)
-    pub mdns_config: Option<MdnsDiscoveryConfig>,
     /// DHT configuration (if enabled)
     pub dht_config: Option<DhtDiscoveryConfig>,
     /// Bootstrap configuration (if enabled)
@@ -61,10 +56,8 @@ pub struct DiscoveryManagerConfig {
 impl Default for DiscoveryManagerConfig {
     fn default() -> Self {
         Self {
-            enable_mdns: true,
             enable_dht: false,
             enable_bootstrap: false,
-            mdns_config: Some(MdnsDiscoveryConfig::default()),
             dht_config: None,
             bootstrap_config: None,
             poll_interval_ms: 100,
@@ -76,8 +69,6 @@ impl Default for DiscoveryManagerConfig {
 pub struct DiscoveryManager {
     /// Configuration
     config: DiscoveryManagerConfig,
-    /// mDNS discovery (if enabled)
-    mdns: Option<Arc<Mutex<MdnsDiscovery>>>,
     /// DHT discovery (if enabled)
     dht: Option<Arc<Mutex<DhtDiscovery>>>,
     /// Bootstrap discovery (if enabled)
@@ -103,7 +94,6 @@ impl DiscoveryManager {
         
         Self {
             config,
-            mdns: None,
             dht: None,
             bootstrap: None,
             peers: Arc::new(RwLock::new(HashMap::new())),
@@ -124,13 +114,6 @@ impl DiscoveryManager {
         }
         
         // Initialize discovery mechanisms
-        if self.config.enable_mdns {
-            let config = self.config.mdns_config.clone().unwrap_or_default();
-            let mut mdns = MdnsDiscovery::with_config(config);
-            mdns.start().await?;
-            self.mdns = Some(Arc::new(Mutex::new(mdns)));
-        }
-        
         if self.config.enable_dht {
             let config = self.config.dht_config.clone().unwrap_or_default();
             let mut dht = DhtDiscovery::with_config(config);
@@ -146,7 +129,7 @@ impl DiscoveryManager {
         }
         
         // Start the worker task
-        let mdns = self.mdns.clone();
+        
         let dht = self.dht.clone();
         let bootstrap = self.bootstrap.clone();
         let _peers = self.peers.clone(); // Kept for future implementation
@@ -190,18 +173,7 @@ impl DiscoveryManager {
                             let _ = event_tx.send(event).await;
                         }
                     },
-                    // Handle mDNS events
-                    result = async {
-                        if let Some(mdns) = &mdns {
-                            mdns.lock().await.next_event(Some(Duration::from_secs(1))).await
-                        } else {
-                            futures::future::pending().await
-                        }
-                    } => {
-                        if let Ok(Some(event)) = result {
-                            let _ = event_tx.send(event).await;
-                        }
-                    },
+                    
                     // Handle shutdown signal
                     _ = &mut shutdown_rx => {
                         break;
@@ -229,11 +201,6 @@ impl DiscoveryManager {
         // Stop bootstrap discovery
         if let Some(bootstrap) = &mut self.bootstrap {
             bootstrap.lock().await.stop().await?;
-        }
-        
-        // Stop mDNS discovery
-        if let Some(mdns) = &mut self.mdns {
-            mdns.lock().await.stop().await?;
         }
         
         // Clear known peers
@@ -324,10 +291,6 @@ impl DiscoveryManager {
     /// Announce self to the network
     pub async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
         // Announce via all active discovery mechanisms
-        if let Some(mdns) = &self.mdns {
-            mdns.lock().await.announce(info.clone()).await?;
-        }
-        
         if let Some(dht) = &self.dht {
             dht.lock().await.announce(info.clone()).await?;
         }
@@ -348,4 +311,3 @@ impl DiscoveryManager {
 // Will be exported once implemented
 // pub use bootstrap::BootstrapDiscovery;
 // pub use dht::DhtDiscovery;
-// pub use mdns::MdnsDiscovery; 

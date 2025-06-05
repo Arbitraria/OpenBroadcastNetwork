@@ -16,6 +16,8 @@
 
 /// Core interfaces and types for the overlay network
 pub mod interface;
+/// Network configuration and utilities
+pub mod network;
 /// Peer management, roles, and connection handling
 pub mod peer;
 /// Tree-based overlay implementation for efficient distribution
@@ -47,6 +49,7 @@ mod tests;
 
 // Re-export main types
 pub use interface::{Overlay, OverlayEvent, OverlayError};
+pub use network::NetworkConfig;
 // Re-exporting topology types
 pub use topology::{TopologyManager, TopologyConfig};
 pub use peer::{Peer, PeerInfo, PeerRole, PeerConnection, LocalPeerId};

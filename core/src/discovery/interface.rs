@@ -2,7 +2,7 @@
 //!
 //! This module defines common interfaces for peer discovery mechanisms in the
 //! decentralized streaming network. These interfaces provide a unified API for
-//! different discovery implementations (bootstrap servers, DHT, mDNS) to allow
+//! different discovery implementations (bootstrap servers, DHT, Kademlia) to allow
 //! applications to use them interchangeably or in combination.
 //!
 //! The discovery system is responsible for:
@@ -131,10 +131,6 @@ pub enum DiscoveryError {
     #[error("DHT error: {0}")]
     DhtError(#[from] libp2p::kad::GetClosestPeersError),
     
-    /// mDNS error
-    #[error("mDNS error: {0}")]
-    MdnsError(Box<dyn std::error::Error + Send + Sync + 'static>),
-    
     /// Service already started
     #[error("Service already started: {0}")]
     AlreadyStarted(String),
@@ -188,7 +184,7 @@ pub enum DiscoveryError {
 /// based on criteria, and receiving discovery events.
 /// 
 /// Implementations of this trait include bootstrap-based discovery,
-/// DHT-based discovery, and mDNS-based discovery. Each implementation
+/// DHT-based discovery, and Kademlia-based discovery. Each implementation
 /// provides the same interface but uses different underlying mechanisms
 /// to discover and track peers.
 #[async_trait::async_trait]

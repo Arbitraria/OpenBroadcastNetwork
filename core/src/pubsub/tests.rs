@@ -146,50 +146,76 @@ async fn test_gossipsub_service() {
 }
 
 // Integration test for message flow
+use crate::test_report::{TestReport, TestResult};
+use std::time::{SystemTime, Instant};
+
 #[tokio::test]
 async fn test_async_gossipsub() {
-    // Create a keypair for the service
-    let keypair = Keypair::generate_ed25519();
-    
-    // Create GossipSub service
-    let mut service = GossipSubService::new(keypair);
-    
-    // Test start/stop
-    assert!(service.start().is_ok());
-    assert!(service.stop().is_ok());
-    
-    // Test async operations
-    let topic = Topic::new("async-topic", "Async Topic");
-    let topic_id = topic.id.clone();
-    
-    // Import the AsyncPubSub trait
-    use crate::pubsub::interface::AsyncPubSub;
-    
-    // Test subscribe
-    let sub_result = AsyncPubSub::subscribe(&mut service, &topic).await;
-    assert!(sub_result.is_ok());
-    
-    // Get event stream
-    let mut stream = match AsyncPubSub::event_stream(&mut service).await {
-        Ok(stream) => stream,
-        Err(_) => panic!("Failed to get event stream"),
+    use std::panic::AssertUnwindSafe;
+    use futures::FutureExt;
+    let test_start = Instant::now();
+    let mut report = TestReport::new();
+    let mut test_status = "pass".to_string();
+    let mut error_msg = None;
+    let test_result = AssertUnwindSafe(async {
+        // Create a keypair for the service
+        let keypair = Keypair::generate_ed25519();
+        
+        // Create GossipSub service
+        let mut service = GossipSubService::new(keypair);
+        
+        // Test start/stop
+        assert!(service.start().is_ok());
+        assert!(service.stop().is_ok());
+        
+        // Test async operations
+        let topic = Topic::new("async-topic", "Async Topic");
+        let topic_id = topic.id.clone();
+        
+        // Import the AsyncPubSub trait
+        use crate::pubsub::interface::AsyncPubSub;
+        
+        // Test subscribe
+        let sub_result = AsyncPubSub::subscribe(&mut service, &topic).await;
+        assert!(sub_result.is_ok());
+        
+        // Get event stream
+        let mut stream = match AsyncPubSub::event_stream(&mut service).await {
+            Ok(stream) => stream,
+            Err(_) => panic!("Failed to get event stream"),
+        };
+        
+        // Test publish
+        let pub_result = AsyncPubSub::publish(&mut service, &topic_id, vec![5, 6, 7, 8]).await;
+        assert!(pub_result.is_ok());
+        
+        // Test that we can receive the published message
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            stream.next()
+        ).await {
+            Ok(Some(_)) => { /* Message received successfully */ },
+            Ok(None) => panic!("Stream ended unexpectedly"),
+            Err(_) => panic!("Timeout waiting for message"),
+        };
+        
+        // Test unsubscribe
+        let unsub_result = AsyncPubSub::unsubscribe(&mut service, &topic_id).await;
+        assert!(unsub_result.is_ok());
+    }).catch_unwind().await;
+    if let Err(e) = test_result {
+        test_status = "fail".to_string();
+        error_msg = Some(format!("{e:?}"));
+    }
+    let duration_ms = test_start.elapsed().as_millis();
+    let result = TestResult {
+        name: "test_async_gossipsub".to_string(),
+        module: "pubsub".to_string(),
+        status: test_status,
+        error: error_msg,
+        duration_ms,
+        timestamp: SystemTime::now(),
     };
-    
-    // Test publish
-    let pub_result = AsyncPubSub::publish(&mut service, &topic_id, vec![5, 6, 7, 8]).await;
-    assert!(pub_result.is_ok());
-    
-    // Test that we can receive the published message
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        stream.next()
-    ).await {
-        Ok(Some(_)) => { /* Message received successfully */ },
-        Ok(None) => panic!("Stream ended unexpectedly"),
-        Err(_) => panic!("Timeout waiting for message"),
-    };
-    
-    // Test unsubscribe
-    let unsub_result = AsyncPubSub::unsubscribe(&mut service, &topic_id).await;
-    assert!(unsub_result.is_ok());
+    report.add_result(result);
+    let _ = report.save_to_file("test_report.json");
 }

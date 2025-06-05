@@ -152,30 +152,53 @@ mod tests {
     //     Ok(())
     // }
     
+    use crate::test_report::{TestReport, TestResult};
+use std::time::{SystemTime, Instant};
+
     #[tokio::test]
     async fn test_mock_discovery_announce_lookup() {
-        let mut discovery = MockDiscovery::new();
-        
-        // Test announce
-        let peer = create_test_peer(1, 1234);
-        discovery.start().await.expect("Failed to start discovery");
-        discovery.announce(peer.clone()).await.expect("Failed to announce peer");
-        
-        // Test lookup
-        let found = discovery.lookup_peer(&peer.id).await.expect("Lookup failed");
-        assert!(found.is_some());
-        let found = found.unwrap();
-        assert_eq!(found.id, peer.id);
-        assert_eq!(found.addresses, peer.addresses);
-        
-        // Test non-existent peer
-        let not_found = discovery.lookup_peer(&[99]).await.expect("Lookup failed");
-        assert!(not_found.is_none());
-        
-        // Test stop
-        discovery.stop().await.expect("Failed to stop discovery");
-        assert!(!discovery.is_running());
+        use std::panic::AssertUnwindSafe;
+        use futures::FutureExt;
+        let test_start = Instant::now();
+        let mut report = TestReport::new();
+        let mut test_status = "pass".to_string();
+        let mut error_msg = None;
+        let test_result = AssertUnwindSafe(async {
+            let mut discovery = MockDiscovery::new();
+            // Test announce
+            let peer = create_test_peer(1, 1234);
+            discovery.start().await.expect("Failed to start discovery");
+            discovery.announce(peer.clone()).await.expect("Failed to announce peer");
+            // Test lookup
+            let found = discovery.lookup_peer(&peer.id).await.expect("Lookup failed");
+            assert!(found.is_some());
+            let found = found.unwrap();
+            assert_eq!(found.id, peer.id);
+            assert_eq!(found.addresses, peer.addresses);
+            // Test non-existent peer
+            let not_found = discovery.lookup_peer(&[99]).await.expect("Lookup failed");
+            assert!(not_found.is_none());
+            // Test stop
+            discovery.stop().await.expect("Failed to stop discovery");
+            assert!(!discovery.is_running());
+        }).catch_unwind().await;
+        if let Err(e) = test_result {
+            test_status = "fail".to_string();
+            error_msg = Some(format!("{e:?}"));
+        }
+        let duration_ms = test_start.elapsed().as_millis();
+        let result = TestResult {
+            name: "test_mock_discovery_announce_lookup".to_string(),
+            module: "discovery".to_string(),
+            status: test_status,
+            error: error_msg,
+            duration_ms,
+            timestamp: SystemTime::now(),
+        };
+        report.add_result(result);
+        let _ = report.save_to_file("test_report.json");
     }
+
 
     // Commenting out mDNS lifecycle test since it requires mDNS service
     // #[tokio::test]

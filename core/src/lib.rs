@@ -11,7 +11,7 @@
 pub mod transport;
 /// Peer discovery mechanisms for finding and connecting to other nodes
 /// 
-/// Implements various discovery protocols like mDNS, DHT, and bootstrap servers
+/// Implements various discovery protocols like Kademlia, DHT, and bootstrap servers
 /// to locate peers in the decentralized network.
 pub mod discovery;
 /// Overlay network topologies for efficient data distribution
@@ -58,7 +58,7 @@ pub mod prelude {
     // Discovery module re-exports
     pub use crate::discovery::{
         Discovery, DiscoveryEvent, DiscoveryError, PeerInfo,
-        MdnsDiscovery, MdnsDiscoveryConfig,
+        
         DhtDiscovery, DhtDiscoveryConfig,
         BootstrapDiscovery, BootstrapDiscoveryConfig,
     };

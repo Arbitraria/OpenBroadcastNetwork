@@ -64,7 +64,7 @@ pub struct DhtDiscoveryConfig {
 impl Default for DhtDiscoveryConfig {
     fn default() -> Self {
         Self {
-            protocol_name: "/decentralized-stream/1.0.0".to_string(),
+            protocol_name: "/OpenBroadcastNetwork/1.0.0".to_string(),
             event_buffer_size: 32,
             bootstrap_peers: Vec::new(),
             record_ttl: 7200, // 2 hours

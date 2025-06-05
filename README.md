@@ -4,7 +4,7 @@ A peer-to-peer, decentralized live streaming content delivery network built with
 
 ## Project Purpose
 
-This project aims to create a scalable, decentralized live-streaming system that minimizes reliance on centralized infrastructure while providing high-quality, low-latency streaming capabilities across various platforms.
+This project aims to create a scalable, OpenBroadcastNetworking system that minimizes reliance on centralized infrastructure while providing high-quality, low-latency streaming capabilities across various platforms.
 
 Key features:
 - Hybrid tree-mesh overlay network for optimal streaming performance
@@ -41,7 +41,7 @@ This project uses a mono-repo structure:
 cargo build
 
 # Build the node CLI
-cargo build -p decentralized-stream-node
+cargo build -p OpenBroadcastNetwork-node
 
 # Build the UI (requires wasm-pack)
 cd ui

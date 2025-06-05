@@ -1,7 +1,7 @@
 //! Network behavior definitions for libp2p
 //!
 //! This module defines the composite network behavior for the libp2p overlay
-//! by combining multiple sub-behaviors (Gossipsub, Kademlia, MDNS, Identify)
+//! by combining multiple sub-behaviors (Gossipsub, Kademlia, Kademlia, Identify)
 //! into a unified behavior that can be used with the libp2p Swarm.
 //!
 //! # Architecture Overview
@@ -12,7 +12,7 @@
 //!
 //! - **Gossipsub** - Used for publish/subscribe message broadcasting
 //! - **Kademlia** - Used for distributed hash table and peer discovery
-//! - **MDNS** - Used for local network peer discovery
+//! - **Kademlia** - Used for local network peer discovery
 //! - **Identify** - Used for exchanging node information with peers
 //!
 //! # Integration Points
@@ -44,10 +44,10 @@ use libp2p::{PeerId, Multiaddr, swarm::{NetworkBehaviour, ToSwarm, FromSwarm, TH
 use libp2p::core::Endpoint;
 
 // Import protocol types using the same paths as libp2p_impl.rs
-use libp2p::gossipsub::{self, Gossipsub, GossipsubEvent};
-use libp2p::identify::{Identify, IdentifyEvent};
-use libp2p::kad::{Kademlia, KademliaEvent, store::MemoryStore};
-use libp2p::mdns::{Mdns, MdnsEvent};
+use libp2p::gossipsub::{Behaviour as Gossipsub, Event as GossipsubEvent};
+use libp2p::identify::{Behaviour as Identify, Event as IdentifyEvent};
+use libp2p::kad::{Behaviour as Kademlia, Event as KademliaEvent, store::MemoryStore};
+
 
 
 /// Combined network behavior for the overlay
@@ -56,8 +56,7 @@ pub struct OverlayBehavior {
     pub gossipsub: Gossipsub,
     /// Kademlia for DHT and peer discovery
     pub kademlia: Kademlia<MemoryStore>,
-    /// mDNS for local peer discovery
-    pub mdns: Mdns,
+
     /// Identify protocol
     pub identify: Identify,
     /// Queue of events to emit
@@ -69,13 +68,11 @@ impl OverlayBehavior {
     pub fn new(
         gossipsub: Gossipsub,
         kademlia: Kademlia<MemoryStore>,
-        mdns: Mdns,
         identify: Identify,
     ) -> Self {
         Self {
             gossipsub,
             kademlia,
-            mdns,
             identify,
             events: VecDeque::new(),
         }
@@ -89,11 +86,6 @@ impl OverlayBehavior {
     /// Process events from the Gossipsub sub-behavior
     fn handle_gossipsub_event(&mut self, event: GossipsubEvent) {
         self.queue_event(OverlayBehaviorEvent::Gossipsub(event));
-    }
-
-    /// Process events from the Mdns sub-behavior
-    fn handle_mdns_event(&mut self, event: MdnsEvent) {
-        self.queue_event(OverlayBehaviorEvent::Mdns(event));
     }
 
     /// Process events from the Kademlia sub-behavior
@@ -112,8 +104,7 @@ impl OverlayBehavior {
 pub enum OverlayBehaviorEvent {
     /// Gossipsub events
     Gossipsub(GossipsubEvent),
-    /// mDNS events
-    Mdns(MdnsEvent),
+
     /// Kademlia events
     Kademlia(KademliaEvent),
     /// Identify events
@@ -146,18 +137,13 @@ impl NetworkBehaviour for OverlayBehavior {
             all_denied = false;
         }
         
-        if self.mdns.handle_established_inbound_connection(
-            connection_id, peer, local_addr, remote_addr).is_ok() {
-            all_denied = false;
-        }
-        
         if self.identify.handle_established_inbound_connection(
             connection_id, peer, local_addr, remote_addr).is_ok() {
             all_denied = false;
         }
         
         if all_denied {
-            return Err(ConnectionDenied::Denied);
+            return Err(ConnectionDenied::new("denied"));
         }
         
         Ok(libp2p::swarm::dummy::ConnectionHandler)
@@ -184,18 +170,13 @@ impl NetworkBehaviour for OverlayBehavior {
             all_denied = false;
         }
         
-        if self.mdns.handle_established_outbound_connection(
-            connection_id, peer, addr, role_override).is_ok() {
-            all_denied = false;
-        }
-        
         if self.identify.handle_established_outbound_connection(
             connection_id, peer, addr, role_override).is_ok() {
             all_denied = false;
         }
         
         if all_denied {
-            return Err(ConnectionDenied::Denied);
+            return Err(ConnectionDenied::new("denied"));
         }
         
         Ok(libp2p::swarm::dummy::ConnectionHandler)
@@ -205,7 +186,7 @@ impl NetworkBehaviour for OverlayBehavior {
         // Delegate swarm events to sub-behaviors
         self.gossipsub.on_swarm_event(event.clone());
         self.kademlia.on_swarm_event(event.clone());
-        self.mdns.on_swarm_event(event.clone());
+    
         self.identify.on_swarm_event(event);
     }
 
@@ -240,12 +221,6 @@ impl NetworkBehaviour for OverlayBehavior {
             return Poll::Ready(ToSwarm::GenerateEvent(self.events.pop_front().unwrap()));
         }
         
-        // Poll MDNS
-        if let Poll::Ready(ToSwarm::GenerateEvent(event)) = self.mdns.poll(cx) {
-            self.handle_mdns_event(event);
-            return Poll::Ready(ToSwarm::GenerateEvent(self.events.pop_front().unwrap()));
-        }
-        
         // Poll Identify
         if let Poll::Ready(ToSwarm::GenerateEvent(event)) = self.identify.poll(cx) {
             self.handle_identify_event(event);
@@ -266,11 +241,7 @@ impl From<GossipsubEvent> for OverlayBehaviorEvent {
     }
 }
 
-impl From<MdnsEvent> for OverlayBehaviorEvent {
-    fn from(event: MdnsEvent) -> Self {
-        OverlayBehaviorEvent::Mdns(event)
-    }
-}
+
 
 impl From<KademliaEvent> for OverlayBehaviorEvent {
     fn from(event: KademliaEvent) -> Self {

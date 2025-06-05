@@ -101,35 +101,81 @@ mod tests {
     }
 
     // Placeholder for more detailed transport tests once actual implementations are complete
+    use crate::test_report::{TestReport, TestResult};
+use std::time::{SystemTime, Instant};
+
     #[test]
     fn test_webrtc_config() {
-        let config = WebRtcConfig {
-            stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],
-            turn_servers: vec![],
-            ice_transport_policy: IceTransportPolicy::All,
+        let test_start = Instant::now();
+        let mut report = TestReport::new();
+        let mut test_status = "pass".to_string();
+        let mut error_msg = None;
+        let test_result = std::panic::catch_unwind(|| {
+            let config = WebRtcConfig {
+                stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],
+                turn_servers: vec![],
+                ice_transport_policy: IceTransportPolicy::All,
+            };
+            assert_eq!(config.stun_servers.len(), 1);
+            assert_eq!(config.stun_servers[0], "stun:stun.l.google.com:19302");
+            assert_eq!(config.turn_servers.len(), 0);
+            assert_eq!(config.ice_transport_policy, IceTransportPolicy::All);
+        });
+        if let Err(e) = test_result {
+            test_status = "fail".to_string();
+            error_msg = Some(format!("{e:?}"));
+        }
+        let duration_ms = test_start.elapsed().as_millis();
+        let result = TestResult {
+            name: "test_webrtc_config".to_string(),
+            module: "transport".to_string(),
+            status: test_status,
+            error: error_msg,
+            duration_ms,
+            timestamp: SystemTime::now(),
         };
-        
-        assert_eq!(config.stun_servers.len(), 1);
-        assert_eq!(config.stun_servers[0], "stun:stun.l.google.com:19302");
-        assert_eq!(config.turn_servers.len(), 0);
-        assert_eq!(config.ice_transport_policy, IceTransportPolicy::All);
+        report.add_result(result);
+        let _ = report.save_to_file("test_report.json");
     }
     
+    use crate::test_report::{TestReport, TestResult};
+use std::time::{SystemTime, Instant};
+
     #[test]
     fn test_quic_config() {
-        let addr = SocketAddr::from_str("0.0.0.0:0").unwrap();
-        let config = QuicConfig {
-            bind_addr: addr,
-            cert_path: None,
-            key_path: None,
-            max_concurrent_streams: 100,
-            enable_hole_punching: true,
+        let test_start = Instant::now();
+        let mut report = TestReport::new();
+        let mut test_status = "pass".to_string();
+        let mut error_msg = None;
+        let test_result = std::panic::catch_unwind(|| {
+            let addr = SocketAddr::from_str("0.0.0.0:0").unwrap();
+            let config = QuicConfig {
+                bind_addr: addr,
+                cert_path: None,
+                key_path: None,
+                max_concurrent_streams: 100,
+                enable_hole_punching: true,
+            };
+            assert_eq!(config.bind_addr, addr);
+            assert_eq!(config.cert_path, None);
+            assert_eq!(config.key_path, None);
+            assert_eq!(config.max_concurrent_streams, 100);
+            assert!(config.enable_hole_punching);
+        });
+        if let Err(e) = test_result {
+            test_status = "fail".to_string();
+            error_msg = Some(format!("{e:?}"));
+        }
+        let duration_ms = test_start.elapsed().as_millis();
+        let result = TestResult {
+            name: "test_quic_config".to_string(),
+            module: "transport".to_string(),
+            status: test_status,
+            error: error_msg,
+            duration_ms,
+            timestamp: SystemTime::now(),
         };
-        
-        assert_eq!(config.bind_addr, addr);
-        assert_eq!(config.cert_path, None);
-        assert_eq!(config.key_path, None);
-        assert_eq!(config.max_concurrent_streams, 100);
-        assert!(config.enable_hole_punching);
+        report.add_result(result);
+        let _ = report.save_to_file("test_report.json");
     }
 } 

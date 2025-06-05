@@ -8,7 +8,7 @@
 //! Key components that can be configured include:
 //! - Network settings (connections, timeouts, bootstrap nodes)
 //! - Media processing (buffer sizes, encoding parameters)
-//! - Peer discovery mechanisms (mDNS, DHT, bootstrap)
+//! - Peer discovery mechanisms (Kademlia, DHT, bootstrap)
 //! - Overlay network parameters (topology, relay policies)
 //!
 //! Configurations can be loaded from files, environment variables, or set programmatically.
@@ -89,8 +89,8 @@ pub struct MediaConfig {
 /// or public internet scenarios.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryConfig {
-    /// Enable mDNS discovery
-    pub enable_mdns: bool,
+    /// Enable Kademlia discovery
+    pub enable_kademlia: bool,
     
     /// Enable DHT discovery
     pub enable_dht: bool,
@@ -133,7 +133,7 @@ impl Default for MediaConfig {
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
-            enable_mdns: true,
+            enable_kademlia: true,
             enable_dht: true,
             peer_refresh_interval_secs: 30,
         }

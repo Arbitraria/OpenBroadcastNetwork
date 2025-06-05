@@ -1,7 +1,7 @@
 //! Peer discovery mechanisms for the decentralized streaming network.
 //!
 //! This module provides interfaces and implementations for discovering peers in the network.
-//! It supports multiple discovery mechanisms, with mDNS being the primary implementation
+//! It supports multiple discovery mechanisms, with Kademlia being the primary implementation
 //! for local network discovery.
 
 #![warn(missing_docs)]
@@ -108,9 +108,9 @@ pub enum DiscoveryError {
     #[error("Invalid peer information: {0}")]
     InvalidPeerInfo(String),
     
-    /// mDNS error
-    #[error("mDNS error: {0}")]
-    MdnsError(#[from] Box<dyn std::error::Error + Send + Sync>),
+    /// Kademlia error
+    #[error("Kademlia error: {0}")]
+    OtherError(#[from] Box<dyn std::error::Error + Send + Sync>),
     
     /// I/O error
     #[error("I/O error: {0}")]
@@ -204,23 +204,23 @@ pub trait Discovery: Send + Sync + 'static {
     async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError>;
 }
 
-// Re-export the mDNS module (modular version)
-pub mod mdns;
+// Re-export the Kademlia module (modular version)
+
 
 // Re-export commonly used types from the modular implementation
-pub use mdns::{MdnsDiscovery, MdnsDiscoveryConfig};
 
-/// Default discovery implementation (mDNS)
-pub type DefaultDiscovery = MdnsDiscovery;
+
+/// Default discovery implementation (Kademlia)
+
 
 /// Create a new discovery instance with default configuration
 pub fn new_discovery() -> impl Discovery {
-    MdnsDiscovery::new()
+    unimplemented!()
 }
 
 /// Create a new discovery instance with the given configuration
 pub fn discovery_with_config(config: MdnsDiscoveryConfig) -> impl Discovery {
-    MdnsDiscovery::with_config(config)
+    unimplemented!()
 }
 
 #[cfg(test)]

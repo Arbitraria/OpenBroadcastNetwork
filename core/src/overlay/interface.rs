@@ -216,6 +216,16 @@ pub enum OverlayEvent {
         reason: String,
     },
     
+    /// Stream data received
+    StreamData {
+        /// Stream ID
+        stream_id: StreamId,
+        /// Source peer ID
+        source: LocalPeerId,
+        /// Data payload
+        data: Vec<u8>,
+    },
+    
     /// The topology has changed
     TopologyChanged {
         /// Number of peers
@@ -232,8 +242,7 @@ pub struct OverlayConfig {
     pub local_peer_id: LocalPeerId,
     /// Bootstrap peers to connect to
     pub bootstrap_peers: Vec<String>,
-    /// Whether to use mDNS for local peer discovery
-    pub enable_mdns: bool,
+    /// Whether to use Kademlia for local peer discovery
     /// Whether to use Kademlia DHT for peer discovery
     pub enable_kademlia: bool,
     /// Maximum number of connections to maintain
@@ -253,7 +262,7 @@ impl Default for OverlayConfig {
         Self {
             local_peer_id: LocalPeerId::new_random(),
             bootstrap_peers: vec![],
-            enable_mdns: true,
+            
             enable_kademlia: true,
             max_connections: 50,
             connection_timeout: Duration::from_secs(30),
@@ -284,54 +293,34 @@ pub struct OverlayStats {
 }
 
 /// The core interface for the overlay network
+#[async_trait::async_trait]
 pub trait Overlay {
     /// Start the overlay network
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
-    
+    async fn start(&self) -> Result<(), OverlayError>;
     /// Stop the overlay network
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
-    
+    async fn stop(&self) -> Result<(), OverlayError>;
     /// Check if the overlay is running
     fn is_running(&self) -> bool;
-    
     /// Get the local peer ID
     fn local_peer_id(&self) -> LocalPeerId;
-    
     /// Connect to a peer
-    fn connect_peer(&self, addr: &str) 
-        -> Pin<Box<dyn Future<Output = Result<PeerInfo, OverlayError>> + Send>>;
-    
+    async fn connect_peer(&self, addr: &str) -> Result<PeerInfo, OverlayError>;
     /// Disconnect from a peer
-    fn disconnect_peer(&self, peer_id: &LocalPeerId) 
-        -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
-    
+    async fn disconnect_peer(&self, peer_id: &LocalPeerId) -> Result<(), OverlayError>;
     /// Publish a stream
-    fn publish_stream(&self, stream_id: &StreamId) 
-        -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
-    
+    async fn publish_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError>;
     /// Relay a stream to a peer
-    fn relay_stream(&self, stream_id: &StreamId, target: &LocalPeerId) 
-        -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
-    
+    async fn relay_stream(&self, stream_id: &StreamId, target: &LocalPeerId) -> Result<(), OverlayError>;
     /// Stop a stream
-    fn stop_stream(&self, stream_id: &StreamId) 
-        -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
-    
+    async fn stop_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError>;
     /// Get the next overlay event
-    fn next_event(&self) -> Pin<Box<dyn Future<Output = Option<OverlayEvent>> + Send>>;
-    
+    async fn next_event(&self) -> Option<OverlayEvent>;
     /// Get the list of connected peers
-    fn connected_peers(&self) 
-        -> Pin<Box<dyn Future<Output = Result<Vec<PeerInfo>, OverlayError>> + Send>>;
-    
+    async fn connected_peers(&self) -> Result<Vec<PeerInfo>, OverlayError>;
     /// Get the list of active streams
-    fn active_streams(&self) 
-        -> Pin<Box<dyn Future<Output = Result<Vec<StreamId>, OverlayError>> + Send>>;
-    
+    async fn active_streams(&self) -> Result<Vec<StreamId>, OverlayError>;
     /// Get the overlay statistics
-    fn stats(&self) -> Pin<Box<dyn Future<Output = Result<OverlayStats, OverlayError>> + Send>>;
-    
+    async fn stats(&self) -> Result<OverlayStats, OverlayError>;
     /// Force a topology rebalance
-    fn rebalance_topology(&self) 
-        -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>;
-} 
+    async fn rebalance_topology(&self) -> Result<(), OverlayError>;
+}

@@ -5,10 +5,10 @@
 use libp2p::{
     core::upgrade,
     gossipsub::{
-        self, Gossipsub, GossipsubConfig, GossipsubConfigBuilder, 
-        MessageAuthenticity, MessageId, TopicHash, ValidationMode,
+        self, Behaviour as Gossipsub, MessageAuthenticity, MessageId, TopicHash, ValidationMode,
+        Config as GossipsubConfig, ConfigBuilder as GossipsubConfigBuilder,
     },
-    identity, mdns, noise, swarm::SwarmEvent, tcp, yamux, PeerId, Swarm,
+    identity, noise, swarm::SwarmEvent, tcp, PeerId, Swarm, SwarmBuilder,
     Transport,
 };
 use std::collections::{HashMap, HashSet};
@@ -16,14 +16,13 @@ use std::error::Error;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use futures::StreamExt;
 
 /// Configuration for the libp2p network
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
     /// Local node listening address
     pub listen_address: String,
-    /// Whether to enable mDNS discovery
-    pub enable_mdns: bool,
     /// Whether to enable Kademlia DHT
     pub enable_kademlia: bool,
     /// Bootstrap nodes for Kademlia
@@ -40,7 +39,7 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-            enable_mdns: true,
+            
             enable_kademlia: false,
             bootstrap_nodes: Vec::new(),
             validation_mode: ValidationMode::Strict,
@@ -61,6 +60,19 @@ pub enum NetworkEvent {
     MessageReceived(TopicHash, PeerId, Vec<u8>),
     /// Error occurred
     Error(String),
+}
+
+/// Network statistics
+#[derive(Debug, Clone, Default)]
+pub struct NetworkStats {
+    /// Number of connected peers
+    pub connected_peers_count: usize,
+    /// Number of subscribed topics
+    pub subscribed_topics_count: usize,
+    /// Total messages sent
+    pub messages_sent: u64,
+    /// Total messages received
+    pub messages_received: u64,
 }
 
 /// A wrapper around libp2p Swarm for our network functionality
@@ -88,17 +100,17 @@ impl Network {
         info!("Local peer id: {}", local_peer_id);
 
         // Create a transport with Noise for encryption and Yamux for multiplexing
-        let transport = tcp::async_io::Transport::new(tcp::Config::default())
+        let transport = tcp::tokio::Transport::new(tcp::Config::default())
             .upgrade(upgrade::Version::V1)
             .authenticate(noise::Config::new(&local_key)?)
-            .multiplex(yamux::Config::default())
+            .multiplex(libp2p::yamux::Config::default())
             .boxed();
 
         // Create a GossipSub configuration
         let gossipsub_config = GossipsubConfigBuilder::default()
             .validation_mode(config.validation_mode.clone())
             .message_id_fn(|message: &gossipsub::Message| {
-                MessageId::from(&message.data)
+                MessageId::from(message.data.clone())
             })
             .heartbeat_interval(Duration::from_secs(config.heartbeat_interval))
             .history_length(config.history_size)
@@ -111,12 +123,18 @@ impl Network {
             gossipsub_config,
         )?;
 
-        // Create a Swarm to manage peers and events
-        let mut swarm = Swarm::with_tokio_executor(
-            transport,
-            gossipsub,
-            local_peer_id,
-        );
+        // Create a Swarm to manage peers and events using new libp2p 0.53.0 API
+        let mut swarm = SwarmBuilder::with_existing_identity(local_key)
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new, 
+                libp2p::yamux::Config::default
+            )
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to build swarm: {}", e))))?
+            .with_behaviour(|_| gossipsub)
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to add behavior: {}", e))))?
+            .build();
 
         // Listen on the configured address
         swarm.listen_on(config.listen_address.parse()?)?;
@@ -146,7 +164,7 @@ impl Network {
             Ok(_) => {
                 let topic_hash = topic.hash();
                 self.subscribed_topics.insert(topic_hash.clone());
-                info!("Subscribed to topic: {}", topic.id());
+                info!("Subscribed to topic: {:?}", topic);
                 Ok(topic_hash)
             }
             Err(e) => {
@@ -165,7 +183,7 @@ impl Network {
         match self.swarm.behaviour_mut().unsubscribe(&topic) {
             Ok(_) => {
                 self.subscribed_topics.remove(&topic.hash());
-                info!("Unsubscribed from topic: {}", topic.id());
+                info!("Unsubscribed from topic: {:?}", topic);
                 Ok(())
             }
             Err(e) => {
@@ -185,9 +203,9 @@ impl Network {
         data: Vec<u8>,
     ) -> Result<MessageId, Box<dyn Error + Send + Sync>> {
         let topic = gossipsub::IdentTopic::new(topic);
-        match self.swarm.behaviour_mut().publish(topic, data) {
+        match self.swarm.behaviour_mut().publish(topic.clone(), data) {
             Ok(message_id) => {
-                debug!("Published message to topic: {}", topic.id());
+                debug!("Published message to topic: {:?}", topic);
                 Ok(message_id)
             }
             Err(e) => {
@@ -206,7 +224,8 @@ impl Network {
         
         while self.running {
             tokio::select! {
-                event = self.swarm.select_next_some() => {
+                event = self.swarm.next() => {
+                    if let Some(event) = event {
                     match event {
                         SwarmEvent::Behaviour(gossipsub::Event::Message {
                             propagation_source,
@@ -254,6 +273,7 @@ impl Network {
                         },
                         _ => {}
                     }
+                    }
                 }
                 // Handle external shutdown signal
                 else => {
@@ -278,5 +298,18 @@ impl Network {
     /// Get the next network event (if any)
     pub async fn next_event(&mut self) -> Option<NetworkEvent> {
         self.event_receiver.recv().await
+    }
+
+    /// Get network statistics
+    pub async fn stats(&self) -> Result<NetworkStats, Box<dyn Error + Send + Sync>> {
+        let connected_peers_count = self.swarm.connected_peers().count();
+        let subscribed_topics_count = self.subscribed_topics.len();
+        
+        Ok(NetworkStats {
+            connected_peers_count,
+            subscribed_topics_count,
+            messages_sent: 0, // TODO: implement counters
+            messages_received: 0, // TODO: implement counters
+        })
     }
 } 

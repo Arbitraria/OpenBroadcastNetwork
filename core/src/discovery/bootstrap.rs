@@ -50,7 +50,7 @@ impl Default for BootstrapDiscoveryConfig {
             bootstrap_nodes: Vec::new(),
             event_buffer_size: 32,
             peer_expiration: 3600, // 1 hour
-            protocol_name: "decentralized-stream/1.0.0".to_string(),
+            protocol_name: "OpenBroadcastNetwork/1.0.0".to_string(),
             connect_timeout: 10,
             refresh_interval: 300, // 5 minutes
         }

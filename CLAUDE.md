@@ -1,0 +1,208 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+OpenBroadcastNetwork is a decentralized live streaming CDN built with Rust using a hybrid tree-mesh overlay network. The system provides peer-to-peer streaming with WebRTC and QUIC transport layers, end-to-end encryption, and geographic clustering for optimal performance.
+
+### Key Features
+- **Decentralized P2P CDN**: All viewers are nodes; headless relays permitted
+- **Hybrid topology**: Tree-based primary relay with mesh fallback
+- **Cross-platform**: Initial browser support (WebRTC), future native apps
+- **Privacy-focused**: One-hop removal from identity, no persistent ID required
+- **Scalable**: Designed for millions of concurrent users
+- **Incentivized**: Token economy for relaying, content, and moderation
+
+### Development Philosophy
+- **AI-first development**: Optimized for Claude/Cursor workflows
+- **Type-driven**: Strict type system with comprehensive reference docs
+- **Test-driven**: Unit and integration tests for all components
+- **Modular**: Single-responsibility modules with clear interfaces
+
+## Architecture
+
+### Workspace Structure
+- `core/` - Core networking and streaming protocols (main library)
+- `node/` - CLI relay node implementation
+- `ui/` - Web-based viewer interface (WASM)
+- `proto/` - Protocol definitions and shared types
+
+### Core Architecture Patterns
+
+The system follows a modular overlay network architecture:
+
+1. **Overlay Network** (`core/src/overlay/`)
+   - `interface.rs` - Core trait definitions and types
+   - `libp2p/` - libp2p-based implementation with modular components:
+     - `peer_manager.rs` - Peer connection management
+     - `relay_manager.rs` - Stream relaying
+     - `mesh_manager.rs` - Mesh topology management
+     - `swarm.rs` - libp2p swarm initialization and event loop
+   - `topology/` - Network topology management
+   - `relay/` - Stream relay functionality
+
+2. **Core Type System** (see `TYPE_REFERENCE.md`)
+   - `LocalPeerId` - Local wrapper around libp2p::PeerId
+   - `OverlayConfig` - Main configuration struct
+   - `StreamId` - Unique stream identifiers
+   - Manager types wrapped in `Arc<T>` for shared ownership
+
+3. **Concurrency Model**
+   - Uses tokio runtime exclusively
+   - `Arc<Mutex<T>>` for exclusive access to shared state
+   - `Arc<RwLock<T>>` for read-heavy data structures
+   - Manager components are shared via `Arc<>` across threads
+
+## Common Development Commands
+
+### Building
+```bash
+# Build entire workspace
+cargo build
+
+# Build specific package
+cargo build -p OpenBroadcastNetwork-core
+cargo build -p OpenBroadcastNetwork-node
+
+# Check for compilation errors (faster)
+cargo check
+
+# Build UI (requires wasm-pack)
+cd ui && wasm-pack build
+```
+
+### Testing
+```bash
+# Run all tests
+cargo test
+
+# Run tests for specific package
+cargo test -p OpenBroadcastNetwork-core
+
+# Run specific test
+cargo test overlay_integration
+
+# Run tests with output
+cargo test -- --nocapture
+```
+
+### Development Workflow
+```bash
+# Check code formatting
+cargo fmt --check
+
+# Apply formatting
+cargo fmt
+
+# Run clippy lints
+cargo clippy
+
+# Run clippy with all features
+cargo clippy --all-features --all-targets
+
+# Full check pipeline (recommended before commits)
+cargo check && cargo test && cargo clippy
+```
+
+### CLI Usage
+```bash
+# Run relay node
+cargo run -p OpenBroadcastNetwork-node
+
+# Run with specific config
+cargo run -p OpenBroadcastNetwork-node -- --config path/to/config.toml
+
+# Enable debug logging
+RUST_LOG=debug cargo run -p OpenBroadcastNetwork-node
+```
+
+## Key Implementation Guidelines
+
+### Dependency Management (Critical)
+- **libp2p version**: Standardize on 0.53.0 across all crates
+- **Features**: Only use compatible features: `["tokio", "tcp", "dns", "gossipsub", "identify", "kad", "noise"]`
+- **Avoid**: `async-io`, `quic` (dependency conflicts), `async-std`
+- **Runtime**: Use tokio exclusively (not async-std)
+- **Documentation**: Update `DEPENDENCIES.md` for any dependency changes
+- **Pinning**: All versions must be pinned in Cargo.toml
+
+### Type Conversions
+- Always use proper conversions between `LocalPeerId` and `libp2p::PeerId`
+- Use `.into()` for standard conversions
+- Reference `TYPE_REFERENCE.md` for method signatures
+
+### Error Handling
+- Use `OverlayError` variants for overlay network errors
+- Convert third-party errors appropriately
+- Include context in error messages
+
+### Configuration
+- Follow patterns in `CODE_ORGANIZATION.md`
+- Manager types should accept config structs in constructors
+- Use `Default` implementations for sensible defaults
+
+### Code Quality
+- Maximum line length: 100 characters
+- Run `cargo fmt` and `cargo clippy` before commits
+- Document all public items
+- Use `#[deny(warnings)]` for strict compilation
+
+## Current State
+
+The project is in active refactoring on the `feature/libp2p-refactoring` branch, migrating from a monolithic overlay implementation to a modular libp2p-based architecture. Key changes include:
+
+- Removal of mDNS dependency
+- Modular peer and relay management
+- Standardized type system
+- Improved test coverage
+
+## Development Phases
+
+### Phase 1 (Current): Core P2P Protocol
+- [x] Basic peer discovery and connection
+- [x] Pub/sub topic creation (GossipSub)
+- [x] Tree-mesh hybrid relay logic
+- [ ] Geo-aware rebalancing
+- [ ] Relay node CLI with logging
+
+### Phase 2: Streaming Pipeline
+- [ ] Audio/video chunking and distribution
+- [ ] Web-based viewer with WebRTC
+- [ ] WASM integration
+- [ ] Stream validation
+
+### Phase 3: UI and Tooling
+- [ ] CLI broadcasting tool
+- [ ] Web UI for viewing streams
+- [ ] Stream registry and discovery
+
+### Future Phases
+- Moderation and privacy features
+- Token economy and incentives
+- Cross-platform native clients
+- Production scaling
+
+## AI Development Workflow
+
+This project follows structured AI-assisted development patterns defined in `promptplan.json`:
+
+1. **PLAN MODE**: Analyze and create detailed action plans
+2. **IMPLEMENT MODE**: Make agreed-upon changes with real code
+3. **TEST MODE**: Run checks and tests, report issues
+
+### AI Prompt Guidelines
+- Be explicit about architecture (traits, modules, file names)
+- Request unit and integration tests
+- Use sketch-then-complete approach for large features
+- Keep tasks modular and focused (300-500 lines per request)
+- Follow Rust idioms and project conventions
+
+## Essential Reference Documents
+
+When working on this codebase, always reference:
+- `TYPE_REFERENCE.md` - Type definitions and conversion patterns
+- `CODE_ORGANIZATION.md` - Modular structure and refactoring guidelines  
+- `DEPENDENCIES.md` - Dependency management and compatibility
+- `.windsurfrules` - Project-specific development rules
+- `Decentralized Streaming Spec` - Complete system requirements

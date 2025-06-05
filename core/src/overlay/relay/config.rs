@@ -23,6 +23,16 @@ pub struct RelayConfig {
     pub enable_bandwidth_limit: bool,
     /// Maximum outgoing bandwidth (bytes/second)
     pub max_outgoing_bandwidth: u64,
+    /// Maximum number of subscribers per stream
+    pub max_subscribers: usize,
+    /// Chunk size for stream data
+    pub chunk_size: usize,
+    /// Buffer size for relay queue
+    pub relay_buffer_size: usize,
+    /// Queue size for relay operations
+    pub relay_queue_size: usize,
+    /// Timeout for relay operations in milliseconds
+    pub relay_timeout_ms: u64,
 }
 
 impl Default for RelayConfig {
@@ -36,6 +46,11 @@ impl Default for RelayConfig {
             max_streams: 10,
             enable_bandwidth_limit: false,
             max_outgoing_bandwidth: 5 * 1024 * 1024, // 5 MB/s
+            max_subscribers: 50,
+            chunk_size: 16 * 1024, // 16 KB
+            relay_buffer_size: 100,
+            relay_queue_size: 1000,
+            relay_timeout_ms: 5000,
         }
     }
 }

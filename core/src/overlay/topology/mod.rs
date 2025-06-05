@@ -11,6 +11,6 @@ mod manager;
 
 // Re-export public components
 pub use geo::{Region, GeoLocation};
-pub use config::TopologyConfig;
+pub use config::{TopologyConfig, RelayScoreWeights};
 pub use health::ConnectionHealth;
 pub use manager::TopologyManager;

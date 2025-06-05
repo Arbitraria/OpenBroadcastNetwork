@@ -1,5 +1,5 @@
 [package]
-name = "decentralized-stream-proto"
+name = "OpenBroadcastNetwork-proto"
 version = "0.1.0"
 edition = "2021"
 
