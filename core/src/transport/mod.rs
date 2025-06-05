@@ -12,7 +12,7 @@
 //! - **NAT Traversal**: Support for connecting peers behind NATs and firewalls
 
 /// WebRTC-based transport implementation for browser compatibility
-pub mod webrtc;
+// pub mod webrtc;  // Temporarily disabled due to compilation issues
 /// QUIC protocol transport for high-performance connections
 pub mod quic;
 /// Core interfaces and types for transport implementations

@@ -48,6 +48,10 @@ pub enum TransportEvent {
 /// Errors that can occur in a transport
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
+    /// Transport initialization failed
+    #[error("Initialization failed: {0}")]
+    InitializationFailed(String),
+    
     /// Connection could not be established
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
