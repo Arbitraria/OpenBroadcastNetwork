@@ -22,7 +22,8 @@ use crate::overlay::libp2p::types::to_libp2p_peer_id;
 impl Overlay for Libp2pOverlay {
     /// Check if the overlay is running
     fn is_running(&self) -> bool {
-        *self.running.blocking_read()
+        // Use try_read to avoid blocking in an async runtime
+        self.running.try_read().map_or(false, |r| *r)
     }
     
     /// Get the local peer ID
@@ -93,6 +94,12 @@ impl Overlay for Libp2pOverlay {
         self.init_relay().await?;
         self.init_mesh().await?;
         
+        // Start the discovery manager
+        let mut discovery = self.discovery.lock().await;
+        discovery.start().await
+            .map_err(|e| OverlayError::DiscoveryError(format!("Failed to start discovery: {}", e)))?;
+        drop(discovery);
+        
         // Start the swarm processing loop
         self.run_swarm().await?;
         
@@ -116,6 +123,12 @@ impl Overlay for Libp2pOverlay {
         if let Some(worker) = self.worker_task.lock().await.take() {
             worker.abort();
         }
+        
+        // Stop the discovery manager
+        let mut discovery = self.discovery.lock().await;
+        discovery.stop().await
+            .map_err(|e| OverlayError::DiscoveryError(format!("Failed to stop discovery: {}", e)))?;
+        drop(discovery);
         
         // Stop the managers
         self.stop_topology().await?;
