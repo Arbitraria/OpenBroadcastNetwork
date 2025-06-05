@@ -45,6 +45,12 @@ pub mod config;
 /// on system performance, network health, and resource usage.
 pub mod telemetry;
 
+/// Test reporting utilities for collecting and analyzing test results
+/// 
+/// Provides structures and utilities for generating comprehensive test reports
+/// with timing data, status tracking, and serialization support.
+pub mod test_report;
+
 /// Re-exports of commonly used types
 pub mod prelude {
     // Pub/Sub module re-exports

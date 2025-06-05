@@ -153,7 +153,6 @@ mod tests {
     // }
     
     use crate::test_report::{TestReport, TestResult};
-use std::time::{SystemTime, Instant};
 
     #[tokio::test]
     async fn test_mock_discovery_announce_lookup() {

@@ -57,6 +57,7 @@ use crate::overlay::topology::{TopologyConfig, TopologyManager};
 use crate::overlay::relay::{RelayManager, RelayNode, RelayConfig, StreamChunk};
 use crate::overlay::mesh::{MeshNetwork, MeshConfig, StreamMesh, MeshStats};
 use crate::overlay::libp2p::behavior::{OverlayBehavior, OverlayBehaviorEvent};
+use crate::discovery::{DiscoveryManager, DiscoveryManagerConfig, BootstrapDiscoveryConfig, DhtDiscoveryConfig};
 
 // Import LocalPeerId directly
 use crate::overlay::libp2p::types::{to_libp2p_peer_id, from_libp2p_peer_id};
@@ -81,6 +82,8 @@ pub struct Libp2pOverlay {
     pub relay: Arc<RelayManager>,
     /// Mesh network
     pub mesh: Arc<MeshNetwork>,
+    /// Discovery manager
+    pub discovery: Arc<Mutex<DiscoveryManager>>,
     /// Peers
     pub peers: RwLock<HashMap<LocalPeerId, Peer>>,
     /// Active streams
@@ -133,6 +136,37 @@ impl Libp2pOverlay {
         
         let mesh = Arc::new(MeshNetwork::new(config.local_peer_id.clone(), mesh_config));
         
+        // Create discovery manager configuration
+        let mut discovery_config = DiscoveryManagerConfig::default();
+        discovery_config.enable_bootstrap = config.enable_bootstrap_discovery;
+        discovery_config.enable_dht = config.enable_dht_discovery;
+        
+        // Configure bootstrap discovery if enabled
+        if config.enable_bootstrap_discovery {
+            let mut bootstrap_config = BootstrapDiscoveryConfig::default();
+            // Convert bootstrap peers from strings to multiaddrs
+            for peer in &config.bootstrap_peers {
+                if let Ok(multiaddr) = peer.parse::<libp2p::Multiaddr>() {
+                    bootstrap_config.bootstrap_nodes.push(multiaddr);
+                }
+            }
+            discovery_config.bootstrap_config = Some(bootstrap_config);
+        }
+        
+        // Configure DHT discovery if enabled
+        if config.enable_dht_discovery {
+            let mut dht_config = DhtDiscoveryConfig::default();
+            // Convert bootstrap peers from strings to multiaddrs
+            for peer in &config.bootstrap_peers {
+                if let Ok(multiaddr) = peer.parse::<libp2p::Multiaddr>() {
+                    dht_config.bootstrap_peers.push(multiaddr);
+                }
+            }
+            discovery_config.dht_config = Some(dht_config);
+        }
+        
+        let discovery = Arc::new(Mutex::new(DiscoveryManager::new(discovery_config)));
+        
         // Create the Libp2pOverlay
         let overlay = Self {
             local_peer_id: config.local_peer_id.clone(),
@@ -142,6 +176,7 @@ impl Libp2pOverlay {
             topology,
             relay,
             mesh,
+            discovery,
             peers: RwLock::new(HashMap::new()),
             streams: RwLock::new(HashSet::new()),
             event_tx,

@@ -1,24 +1,26 @@
 # Dependency Management
 
-This document outlines the dependencies used in the Decentralized Streaming CDN project, along with rationales for their selection and any specific considerations.
+This document outlines the dependencies used in the OpenBroadcastNetwork project, along with rationales for their selection and any specific considerations.
 
 ## Core Dependencies
 
-### libp2p (0.55.0)
+### libp2p (0.53.0)
 - **Purpose**: Provides the peer-to-peer networking foundation
 - **Features Used**:
-  - `async-std`: For async runtime compatibility
   - `tcp`: For TCP transport
   - `dns`: For DNS resolution
-  - `mdns`: For local network peer discovery
   - `gossipsub`: For efficient pub/sub messaging
   - `identify`: For peer identification protocol
-  - `kad`: For DHT-based peer discovery
+  - `kad`: For Kademlia DHT-based peer discovery
   - `noise`: For secure encrypted communications
+  - `tokio`: For tokio runtime compatibility
+- **Removed Features**:
+  - ❌ `mdns`: Removed local network peer discovery for better scalability
+  - ❌ `async-std`: Migrated to tokio for consistency
 - **Considerations**: 
-  - We explicitly avoid the `async-io` feature as it's not compatible with version 0.55.0
-  - We also avoid the `quic` feature due to dependency conflicts with the `subtle` crate
-  - The `webrtc` feature is replaced by our separate WebRTC dependency for browser compatibility
+  - We avoid the `quic` feature due to dependency conflicts
+  - DHT-based discovery replaces mDNS for better P2P scalability
+  - All networking now uses tokio runtime for consistency
 
 ### tokio (1.28)
 - **Purpose**: Async runtime for the application
@@ -77,15 +79,32 @@ This document outlines the dependencies used in the Decentralized Streaming CDN 
 - **Purpose**: Command-line argument parsing
 - **Features**: "derive" for declarative CLI definition
 
-### term-table (1.3) and colored (2.0)
-- **Purpose**: Terminal output formatting
-- **Rationale**: Provides readable output for CLI users
+### serde_json (1.0)
+- **Purpose**: JSON output formatting for CLI visualization
+- **Rationale**: Enables machine-readable network topology export
+
+## Visualization Dependencies
+
+- **Unicode Box Drawing**: Built-in Rust Unicode support for beautiful CLI tables
+- **DOT Graph Generation**: Custom implementation for Graphviz compatibility
+- **No external CLI formatting dependencies**: Reduced dependency footprint
+
+## Recent Changes (Phase 1 Completion)
+
+### Removed Dependencies
+1. **mDNS support**: Removed mdns feature from libp2p to reduce complexity
+2. **async-std**: Migrated to tokio for runtime consistency  
+3. **External CLI formatting**: Removed term-table and colored for reduced footprint
+
+### Updated Dependencies
+1. **libp2p**: Updated to 0.53.0 with streamlined feature set
+2. **tokio**: Standardized on tokio runtime throughout the project
+3. **Custom visualization**: Built beautiful Unicode tables without external dependencies
 
 ## Known Dependency Issues
 
-1. **libp2p quic feature**: The quic feature has a dependency on rustls which requires subtle ≥2.5.0, but sha2 requires subtle =2.4.0. This creates an irresolvable dependency conflict.
-
-2. **geo-ip versioning**: We use geo-ip 0.1.0 as the newer versions have incompatible APIs.
+1. **libp2p quic feature**: Avoided due to rustls/subtle version conflicts
+2. **geo-ip versioning**: Using compatible version 0.1.0
 
 ## Licensing
 

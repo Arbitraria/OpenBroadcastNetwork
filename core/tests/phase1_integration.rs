@@ -405,9 +405,7 @@ async fn test_error_handling() {
     }
     
     // Test connecting to invalid peer
-    use OpenBroadcastNetwork_core::overlay::libp2p::types::to_libp2p_peer_id;
-    let fake_peer = LocalPeerId::new_random();
-    let fake_libp2p_peer = to_libp2p_peer_id(&fake_peer).expect("Failed to convert peer ID");
+    let fake_libp2p_peer = libp2p::PeerId::random();
     let connect_result = overlay.disconnect_peer(&fake_libp2p_peer).await;
     
     match connect_result {

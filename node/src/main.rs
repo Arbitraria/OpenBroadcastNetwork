@@ -2,12 +2,10 @@
 
 use clap::{Parser, Subcommand};
 use OpenBroadcastNetwork_core::prelude::*;
-use OpenBroadcastNetwork_core::discovery::DiscoveryManager;
-use OpenBroadcastNetwork_core::overlay::interface::StreamId;
-use OpenBroadcastNetwork_core::overlay::peer::{PeerRole, PeerInfo};
-use libp2p::PeerId;
+use OpenBroadcastNetwork_core::overlay::interface::{Overlay, OverlayConfig};
+use OpenBroadcastNetwork_core::overlay::peer::{PeerRole, LocalPeerId};
+use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -16,7 +14,7 @@ use tokio::sync::Mutex;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::fmt;
-use OpenBroadcastNetwork_node::visualization::{format_bytes, format_duration};
+use OpenBroadcastNetwork_node::visualization::*;
 
 /// Decentralized Streaming Relay Node CLI
 #[derive(Parser, Debug)]
@@ -95,36 +93,37 @@ enum Commands {
     },
 }
 
-/// Node operational metrics
-#[derive(Debug, Clone)]
-struct NodeMetrics {
+/// Running node instance with overlay
+struct RunningNode {
     /// When the node started
     start_time: SystemTime,
-    /// Active connections
-    connections: usize,
-    /// Known peers
-    known_peers: usize,
-    /// Active streams
-    active_streams: usize,
-    /// Relayed bytes (total)
-    relayed_bytes: u64,
-    /// Current bandwidth usage (bytes/sec)
-    bandwidth_bps: u64,
-    /// Relay score
-    relay_score: f32,
+    /// The overlay network instance
+    overlay: Arc<Libp2pOverlay>,
+    /// Node role
+    role: PeerRole,
 }
 
-impl Default for NodeMetrics {
-    fn default() -> Self {
-        Self {
+impl RunningNode {
+    async fn new(role: PeerRole, enable_dht: bool, bootstrap_peers: Vec<String>) -> Result<Self, anyhow::Error> {
+        let enable_bootstrap = !bootstrap_peers.is_empty();
+        let config = OverlayConfig {
+            local_peer_id: LocalPeerId::new_random(),
+            bootstrap_peers,
+            enable_kademlia: enable_dht,
+            enable_bootstrap_discovery: enable_bootstrap,
+            enable_dht_discovery: enable_dht,
+            max_connections: 50,
+            connection_timeout: Duration::from_secs(30),
+            ..Default::default()
+        };
+        
+        let overlay = Libp2pOverlay::new(config).await?;
+        
+        Ok(Self {
             start_time: SystemTime::now(),
-            connections: 0,
-            known_peers: 0,
-            active_streams: 0,
-            relayed_bytes: 0,
-            bandwidth_bps: 0,
-            relay_score: 0.0,
-        }
+            overlay: Arc::new(overlay),
+            role,
+        })
     }
 }
 
@@ -133,20 +132,11 @@ async fn run_relay_node(
     bootstrap_nodes: Vec<String>,
     listen_addr: String,
     role: String,
-    enable_mdns: bool,
+    _enable_mdns: bool,
     enable_dht: bool,
-    geo_aware: bool,
+    _geo_aware: bool,
 ) -> Result<(), anyhow::Error> {
     info!("Starting relay node on {}", listen_addr);
-    
-    // Parse the listen address
-    let addr = listen_addr.parse::<SocketAddr>()?;
-    
-    // Setup node metrics
-    let metrics = NodeMetrics {
-        start_time: SystemTime::now(),
-        ..Default::default()
-    };
     
     // Map role string to PeerRole
     let peer_role = match role.to_lowercase().as_str() {
@@ -163,20 +153,14 @@ async fn run_relay_node(
     
     info!("Node role: {:?}", peer_role);
     
-    // Generate identity
-    let keypair = generate_identity().await?;
-    let peer_id = libp2p::PeerId::from(keypair.public());
+    // Create the running node with overlay
+    let node = RunningNode::new(peer_role, enable_dht, bootstrap_nodes).await?;
+    let peer_id = node.overlay.local_peer_id();
     info!("Peer ID: {}", peer_id);
     
-    // Initialize discovery subsystem (simplified for compilation)
-    // Just create the manager but don't use it in this simplified version
-    let _discovery = DiscoveryManager::new(OpenBroadcastNetwork_core::discovery::DiscoveryManagerConfig {
-        enable_bootstrap: false,
-        enable_dht: false,
-        dht_config: None,
-        bootstrap_config: None,
-        poll_interval_ms: 1000,
-    });
+    // Start the overlay
+    node.overlay.start().await?;
+    info!("Overlay network started");
     
     // Register shutdown signal handler
     let running = Arc::new(Mutex::new(true));
@@ -196,49 +180,29 @@ async fn run_relay_node(
     });
     
     // Main event loop
-    let interval = Duration::from_secs(1);
+    let interval = Duration::from_secs(5); // Update stats every 5 seconds
     let mut interval_timer = time::interval(interval);
-    
-    // Keep track of how long we've been running
-    let start_time = SystemTime::now();
     
     info!("Relay node started successfully");
     
     while *running.lock().await {
         interval_timer.tick().await;
         
-        // Calculate uptime
-        if let Ok(duration) = SystemTime::now().duration_since(start_time) {
-            debug!("Node uptime: {}", format_duration(duration));
+        // Get and log stats
+        if let Ok(stats) = node.overlay.stats().await {
+            if let Ok(uptime) = SystemTime::now().duration_since(node.start_time) {
+                debug!("Node uptime: {}, Connected peers: {}, Active streams: {}", 
+                      format_duration(uptime), stats.connected_peers, stats.active_streams);
+            }
         }
     }
     
     info!("Shutting down relay node...");
+    node.overlay.stop().await?;
+    info!("Node stopped successfully");
     Ok(())
 }
 
-/// Generate a libp2p identity keypair
-async fn generate_identity() -> Result<libp2p::identity::Keypair, anyhow::Error> {
-    Ok(libp2p::identity::Keypair::generate_ed25519())
-}
-
-/// Generate a text visualization of the network topology
-fn visualize_topology_text(
-    _streams: Vec<StreamId>,
-    _peers: HashMap<PeerId, PeerInfo>,
-) -> String {
-    // Simplified implementation during refactoring
-    "Network visualization is disabled during refactoring".to_string()
-}
-
-/// Generate a DOT format visualization for use with Graphviz
-fn visualize_topology_dot(
-    _streams: Vec<StreamId>,
-    _peers: HashMap<PeerId, PeerInfo>,
-) -> String {
-    // Simplified implementation during refactoring
-    "digraph G {\n  label=\"Network visualization disabled during refactoring\";\n}".to_string()
-}
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -267,32 +231,72 @@ async fn main() -> Result<(), anyhow::Error> {
         },
         Commands::Status { node } => {
             info!("Connecting to node at {}", node);
-            println!("Node status: Running");
-            println!("Uptime: 10h 30m");
-            println!("Peers: 5 connected, 12 known");
-            println!("Streams: 3 active");
-            println!("Bandwidth: {}/s", format_bytes(1_500_000));
+            
+            // For demonstration, create a temporary overlay to show stats
+            let demo_node = RunningNode::new(PeerRole::Relay, false, vec![]).await?;
+            demo_node.overlay.start().await?;
+            
+            // Get stats and display
+            if let Ok(stats) = demo_node.overlay.stats().await {
+                if let Ok(uptime) = SystemTime::now().duration_since(demo_node.start_time) {
+                    println!("{}", create_network_status(&stats, uptime));
+                }
+            }
+            
+            demo_node.overlay.stop().await?;
         },
         Commands::ListStreams { node } => {
             info!("Connecting to node at {}", node);
-            println!("Streams are not available during refactoring");
+            
+            // For demonstration, create a temporary overlay and show stream info
+            let demo_node = RunningNode::new(PeerRole::Relay, false, vec![]).await?;
+            demo_node.overlay.start().await?;
+            
+            // Get active streams and display
+            if let Ok(streams) = demo_node.overlay.active_streams().await {
+                println!("{}", create_stream_table(&streams));
+            } else {
+                println!("No active streams found");
+            }
+            
+            demo_node.overlay.stop().await?;
         },
         Commands::Visualize { node, format, output } => {
             info!("Connecting to node at {}", node);
             
-            // Generate dummy visualization (simplified during refactoring)
+            // For demonstration, create a temporary overlay and show topology
+            let demo_node = RunningNode::new(PeerRole::Relay, false, vec![]).await?;
+            demo_node.overlay.start().await?;
+            
+            // Get connected peers and convert to HashMap
+            let connected_peers = demo_node.overlay.connected_peers().await.unwrap_or_default();
+            let mut peers = HashMap::new();
+            for peer in connected_peers {
+                // Convert LocalPeerId to PeerId for the map
+                if let Ok(pid) = libp2p::PeerId::try_from(&peer.id) {
+                    peers.insert(pid, peer);
+                }
+            }
+            
             let viz = match format.as_str() {
                 "text" => {
-                    let mut output = String::new();
-                    output.push_str("== NETWORK TOPOLOGY ==\n\n");
-                    output.push_str("Network visualization is disabled during refactoring\n");
-                    output
+                    let mut output_text = String::new();
+                    output_text.push_str("== NETWORK TOPOLOGY ==\n\n");
+                    if let Ok(stats) = demo_node.overlay.stats().await {
+                        output_text.push_str(&create_network_status(&stats, SystemTime::now().duration_since(demo_node.start_time).unwrap_or_default()));
+                    }
+                    output_text.push_str("\n");
+                    output_text.push_str(&create_peer_table(&peers, true));
+                    output_text
                 },
-                "dot" => "digraph G {\n  label=\"Network visualization disabled during refactoring\";\n}".to_string(),
+                "dot" => generate_dot_graph(&peers, None),
                 "json" => {
-                    // Create a simplified structure for JSON output
                     let json_data = serde_json::json!({
-                        "message": "Network visualization is disabled during refactoring",
+                        "topology": {
+                            "peers": peers.len(),
+                            "streams": 0,
+                            "timestamp": SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+                        }
                     });
                     serde_json::to_string_pretty(&json_data).unwrap()
                 },
@@ -300,6 +304,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     return Err(anyhow::anyhow!("Unsupported format: {}", format));
                 }
             };
+            
+            demo_node.overlay.stop().await?;
             
             // Output visualization
             if let Some(path) = output {

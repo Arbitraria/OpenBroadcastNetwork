@@ -1,6 +1,8 @@
-# Decentralized Stream - Type Reference Guide
+# OpenBroadcastNetwork - Type Reference Guide
 
 This document serves as a quick reference for important types, structures, and patterns used throughout the codebase. Use this as a guide during refactoring to maintain consistency.
+
+**Status**: Updated for Phase 1 completion with libp2p 0.53.0 integration
 
 ## Core Types and Locations
 

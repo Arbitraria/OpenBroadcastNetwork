@@ -242,9 +242,12 @@ pub struct OverlayConfig {
     pub local_peer_id: LocalPeerId,
     /// Bootstrap peers to connect to
     pub bootstrap_peers: Vec<String>,
-    /// Whether to use Kademlia for local peer discovery
     /// Whether to use Kademlia DHT for peer discovery
     pub enable_kademlia: bool,
+    /// Whether to enable bootstrap discovery
+    pub enable_bootstrap_discovery: bool,
+    /// Whether to enable DHT discovery
+    pub enable_dht_discovery: bool,
     /// Maximum number of connections to maintain
     pub max_connections: usize,
     /// Connection timeout
@@ -262,8 +265,9 @@ impl Default for OverlayConfig {
         Self {
             local_peer_id: LocalPeerId::new_random(),
             bootstrap_peers: vec![],
-            
             enable_kademlia: true,
+            enable_bootstrap_discovery: true,
+            enable_dht_discovery: true,
             max_connections: 50,
             connection_timeout: Duration::from_secs(30),
             peer_ttl: Duration::from_secs(300), // 5 minutes

@@ -1,17 +1,25 @@
 //! Bootstrap-based peer discovery
 //!
 //! This module provides peer discovery via well-known bootstrap nodes.
+//! Updated to use real libp2p connections instead of simulated ones.
 
 use crate::discovery::interface::{Discovery, DiscoveryEvent, DiscoveryError, PeerInfo};
 use async_trait::async_trait;
 use futures::channel::mpsc::{channel, Receiver, Sender};
-use futures::SinkExt;
+use futures::{SinkExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::{interval, sleep, timeout};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+use libp2p::core::multiaddr::Multiaddr;
+use libp2p::identity::Keypair;
+use libp2p::swarm::{Swarm, SwarmEvent};
+use libp2p::identify::{Behaviour as Identify, Event as IdentifyEvent, Config as IdentifyConfig};
+use libp2p::{PeerId, Transport, SwarmBuilder};
+use libp2p::tcp::Config as GenTcpConfig;
+use libp2p::noise;
 
 /// Connection timeout for bootstrap nodes
 const BOOTSTRAP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -25,8 +33,11 @@ const PEER_EXPIRATION: Duration = Duration::from_secs(3600); // 1 hour
 /// Configuration for bootstrap discovery
 #[derive(Debug, Clone)]
 pub struct BootstrapDiscoveryConfig {
-    /// List of bootstrap servers to connect to
-    pub bootstrap_nodes: Vec<SocketAddr>,
+    /// List of bootstrap servers to connect to (as multiaddrs)
+    pub bootstrap_nodes: Vec<Multiaddr>,
+    
+    /// Legacy socket addresses (converted to multiaddrs)
+    pub bootstrap_nodes_legacy: Vec<SocketAddr>,
     
     /// Maximum number of events to buffer
     pub event_buffer_size: usize,
@@ -48,6 +59,7 @@ impl Default for BootstrapDiscoveryConfig {
     fn default() -> Self {
         Self {
             bootstrap_nodes: Vec::new(),
+            bootstrap_nodes_legacy: Vec::new(),
             event_buffer_size: 32,
             peer_expiration: 3600, // 1 hour
             protocol_name: "OpenBroadcastNetwork/1.0.0".to_string(),
@@ -81,6 +93,15 @@ pub struct BootstrapDiscovery {
     
     /// Sender to signal the background task to stop
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    
+    /// libp2p swarm for network operations
+    swarm: Arc<tokio::sync::Mutex<Option<Swarm<Identify>>>>,
+    
+    /// Keypair for authentication
+    keypair: Option<Keypair>,
+    
+    /// Local peer ID
+    local_peer_id: Option<PeerId>,
 }
 
 impl BootstrapDiscovery {
@@ -95,9 +116,17 @@ impl BootstrapDiscovery {
     }
     
     /// Create a new bootstrap discovery service with custom configuration
-    pub fn with_config(config: BootstrapDiscoveryConfig) -> Self {
+    pub fn with_config(mut config: BootstrapDiscoveryConfig) -> Self {
         let (tx, rx) = channel(config.event_buffer_size);
         let (stop_tx, _) = tokio::sync::oneshot::channel();
+        
+        // Convert legacy socket addresses to multiaddrs
+        for socket_addr in &config.bootstrap_nodes_legacy {
+            let multiaddr = format!("/ip4/{}/tcp/{}", socket_addr.ip(), socket_addr.port())
+                .parse::<Multiaddr>()
+                .unwrap();
+            config.bootstrap_nodes.push(multiaddr);
+        }
         
         Self {
             config,
@@ -108,7 +137,46 @@ impl BootstrapDiscovery {
             own_info: None,
             task_handle: None,
             stop_tx: Some(stop_tx),
+            swarm: Arc::new(tokio::sync::Mutex::new(None)),
+            keypair: None,
+            local_peer_id: None,
         }
+    }
+    
+    /// Initialize the libp2p swarm
+    async fn init_swarm(&mut self) -> Result<(), DiscoveryError> {
+        // Generate or use existing keypair
+        let keypair = self.keypair.take().unwrap_or_else(|| Keypair::generate_ed25519());
+        let peer_id = keypair.public().to_peer_id();
+        self.local_peer_id = Some(peer_id);
+        
+        // Create identify behavior
+        let identify = Identify::new(
+            IdentifyConfig::new(
+                self.config.protocol_name.clone(),
+                keypair.public()
+            )
+        );
+        
+        // Build the swarm
+        let swarm = SwarmBuilder::with_existing_identity(keypair)
+            .with_tokio()
+            .with_tcp(
+                GenTcpConfig::default().nodelay(true),
+                noise::Config::new,
+                libp2p::yamux::Config::default
+            )
+            .map_err(|e| DiscoveryError::Other(format!("Failed to build swarm: {}", e)))?
+            .with_behaviour(|_| identify)
+            .map_err(|e| DiscoveryError::Other(format!("Failed to create behavior: {}", e)))?
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+            .build();
+        
+        // Store the swarm
+        let mut swarm_lock = self.swarm.lock().await;
+        *swarm_lock = Some(swarm);
+        
+        Ok(())
     }
     
     /// Generate a simple peer ID from a socket address
@@ -129,70 +197,120 @@ impl BootstrapDiscovery {
         bytes
     }
     
-    /// Connect to a bootstrap node and try to get peer information
+    /// Connect to a bootstrap node using libp2p and discover peers
     async fn connect_to_bootstrap(
-        addr: SocketAddr,
-        protocol_name: String,
+        swarm: Arc<tokio::sync::Mutex<Option<Swarm<Identify>>>>,
+        addr: Multiaddr,
         connect_timeout: Duration,
+        event_sender: &mut Sender<DiscoveryEvent>,
     ) -> Result<Vec<PeerInfo>, DiscoveryError> {
-        // In a real implementation, we would:
-        // 1. Establish a TCP connection to the bootstrap node
-        // 2. Perform a handshake with protocol version
-        // 3. Request a list of known peers
-        // 4. Parse the response and return peer information
+        debug!("Attempting to connect to bootstrap node: {}", addr);
         
-        // For this example, we'll simulate the process with a timeout
-        let connect_future = async move {
-            // Simulate connecting to bootstrap server
-            debug!("Connecting to bootstrap node: {}", addr);
-            sleep(Duration::from_millis(500)).await;
-            
-            // Create a fake list of peers
-            let mut peers = Vec::new();
-            
-            // Add the bootstrap node itself
-            let now = std::time::SystemTime::now();
-            let bootstrap_peer = PeerInfo {
-                id: Self::generate_peer_id(&addr),
-                addresses: vec![addr],
-                protocols: vec![protocol_name.clone()],
-                metadata: HashMap::new(),
-                first_seen: Some(now),
-                last_seen: Some(now),
-                connection_status: crate::discovery::interface::ConnectionStatus::Disconnected,
-            };
-            
-            peers.push(bootstrap_peer);
-            
-            // Simulate 3 additional peers that might be returned
-            for i in 1..4 {
-                let port = 10000 + i;
-                let peer_addr = SocketAddr::new(addr.ip(), port as u16);
-                
-                let now = std::time::SystemTime::now();
-                let peer_info = PeerInfo {
-                    id: Self::generate_peer_id(&peer_addr),
-                    addresses: vec![peer_addr],
-                    protocols: vec![protocol_name.clone()],
-                    metadata: HashMap::new(),
-                    first_seen: Some(now),
-                    last_seen: Some(now),
-                    connection_status: crate::discovery::interface::ConnectionStatus::Disconnected,
-                };
-                
-                peers.push(peer_info);
+        let mut discovered_peers = Vec::new();
+        
+        // Get the swarm
+        let mut swarm_lock = swarm.lock().await;
+        if let Some(ref mut swarm_instance) = *swarm_lock {
+            // Dial the bootstrap node
+            match swarm_instance.dial(addr.clone()) {
+                Ok(()) => {
+                    debug!("Initiated connection to bootstrap node: {}", addr);
+                },
+                Err(e) => {
+                    return Err(DiscoveryError::BootstrapError(
+                        format!("Failed to dial bootstrap node {}: {}", addr, e).into()
+                    ));
+                }
             }
             
-            Ok(peers)
-        };
-        
-        // Apply timeout to the connection attempt
-        match timeout(connect_timeout, connect_future).await {
-            Ok(result) => result,
-            Err(_) => Err(DiscoveryError::BootstrapError(
-                format!("Connection timeout to bootstrap node: {}", addr).into()
-            )),
+            // Wait for connection events with timeout
+            let start_time = Instant::now();
+            let mut connected = false;
+            
+            while start_time.elapsed() < connect_timeout && !connected {
+                let event_future = swarm_instance.select_next_some();
+                
+                match timeout(Duration::from_millis(100), event_future).await {
+                    Ok(event) => {
+                        match event {
+                            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+                                debug!("Connected to bootstrap peer: {}", peer_id);
+                                connected = true;
+                                
+                                // Extract address from endpoint
+                                let mut addresses = vec![];
+                                if let Some(socket_addr) = extract_socket_addr_from_multiaddr(&endpoint.get_remote_address()) {
+                                    addresses.push(socket_addr);
+                                }
+                                
+                                let peer_info = PeerInfo {
+                                    id: peer_id.to_bytes(),
+                                    addresses,
+                                    protocols: vec![],
+                                    metadata: HashMap::new(),
+                                    first_seen: Some(std::time::SystemTime::now()),
+                                    last_seen: Some(std::time::SystemTime::now()),
+                                    connection_status: crate::discovery::interface::ConnectionStatus::Connected,
+                                };
+                                
+                                discovered_peers.push(peer_info.clone());
+                                let _ = event_sender.send(DiscoveryEvent::PeerDiscovered(peer_info)).await;
+                            },
+                            SwarmEvent::Behaviour(IdentifyEvent::Received { peer_id, info }) => {
+                                debug!("Received identify info from {}: {:?}", peer_id, info);
+                                
+                                // Extract addresses from the identify info
+                                let addresses: Vec<SocketAddr> = info.listen_addrs.iter()
+                                    .filter_map(|addr| extract_socket_addr_from_multiaddr(addr))
+                                    .collect();
+                                
+                                let peer_info = PeerInfo {
+                                    id: peer_id.to_bytes(),
+                                    addresses,
+                                    protocols: info.protocols.iter().map(|p| p.to_string()).collect(),
+                                    metadata: HashMap::new(),
+                                    first_seen: Some(std::time::SystemTime::now()),
+                                    last_seen: Some(std::time::SystemTime::now()),
+                                    connection_status: crate::discovery::interface::ConnectionStatus::Connected,
+                                };
+                                
+                                discovered_peers.push(peer_info.clone());
+                                let _ = event_sender.send(DiscoveryEvent::PeerDiscovered(peer_info)).await;
+                            },
+                            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                                let peer_str = peer_id.map(|p| p.to_string()).unwrap_or_else(|| "unknown".to_string());
+                                warn!("Failed to connect to bootstrap peer {}: {}", peer_str, error);
+                                return Err(DiscoveryError::BootstrapError(
+                                    format!("Connection failed to {}: {}", peer_str, error).into()
+                                ));
+                            },
+                            SwarmEvent::IncomingConnection { .. } => {},
+                            SwarmEvent::IncomingConnectionError { .. } => {},
+                            SwarmEvent::NewListenAddr { .. } => {},
+                            SwarmEvent::ExpiredListenAddr { .. } => {},
+                            SwarmEvent::ListenerClosed { .. } => {},
+                            SwarmEvent::ListenerError { .. } => {},
+                            SwarmEvent::Dialing { .. } => {},
+                            SwarmEvent::ConnectionClosed { .. } => {},
+                            _ => {}
+                        }
+                    },
+                    Err(_) => {
+                        // Timeout on individual event, continue
+                    }
+                }
+            }
+            
+            if !connected {
+                return Err(DiscoveryError::BootstrapError(
+                    format!("Timeout connecting to bootstrap node: {}", addr).into()
+                ));
+            }
+        } else {
+            return Err(DiscoveryError::Other("No swarm available".into()));
         }
+        
+        Ok(discovered_peers)
     }
     
     /// Start the background discovery task
@@ -200,10 +318,10 @@ impl BootstrapDiscovery {
         peers: Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
         event_sender: Sender<DiscoveryEvent>,
         config: BootstrapDiscoveryConfig,
+        swarm: Arc<tokio::sync::Mutex<Option<Swarm<Identify>>>>,
     ) -> Result<tokio::task::JoinHandle<()>, DiscoveryError> {
         // Clone needed values for the task
         let bootstrap_nodes = config.bootstrap_nodes.clone();
-        let protocol_name = config.protocol_name.clone();
         let connect_timeout = Duration::from_secs(config.connect_timeout);
         let refresh_interval = Duration::from_secs(config.refresh_interval);
         let peer_expiration = Duration::from_secs(config.peer_expiration);
@@ -212,21 +330,22 @@ impl BootstrapDiscovery {
         // Define the task for periodic bootstrap refresh
         let task = tokio::spawn(async move {
             let mut refresh_timer = interval(refresh_interval);
-            let _expired_peers: HashSet<Vec<u8>> = HashSet::new();
             
             loop {
                 // Wait for the refresh interval
                 refresh_timer.tick().await;
                 
                 // Connect to all bootstrap nodes
-                for &addr in &bootstrap_nodes {
-                    match Self::connect_to_bootstrap(addr, protocol_name.clone(), connect_timeout).await {
+                for addr in &bootstrap_nodes {
+                    match Self::connect_to_bootstrap(
+                        swarm.clone(),
+                        addr.clone(),
+                        connect_timeout,
+                        &mut event_sender,
+                    ).await {
                         Ok(found_peers) => {
                             // Process the peers we got back
                             let now = Instant::now();
-                            
-                            // Collect events to send after releasing the lock
-                            let mut events_to_send = Vec::new();
                             
                             // Update our peer list with the results
                             {
@@ -234,22 +353,8 @@ impl BootstrapDiscovery {
                                 
                                 for peer_info in found_peers {
                                     let peer_id = peer_info.id.clone();
-                                    
-                                    if peers_lock.contains_key(&peer_id) {
-                                        // Update existing peer
-                                        peers_lock.insert(peer_id.clone(), (peer_info.clone(), now));
-                                        events_to_send.push(DiscoveryEvent::PeerUpdated(peer_info));
-                                    } else {
-                                        // Add new peer
-                                        peers_lock.insert(peer_id, (peer_info.clone(), now));
-                                        events_to_send.push(DiscoveryEvent::PeerDiscovered(peer_info));
-                                    }
+                                    peers_lock.insert(peer_id, (peer_info, now));
                                 }
-                            }
-                            
-                            // Send all events after releasing the lock
-                            for event in events_to_send {
-                                let _ = event_sender.send(event).await;
                             }
                         },
                         Err(e) => {
@@ -321,6 +426,11 @@ impl Discovery for BootstrapDiscovery {
             return Ok(());
         }
         
+        debug!("Starting bootstrap discovery service");
+        
+        // Initialize the swarm
+        self.init_swarm().await?;
+        
         // Ensure we have event channels
         if self.event_sender.is_none() || self.event_receiver.is_none() {
             let (tx, rx) = channel(self.config.event_buffer_size);
@@ -329,7 +439,7 @@ impl Discovery for BootstrapDiscovery {
         }
         
         // If no bootstrap nodes configured, we can't do discovery
-        if self.config.bootstrap_nodes.is_empty() {
+        if self.config.bootstrap_nodes.is_empty() && self.config.bootstrap_nodes_legacy.is_empty() {
             return Err(DiscoveryError::BootstrapError(
                 anyhow::anyhow!("No bootstrap nodes configured").into()
             ));
@@ -339,14 +449,14 @@ impl Discovery for BootstrapDiscovery {
         let peers = self.peers.clone();
         let event_sender = self.event_sender.as_ref().unwrap().clone();
         let config = self.config.clone();
+        let swarm = self.swarm.clone();
         
-        let task_handle = tokio::runtime::Handle::current().block_on(async {
-            Self::start_discovery_task(peers, event_sender, config).await
-        })?;
+        let task_handle = Self::start_discovery_task(peers, event_sender, config, swarm).await?;
         
         self.task_handle = Some(task_handle);
         self.running = true;
         
+        debug!("Bootstrap discovery service started with peer ID: {:?}", self.local_peer_id);
         Ok(())
     }
     
@@ -439,7 +549,7 @@ impl Discovery for BootstrapDiscovery {
     }
     
     fn local_peer_id(&self) -> Option<Vec<u8>> {
-        self.get_local_peer_id()
+        self.local_peer_id.as_ref().map(|id| id.to_bytes())
     }
     
     async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError> {
@@ -453,5 +563,31 @@ impl Discovery for BootstrapDiscovery {
             .collect();
             
         Ok(result)
+    }
+}
+
+/// Extract socket address from a multiaddr
+fn extract_socket_addr_from_multiaddr(addr: &Multiaddr) -> Option<SocketAddr> {
+    let mut ip = None;
+    let mut port = None;
+    
+    for component in addr.iter() {
+        match component {
+            libp2p::multiaddr::Protocol::Ip4(addr) => {
+                ip = Some(std::net::IpAddr::V4(addr));
+            },
+            libp2p::multiaddr::Protocol::Ip6(addr) => {
+                ip = Some(std::net::IpAddr::V6(addr));
+            },
+            libp2p::multiaddr::Protocol::Tcp(p) => {
+                port = Some(p);
+            },
+            _ => {}
+        }
+    }
+    
+    match (ip, port) {
+        (Some(ip), Some(port)) => Some(SocketAddr::new(ip, port)),
+        _ => None,
     }
 }

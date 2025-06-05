@@ -41,7 +41,6 @@ async fn test_media_stream() {
 }
 
 use crate::test_report::{TestReport, TestResult};
-use std::time::{SystemTime, Instant};
 
 #[tokio::test]
 async fn test_media_pipeline() {
@@ -90,7 +89,6 @@ fn test_quality_levels() {
 }
 
 use crate::test_report::{TestReport, TestResult};
-use std::time::{SystemTime, Instant};
 
 #[tokio::test]
 async fn test_bandwidth_monitor() {
