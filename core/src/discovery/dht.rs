@@ -15,7 +15,7 @@ use futures::channel::mpsc::{self, Sender, Receiver};
 use futures::lock::Mutex;
 use futures::{StreamExt, SinkExt};
 use libp2p::core::multiaddr::Multiaddr;
-use libp2p::kad::{QueryId, Behaviour as Kademlia, Event as KademliaEvent, store::MemoryStore, Config as KademliaConfig, QueryResult};
+use libp2p::kad::{QueryId, Behaviour as Kademlia, Event as KademliaEvent, store::MemoryStore, QueryResult};
 use libp2p::swarm::{Swarm, SwarmEvent};
 use libp2p::identity::Keypair;
 use libp2p::{PeerId, Transport, SwarmBuilder};

@@ -2,6 +2,11 @@
 //!
 //! This module combines the tree and mesh overlays to provide an efficient
 //! and resilient distribution network.
+//!
+//! This is an experimental overlay implementation. For production use,
+//! prefer the libp2p overlay implementation.
+
+#![cfg(feature = "experimental-overlay")]
 
 use crate::overlay::interface::{Overlay, OverlayEvent, OverlayError, PeerRole, StreamId, StreamStats};
 use crate::overlay::tree::{StreamTree, TreeStats};
@@ -139,11 +144,16 @@ impl HybridOverlay {
                 debug!("Message received from {} on topic {:?}", source_peer, topic_hash);
                 
                 // Check if this is a topic we're tracking
-                if let Some(_stream_id) = self.topics.get(&topic_hash) {
-                    // TODO: Process the message based on topic type (data or control)
-                    // For now, just forward to any subscribers
-                    
-                    // ...
+                if let Some(stream_id) = self.topics.get(&topic_hash) {
+                    // Process the message based on topic type (data or control)
+                    let stream_id = stream_id.clone();
+                    if let Err(e) = self.event_sender.send(OverlayEvent::DataReceived {
+                        stream_id,
+                        data: _data,
+                        source: source_peer.to_string(),
+                    }).await {
+                        error!("Failed to send overlay event: {}", e);
+                    }
                 }
             },
             NetworkEvent::Error(error) => {
@@ -235,14 +245,8 @@ impl Overlay for HybridOverlay {
         let event_sender = self.event_sender.clone();
         
         Box::pin(async move {
-            // TODO: Subscribe to topics and set up the stream
-            
-            // Notify of stream creation
-            if let Err(e) = event_sender.send(OverlayEvent::StreamCreated(stream_id.clone())).await {
-                error!("Failed to send overlay event: {}", e);
-            }
-            
-            Ok(())
+            // For experimental implementation, return an "Unsupported" error
+            Err(OverlayError::ProtocolError("Hybrid overlay not fully implemented - use libp2p overlay instead".to_string()))
         })
     }
     
@@ -255,18 +259,8 @@ impl Overlay for HybridOverlay {
         let event_sender = self.event_sender.clone();
         
         Box::pin(async move {
-            // TODO: Subscribe to topics and join the stream
-            
-            // Notify of joining
-            if let Err(e) = event_sender.send(OverlayEvent::PeerJoined(
-                stream_id.clone(), 
-                peer_id.to_string(),
-                role
-            )).await {
-                error!("Failed to send overlay event: {}", e);
-            }
-            
-            Ok(())
+            // For experimental implementation, return an "Unsupported" error
+            Err(OverlayError::ProtocolError("Hybrid overlay not fully implemented - use libp2p overlay instead".to_string()))
         })
     }
     
@@ -275,17 +269,8 @@ impl Overlay for HybridOverlay {
         let event_sender = self.event_sender.clone();
         
         Box::pin(async move {
-            // TODO: Unsubscribe from topics and leave the stream
-            
-            // Notify of leaving
-            if let Err(e) = event_sender.send(OverlayEvent::PeerLeft(
-                stream_id.clone(), 
-                peer_id.to_string()
-            )).await {
-                error!("Failed to send overlay event: {}", e);
-            }
-            
-            Ok(())
+            // For experimental implementation, return an "Unsupported" error
+            Err(OverlayError::ProtocolError("Hybrid overlay not fully implemented - use libp2p overlay instead".to_string()))
         })
     }
     

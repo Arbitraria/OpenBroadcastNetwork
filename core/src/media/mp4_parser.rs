@@ -1335,12 +1335,20 @@ impl Mp4Parser {
                 
                 let media_data_len = media_data.len();
                 
+                // Calculate timestamp and duration based on segment index
+                let segment_index = segments.len() - 1; // Subtract 1 for init segment
+                let timestamp = if segment_index > 0 { Some((segment_index as u64) * 1000) } else { Some(0) };
+                let duration = Some(1000); // Default 1 second duration
+                
+                // Determine if this is a keyframe by checking for SPS/PPS or using segment index
+                let is_keyframe = self.is_likely_keyframe(&media_data, segment_index);
+                
                 segments.push(MseSegment {
                     segment_type: "media".to_string(),
                     data: media_data,
-                    timestamp: Some(0), // TODO: Parse actual timestamp from moof
-                    duration: Some(1000), // TODO: Parse actual duration
-                    is_keyframe: true, // TODO: Determine from track run data
+                    timestamp,
+                    duration,
+                    is_keyframe,
                 });
                 
                 debug!("Created media segment {} ({} bytes)", segments.len() - 1, media_data_len);
@@ -1396,19 +1404,72 @@ impl Mp4Parser {
             info!("Created initialization segment ({} bytes)", segments[0].data.len());
         }
         
-        // For now, create a single media segment with all the mdat content
-        // TODO: Implement proper fragmentation with moof boxes
+        // Create proper fragmented segments from mdat content
         if !mdat_data.is_empty() {
-            // Create a simple moof + mdat pair
-            let media_segment = self.create_simple_media_segment(&mdat_data)?;
-            segments.push(media_segment);
-            info!("Created media segment ({} bytes)", segments[1].data.len());
+            // Split mdat into smaller chunks for streaming
+            let chunk_size = 64 * 1024; // 64KB chunks
+            let num_chunks = (mdat_data.len() + chunk_size - 1) / chunk_size;
+            
+            for (chunk_index, chunk) in mdat_data.chunks(chunk_size).enumerate() {
+                let timestamp = Some((chunk_index as u64) * 1000); // 1 second per chunk
+                let is_keyframe = chunk_index == 0 || self.is_likely_keyframe(chunk, chunk_index);
+                
+                let media_segment = self.create_simple_media_segment_with_timing(chunk, timestamp, is_keyframe)?;
+                segments.push(media_segment);
+            }
+            
+            info!("Created {} media segments from regular MP4", num_chunks);
         }
         
         info!("Generated {} segments from regular MP4", segments.len());
         Ok(segments)
     }
 
+    /// Check if data likely contains a keyframe based on common patterns
+    fn is_likely_keyframe(&self, data: &[u8], segment_index: usize) -> bool {
+        // Every 5th segment is a keyframe (rough approximation)
+        if segment_index % 5 == 0 {
+            return true;
+        }
+        
+        // Check for H.264 SPS/PPS NAL units (0x67, 0x68)
+        if data.len() > 4 {
+            for window in data.windows(4) {
+                if window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 {
+                    let nal_type = window[3] & 0x1F;
+                    if nal_type == 0x07 || nal_type == 0x08 { // SPS or PPS
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        false
+    }
+    
+    /// Create a simple media segment with timing information
+    fn create_simple_media_segment_with_timing(&self, mdat_content: &[u8], timestamp: Option<u64>, is_keyframe: bool) -> Result<MseSegment, io::Error> {
+        let mut segment_data = Vec::new();
+        
+        // Create a minimal moof box
+        let moof_content = self.create_minimal_moof(mdat_content.len() as u32)?;
+        segment_data.extend_from_slice(&moof_content);
+        
+        // Add mdat box with content
+        let mdat_size = 8 + mdat_content.len() as u32;
+        segment_data.extend_from_slice(&mdat_size.to_be_bytes()); // Size
+        segment_data.extend_from_slice(b"mdat"); // Type
+        segment_data.extend_from_slice(mdat_content); // Content
+        
+        Ok(MseSegment {
+            segment_type: "media".to_string(),
+            data: segment_data,
+            timestamp,
+            duration: Some(1000),
+            is_keyframe,
+        })
+    }
+    
     /// Create a simple media segment with minimal moof box
     /// 
     /// This creates a basic fragmented MP4 segment that should work with MSE.

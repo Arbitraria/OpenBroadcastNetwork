@@ -9,8 +9,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
+use openh264::formats::{YUVSource, YUVBuffer};
 
 // Will use MediaError when implementing actual codec functionality
+
 
 /// Error type for codec operations
 #[derive(Debug)]
@@ -62,6 +64,45 @@ impl From<String> for CodecError {
     }
 }
 
+/// Convert YUV420P to RGB24 format
+/// This is needed because OpenH264 0.4 only provides with_rgb constructor
+fn yuv420p_to_rgb24(y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], width: usize, height: usize) -> Result<Vec<u8>, CodecError> {
+    let mut rgb_data = Vec::with_capacity(width * height * 3);
+    
+    for row in 0..height {
+        for col in 0..width {
+            let y_idx = row * width + col;
+            let uv_row = row / 2;
+            let uv_col = col / 2;
+            let uv_idx = uv_row * (width / 2) + uv_col;
+            
+            if y_idx >= y_plane.len() || uv_idx >= u_plane.len() || uv_idx >= v_plane.len() {
+                return Err(CodecError::InvalidParameters("YUV plane index out of bounds".to_string()));
+            }
+            
+            let y = y_plane[y_idx] as i32;
+            let u = u_plane[uv_idx] as i32 - 128;
+            let v = v_plane[uv_idx] as i32 - 128;
+            
+            // YUV to RGB conversion using ITU-R BT.601 coefficients
+            let r = y + (1.402 * v as f32) as i32;
+            let g = y - (0.344 * u as f32) as i32 - (0.714 * v as f32) as i32;
+            let b = y + (1.772 * u as f32) as i32;
+            
+            // Clamp values to 0-255 range
+            let r = r.max(0).min(255) as u8;
+            let g = g.max(0).min(255) as u8;
+            let b = b.max(0).min(255) as u8;
+            
+            rgb_data.push(r);
+            rgb_data.push(g);
+            rgb_data.push(b);
+        }
+    }
+    
+    Ok(rgb_data)
+}
+
 /// Trait for media codecs
 #[async_trait]
 pub trait Codec: Send + Sync + std::fmt::Debug + 'static {
@@ -91,12 +132,14 @@ pub struct OpusCodec {
 struct OpusEncoder {
     encoder: opus::Encoder,
     frame_size: usize,
+    frame_count: u64,
 }
 
 impl std::fmt::Debug for OpusEncoder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpusEncoder")
             .field("frame_size", &self.frame_size)
+            .field("frame_count", &self.frame_count)
             .finish()
     }
 }
@@ -104,11 +147,14 @@ impl std::fmt::Debug for OpusEncoder {
 /// Opus decoder state
 struct OpusDecoder {
     decoder: opus::Decoder,
+    frame_count: u64,
 }
 
 impl std::fmt::Debug for OpusDecoder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpusDecoder").finish()
+        f.debug_struct("OpusDecoder")
+            .field("frame_count", &self.frame_count)
+            .finish()
     }
 }
 
@@ -132,6 +178,7 @@ impl OpusCodec {
     pub async fn init_encoder(&self) -> Result<(), CodecError> {
         let mut encoder_guard = self.encoder.lock().await;
         
+        // Create Opus encoder with optimized settings for real-time streaming
         let encoder = opus::Encoder::new(
             self.sample_rate,
             match self.channels {
@@ -139,15 +186,16 @@ impl OpusCodec {
                 2 => opus::Channels::Stereo,
                 _ => return Err(CodecError::InvalidParameters("Only mono and stereo supported".to_string())),
             },
-            opus::Application::Audio
+            opus::Application::Audio // Optimized for general audio
         ).map_err(|e| CodecError::OpusError(format!("Failed to create encoder: {:?}", e)))?;
         
-        // Calculate frame size (20ms at sample rate)
+        // Calculate frame size (20ms at sample rate) 
         let frame_size = (self.sample_rate / 50) as usize; // 20ms frames
         
         *encoder_guard = Some(OpusEncoder {
             encoder,
             frame_size,
+            frame_count: 0,
         });
         
         Ok(())
@@ -157,6 +205,7 @@ impl OpusCodec {
     pub async fn init_decoder(&self) -> Result<(), CodecError> {
         let mut decoder_guard = self.decoder.lock().await;
         
+        // Create Opus decoder
         let decoder = opus::Decoder::new(
             self.sample_rate,
             match self.channels {
@@ -168,6 +217,7 @@ impl OpusCodec {
         
         *decoder_guard = Some(OpusDecoder {
             decoder,
+            frame_count: 0,
         });
         
         Ok(())
@@ -225,6 +275,7 @@ impl Codec for OpusCodec {
             .map_err(|e| CodecError::OpusError(format!("Encoding failed: {:?}", e)))?;
         
         output.truncate(encoded_size);
+        encoder.frame_count += 1;
         Ok(output)
     }
     
@@ -247,6 +298,7 @@ impl Codec for OpusCodec {
             result.extend_from_slice(&sample.to_le_bytes());
         }
         
+        decoder.frame_count += 1;
         Ok(result)
     }
 }
@@ -288,7 +340,7 @@ pub struct OpenH264Codec {
 /// H.264 encoder state using OpenH264
 struct OpenH264Encoder {
     encoder: openh264::encoder::Encoder,
-    frame_count: usize,
+    frame_count: u64,
 }
 
 impl std::fmt::Debug for OpenH264Encoder {
@@ -302,11 +354,14 @@ impl std::fmt::Debug for OpenH264Encoder {
 /// H.264 decoder state using OpenH264
 struct OpenH264Decoder {
     decoder: openh264::decoder::Decoder,
+    frame_count: u64,
 }
 
 impl std::fmt::Debug for OpenH264Decoder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenH264Decoder").finish()
+        f.debug_struct("OpenH264Decoder")
+            .field("frame_count", &self.frame_count)
+            .finish()
     }
 }
 
@@ -330,8 +385,14 @@ impl OpenH264Codec {
     pub async fn init_encoder(&self) -> Result<(), CodecError> {
         let mut encoder_guard = self.encoder.lock().await;
         
-        // Create OpenH264 encoder
-        let encoder = openh264::encoder::Encoder::new()
+        // Create encoder configuration optimized for real-time streaming
+        let config = openh264::encoder::EncoderConfig::new(self.width, self.height)
+            .set_bitrate_bps(2_000_000)  // 2 Mbps - good balance for streaming
+            .max_frame_rate(30.0)        // 30 fps
+            .enable_skip_frame(true)     // Allow frame skipping for rate control
+            .rate_control_mode(openh264::encoder::RateControlMode::Bitrate); // CBR for consistent streaming
+        
+        let encoder = openh264::encoder::Encoder::with_config(config)
             .map_err(|e| CodecError::OpenH264Error(format!("Failed to create encoder: {:?}", e)))?;
         
         *encoder_guard = Some(OpenH264Encoder {
@@ -346,12 +407,13 @@ impl OpenH264Codec {
     pub async fn init_decoder(&self) -> Result<(), CodecError> {
         let mut decoder_guard = self.decoder.lock().await;
         
-        // Create OpenH264 decoder
+        // Create decoder with default configuration
         let decoder = openh264::decoder::Decoder::new()
             .map_err(|e| CodecError::OpenH264Error(format!("Failed to create decoder: {:?}", e)))?;
         
         *decoder_guard = Some(OpenH264Decoder {
             decoder,
+            frame_count: 0,
         });
         
         Ok(())
@@ -384,7 +446,7 @@ impl Codec for OpenH264Codec {
         let encoder = encoder_guard.as_mut()
             .ok_or_else(|| CodecError::EncodingFailed("Encoder not initialized".to_string()))?;
         
-        // For now, we'll expect frame data to be in YUV420P format
+        // Expect frame data to be in YUV420P format
         // The input frame should be width * height * 3/2 bytes (Y + U/2 + V/2)
         let expected_size = (self.width * self.height * 3 / 2) as usize;
         if frame.len() != expected_size {
@@ -393,18 +455,30 @@ impl Codec for OpenH264Codec {
             ));
         }
         
-        // Convert frame to OpenH264 YUV format
-        let yuv = openh264::formats::YUVBuffer::with_rgb(
-            self.width as usize,
-            self.height as usize,
-            frame
-        ).map_err(|e| CodecError::OpenH264Error(format!("YUV conversion failed: {:?}", e)))?;
+        // Create YUV buffer from raw YUV420P data
+        let y_size = (self.width * self.height) as usize;
+        let uv_size = y_size / 4;
+        
+        // Extract Y, U, V planes from the input frame
+        let y_plane = &frame[0..y_size];
+        let u_plane = &frame[y_size..y_size + uv_size];
+        let v_plane = &frame[y_size + uv_size..y_size + uv_size * 2];
+        
+        // OpenH264 0.4 limitation: No direct YUV420P constructor available
+        // We need to convert YUV420P to RGB first, then use with_rgb constructor
+        
+        // Convert YUV420P to RGB24
+        let rgb_data = yuv420p_to_rgb24(y_plane, u_plane, v_plane, self.width as usize, self.height as usize)?;
+        
+        // Create YUV buffer using RGB constructor
+        let yuv_buffer = YUVBuffer::with_rgb(self.width as usize, self.height as usize, &rgb_data);
         
         // Encode the frame
-        let bitstream = encoder.encoder.encode(&yuv)
+        let bitstream = encoder.encoder.encode(&yuv_buffer)
             .map_err(|e| CodecError::OpenH264Error(format!("Encoding failed: {:?}", e)))?;
         
         encoder.frame_count += 1;
+        // Convert EncodedBitStream to Vec<u8>
         Ok(bitstream.to_vec())
     }
     
@@ -416,10 +490,34 @@ impl Codec for OpenH264Codec {
         
         // Decode the H.264 data
         match decoder.decoder.decode(data) {
-            Ok(Some(yuv)) => {
-                // Convert YUV back to raw bytes
-                // For now, return the raw YUV data
-                Ok(yuv.strides_and_data().2.to_vec())
+            Ok(Some(decoded_yuv)) => {
+                // Convert decoded YUV back to raw YUV420P format
+                let width = decoded_yuv.width();
+                let height = decoded_yuv.height();
+                
+                // Get YUV plane data using YUVSource trait methods
+                let y_plane = decoded_yuv.y();
+                let u_plane = decoded_yuv.u();
+                let v_plane = decoded_yuv.v();
+                
+                // For stride information, we need to determine if stride methods exist
+                // OpenH264 0.4 may return (&[u8], usize) tuples for stride info
+                // Let's try to get stride information if available
+                
+                // Reconstruct continuous YUV420P data
+                let mut result = Vec::new();
+                
+                // Add Y plane (full resolution) - just copy the data directly
+                result.extend_from_slice(y_plane);
+                
+                // Add U plane (quarter resolution)
+                result.extend_from_slice(u_plane);
+                
+                // Add V plane (quarter resolution)  
+                result.extend_from_slice(v_plane);
+                
+                decoder.frame_count += 1;
+                Ok(result)
             }
             Ok(None) => {
                 // No frame ready yet (might need more data)

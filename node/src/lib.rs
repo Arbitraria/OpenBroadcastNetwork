@@ -1,10 +1,12 @@
 pub mod visualization;
+pub mod streaming_demo;
 
 // Re-export key types
 pub use visualization::{
     format_bytes, format_duration,
     create_stream_table, create_peer_table, visualize_tree
 };
+pub use streaming_demo::{StreamingDemo, StreamingDemoConfig};
 
 /// Get information about the node
 pub fn node_info() -> &'static str {

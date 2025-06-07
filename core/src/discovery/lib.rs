@@ -210,17 +210,96 @@ pub trait Discovery: Send + Sync + 'static {
 // Re-export commonly used types from the modular implementation
 
 
-/// Default discovery implementation (Kademlia)
+/// Configuration for MDNS-based discovery
+#[derive(Debug, Clone)]
+pub struct MdnsDiscoveryConfig {
+    /// Service name for mDNS discovery
+    pub service_name: String,
+    /// Discovery interval in seconds
+    pub discovery_interval: u64,
+    /// TTL for mDNS records
+    pub ttl: u32,
+}
 
+impl Default for MdnsDiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            service_name: "_openbroadcast._tcp.local".to_string(),
+            discovery_interval: 5,
+            ttl: 60,
+        }
+    }
+}
+
+/// Stub discovery implementation that returns "Unsupported" errors
+#[derive(Debug)]
+pub struct UnsupportedDiscovery {
+    running: bool,
+}
+
+impl UnsupportedDiscovery {
+    fn new() -> Self {
+        Self { running: false }
+    }
+}
+
+#[async_trait]
+impl Discovery for UnsupportedDiscovery {
+    async fn start(&mut self) -> Result<(), DiscoveryError> {
+        if self.running {
+            return Err(DiscoveryError::AlreadyRunning);
+        }
+        self.running = true;
+        Ok(())
+    }
+
+    async fn stop(&mut self) -> Result<(), DiscoveryError> {
+        if !self.running {
+            return Err(DiscoveryError::NotRunning);
+        }
+        self.running = false;
+        Ok(())
+    }
+
+    async fn announce(&self, _info: PeerInfo) -> Result<(), DiscoveryError> {
+        Err(DiscoveryError::Other("MDNS discovery not implemented".to_string()))
+    }
+
+    async fn lookup_peer(&self, _peer_id: &[u8]) -> Result<Option<PeerInfo>, DiscoveryError> {
+        Err(DiscoveryError::Other("MDNS discovery not implemented".to_string()))
+    }
+
+    async fn find_peers(&self, _criteria: &str) -> Result<Vec<PeerInfo>, DiscoveryError> {
+        Err(DiscoveryError::Other("MDNS discovery not implemented".to_string()))
+    }
+
+    async fn next_event(&mut self, _timeout: Option<std::time::Duration>) -> Result<Option<DiscoveryEvent>, DiscoveryError> {
+        Err(DiscoveryError::Other("MDNS discovery not implemented".to_string()))
+    }
+
+    fn is_running(&self) -> bool {
+        self.running
+    }
+
+    fn local_peer_id(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    async fn discovered_peers(&self) -> Result<Vec<PeerInfo>, DiscoveryError> {
+        Ok(Vec::new())
+    }
+}
 
 /// Create a new discovery instance with default configuration
+/// Returns a stub implementation that propagates "Unsupported" errors
 pub fn new_discovery() -> impl Discovery {
-    unimplemented!()
+    UnsupportedDiscovery::new()
 }
 
 /// Create a new discovery instance with the given configuration
-pub fn discovery_with_config(config: MdnsDiscoveryConfig) -> impl Discovery {
-    unimplemented!()
+/// Returns a stub implementation that propagates "Unsupported" errors
+pub fn discovery_with_config(_config: MdnsDiscoveryConfig) -> impl Discovery {
+    UnsupportedDiscovery::new()
 }
 
 #[cfg(test)]

@@ -60,6 +60,19 @@ impl Topic {
         self.description = Some(description.into());
         self
     }
+    
+    /// Create a topic for streaming with a given stream ID
+    pub fn stream_topic(stream_id: &str) -> Self {
+        Self::new(
+            format!("stream_{}", stream_id),
+            format!("Stream: {}", stream_id)
+        )
+    }
+    
+    /// Get the topic ID as a string
+    pub fn id(&self) -> &str {
+        &self.id.0
+    }
 }
 
 /// Configuration for a topic

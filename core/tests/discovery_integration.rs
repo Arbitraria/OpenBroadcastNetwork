@@ -22,7 +22,6 @@ use OpenBroadcastNetwork_core::overlay::{
 /// Initialize test logging
 fn init_logging() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("debug")
         .try_init();
 }
 

@@ -231,16 +231,20 @@ impl StreamManager {
     }
 
     /// Start listening for chunks from the P2P network and relay them to web clients
+    #[cfg(feature = "libp2p")]
     async fn start_p2p_chunk_listener(&self, overlay: Arc<Libp2pOverlay>, stream_id: StreamId) -> Result<(), String> {
         info!("Starting P2P chunk listener for stream: {}", stream_id);
         
         let stream_topic = Topic::stream_topic(&stream_id.as_str());
         
-        // Subscribe to the stream topic
-        // TODO: Implement subscribe_to_topic when the overlay API is complete
-        info!("Would subscribe to P2P stream topic: {}", stream_topic.id());
-        
-        info!("Subscribed to P2P stream topic: {}", stream_topic.id());
+        // Subscribe to the stream topic via overlay
+        match overlay.subscribe(&stream_topic.id()).await {
+            Ok(_) => info!("Successfully subscribed to P2P stream topic: {}", stream_topic.id()),
+            Err(e) => {
+                warn!("Failed to subscribe to P2P topic: {} - continuing without P2P", e);
+                return Ok(());
+            }
+        }
         
         // Clone components for the background task
         let chunk_sender = self.chunk_sender.clone();
@@ -251,18 +255,46 @@ impl StreamManager {
             info!("P2P chunk listener task started");
             
             while *is_streaming.lock().await {
-                // TODO: Get messages from overlay.receive_from_topic()
-                // For now, we'll implement a polling approach
-                
-                // Check for new messages on the topic (this is a placeholder implementation)
-                // In a real implementation, we'd need overlay.receive_from_topic() or similar
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                
-                // Placeholder: Convert P2P MediaChunk to StreamChunk and forward
-                // This would normally receive actual MediaChunk data from the overlay
+                // Poll for overlay events with a timeout
+                if let Some(event) = overlay.next_event().await {
+                    match event {
+                        OverlayEvent::DataReceived { stream_id: recv_stream_id, data, .. } => {
+                            if recv_stream_id == stream_id {
+                                // Convert received P2P data to StreamChunk and forward
+                                if let Ok(chunk) = serde_json::from_slice::<StreamChunk>(&data) {
+                                    if chunk_sender.receiver_count() > 0 {
+                                        let _ = chunk_sender.send(chunk);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // No events, wait briefly
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
             }
             
             info!("P2P chunk listener task stopped");
+        });
+        
+        Ok(())
+    }
+    
+    /// Start listening for chunks from the P2P network (disabled when libp2p feature is off)
+    #[cfg(not(feature = "libp2p"))]
+    async fn start_p2p_chunk_listener(&self, _overlay: Arc<Libp2pOverlay>, _stream_id: StreamId) -> Result<(), String> {
+        info!("P2P chunk listener disabled - libp2p feature not enabled");
+        
+        // Log periodically to indicate P2P is disabled
+        let is_streaming = Arc::clone(&self.is_streaming);
+        tokio::spawn(async move {
+            let mut log_interval = tokio::time::interval(Duration::from_secs(5));
+            while *is_streaming.lock().await {
+                log_interval.tick().await;
+                debug!("P2P streaming disabled - running in local-only mode");
+            }
         });
         
         Ok(())
@@ -362,9 +394,15 @@ impl StreamManager {
         Ok(())
     }
 
+    #[cfg(feature = "ffmpeg")]
     async fn _load_video_with_ffmpeg(&self, _ffmpeg_reader: FFmpegVideoReader) -> Result<(), String> {
         // TODO: Re-implement when FFmpeg thread safety issues are resolved
         Err("FFmpeg support temporarily disabled".to_string())
+    }
+    
+    #[cfg(not(feature = "ffmpeg"))]
+    async fn _load_video_with_ffmpeg(&self, _ffmpeg_reader: FFmpegVideoReader) -> Result<(), String> {
+        Err("FFmpeg feature disabled at compile time".to_string())
     }
 
     pub async fn send_video_chunk(&self, data: Vec<u8>, is_keyframe: bool) -> Result<(), String> {

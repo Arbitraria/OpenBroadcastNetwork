@@ -1,6 +1,11 @@
 //! LibP2P-based network implementation
 //!
 //! This module provides the networking foundation for the overlay using libp2p.
+//!
+//! This is an experimental network facade. For production use,
+//! prefer the core overlay network implementation.
+
+#![cfg(feature = "experimental-overlay")]
 
 use libp2p::{
     core::upgrade,

@@ -7,12 +7,12 @@ use crate::discovery::interface::{Discovery, DiscoveryEvent, DiscoveryError, Pee
 use async_trait::async_trait;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use futures::{SinkExt, StreamExt};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::time::{interval, sleep, timeout};
-use tracing::{debug, error, info, warn};
+use tokio::time::{interval, timeout};
+use tracing::{debug, error, warn};
 use libp2p::core::multiaddr::Multiaddr;
 use libp2p::identity::Keypair;
 use libp2p::swarm::{Swarm, SwarmEvent};

@@ -21,6 +21,13 @@ chrono = "0.4"
 rand = "0.8"
 colored = { version = "2.0", optional = true }
 geo-ip = "0.1.0"
+# HTTP server and WebSocket support for web viewer
+axum = { version = "0.6", features = ["ws", "tower-log"] }
+tower = "0.4"
+tower-http = { version = "0.4", features = ["fs", "cors"] }
+hyper = "0.14"
+futures-util = "0.3"
+uuid = { version = "1.0", features = ["v4"] }
 
 [features]
 default = ["visualization"]

@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use std::convert::TryFrom;
-use libp2p::identity;
 
 /// A unique peer identifier
 /// 

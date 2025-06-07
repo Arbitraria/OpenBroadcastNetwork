@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenBroadcastNetwork - Decentralized Streaming Viewer</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: white;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .video-container {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        
+        video {
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: rgba(255,255,255,0.2);
+            border: 2px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+        
+        button:hover {
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .status-item {
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        
+        .status-label {
+            font-weight: bold;
+            color: #A8E6CF;
+        }
+        
+        .stream-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .info-card {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .error {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid rgba(220, 53, 69, 0.4);
+            color: #f8d7da;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+        }
+        
+        .success {
+            background: rgba(40, 167, 69, 0.2);
+            border: 1px solid rgba(40, 167, 69, 0.4);
+            color: #d4edda;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+        }
+
+        .log {
+            background: rgba(0,0,0,0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+        }
+
+        .log-timestamp {
+            color: #A8E6CF;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OpenBroadcastNetwork Streaming Viewer</h1>
+        
+        <div class="status" id="connectionStatus">
+            <div class="status-item">
+                <span class="status-label">Connection:</span> 
+                <span id="connectionState">Disconnected</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">MSE Support:</span> 
+                <span id="mseSupport">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">H.264 Support:</span> 
+                <span id="h264Support">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">AAC Support:</span> 
+                <span id="opusSupport">Checking...</span>
+            </div>
+        </div>
+
+        <div class="video-container">
+            <video id="videoPlayer" controls muted autoplay>
+                Your browser does not support the video element.
+            </video>
+            
+            <div class="controls">
+                <button id="connectBtn" onclick="connectToStream()">Connect to Stream</button>
+                <button id="disconnectBtn" onclick="disconnectFromStream()" disabled>Disconnect</button>
+                <button id="clearBtn" onclick="clearLog()">Clear Log</button>
+            </div>
+        </div>
+
+        <div class="stream-info">
+            <div class="info-card">
+                <h3>Stream Statistics</h3>
+                <div class="status-item">
+                    <span class="status-label">Chunks Received:</span> 
+                    <span id="chunksReceived">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Bytes Received:</span> 
+                    <span id="bytesReceived">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Buffer Length:</span> 
+                    <span id="bufferLength">0s</span>
+                </div>
+            </div>
+
+            <div class="info-card">
+                <h3>Video Info</h3>
+                <div class="status-item">
+                    <span class="status-label">Resolution:</span> 
+                    <span id="videoResolution">Unknown</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Framerate:</span> 
+                    <span id="videoFramerate">Unknown</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Codec:</span> 
+                    <span id="videoCodec">H.264</span>
+                </div>
+            </div>
+
+            <div class="info-card">
+                <h3>Audio Info</h3>
+                <div class="status-item">
+                    <span class="status-label">Sample Rate:</span> 
+                    <span id="audioSampleRate">Unknown</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Channels:</span> 
+                    <span id="audioChannels">Unknown</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Codec:</span> 
+                    <span id="audioCodec">AAC</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="log" id="logContainer">
+            <div class="log-entry">
+                <span class="log-timestamp">[00:00:00]</span>
+                OpenBroadcastNetwork Viewer v3.0 - Fixed Message Sequence
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let mediaSource = null;
+        let videoSourceBuffer = null;
+        let audioSourceBuffer = null;
+        let websocket = null;
+        let connected = false;
+        let connecting = false;
+        let mediaSourceReady = false;
+        let chunksReceived = 0;
+        let bytesReceived = 0;
+        let nextChunkType = null; // Track what type of chunk we're expecting
+        let detectedVideoMimeType = null; // Server-detected video MIME type
+        let detectedAudioMimeType = null; // Server-detected audio MIME type
+        let currentVideoMimeType = null; // Currently used video MIME type
+        let currentAudioMimeType = null; // Currently used audio MIME type
+        let serverCodecReceived = false; // Flag to track if we've received server codec info
+        let initSegmentExpected = false; // Flag to track if init segment is coming
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            checkBrowserSupport();
+            initializeEventListeners();
+            
+            // Auto-connect after 2 seconds for testing
+            setTimeout(() => {
+                logMessage('Auto-connecting for testing...');
+                connectToStream();
+            }, 2000);
+        });
+
+        function checkBrowserSupport() {
+            // Check MSE support
+            if ('MediaSource' in window) {
+                document.getElementById('mseSupport').textContent = 'Supported';
+                document.getElementById('mseSupport').style.color = '#A8E6CF';
+            } else {
+                document.getElementById('mseSupport').textContent = 'Not Supported';
+                document.getElementById('mseSupport').style.color = '#ffcccb';
+                logMessage('ERROR: MediaSource Extensions not supported in this browser', 'error');
+                return;
+            }
+
+            // Check codec support
+            if (MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"')) {
+                document.getElementById('h264Support').textContent = 'Supported';
+                document.getElementById('h264Support').style.color = '#A8E6CF';
+            } else {
+                document.getElementById('h264Support').textContent = 'Not Supported';
+                document.getElementById('h264Support').style.color = '#ffcccb';
+                logMessage('WARNING: H.264 codec may not be supported', 'warning');
+            }
+
+            // Test different AAC codec configurations
+            const aacCodecs = [
+                'audio/mp4; codecs="mp4a.40.2"',  // AAC-LC 
+                'audio/mp4; codecs="mp4a.40.02"', // AAC-LC (alternative)
+                'audio/mp4; codecs="mp4a.69"',    // MP3 in MP4
+                'audio/mp4; codecs="mp4a.6B"',    // MP3 in MP4 (alternative)
+                'audio/mp4'                       // Generic AAC
+            ];
+            
+            let supportedCodec = null;
+            for (const codec of aacCodecs) {
+                if (MediaSource.isTypeSupported(codec)) {
+                    supportedCodec = codec;
+                    logMessage(`Found supported audio codec: ${codec}`);
+                    break;
+                }
+            }
+            
+            if (supportedCodec) {
+                document.getElementById('opusSupport').textContent = 'AAC Supported';
+                document.getElementById('opusSupport').style.color = '#A8E6CF';
+            } else {
+                document.getElementById('opusSupport').textContent = 'AAC Not Supported';
+                document.getElementById('opusSupport').style.color = '#ffcccb';
+                logMessage('WARNING: No AAC codec variant supported', 'warning');
+            }
+        }
+
+        function initializeEventListeners() {
+            const video = document.getElementById('videoPlayer');
+            
+            video.addEventListener('loadstart', () => logMessage('Video loading started'));
+            video.addEventListener('loadedmetadata', () => {
+                logMessage('Video metadata loaded');
+                updateVideoInfo();
+            });
+            video.addEventListener('canplay', () => {
+                logMessage('Video can start playing');
+            });
+            video.addEventListener('error', (e) => {
+                logMessage(`Video error: ${e.message || 'Unknown video error'}`, 'error');
+                if (video.error) {
+                    logMessage(`Video error code: ${video.error.code}, message: ${video.error.message}`, 'error');
+                }
+            });
+            video.addEventListener('abort', () => {
+                logMessage('Video playback aborted', 'warning');
+            });
+            video.addEventListener('emptied', () => {
+                logMessage('Video element emptied - this may close MediaSource', 'warning');
+            });
+            video.addEventListener('stalled', () => {
+                logMessage('Video playback stalled', 'warning');
+            });
+        }
+
+        function connectToStream() {
+            if (connected || connecting) return;
+
+            connecting = true;
+            mediaSourceReady = false;
+            
+            logMessage('Connecting to OpenBroadcastNetwork stream...');
+            
+            // Update button states
+            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('disconnectBtn').disabled = false;
+            
+            // Clean up any existing connections
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+            
+            // Check if we need to create a new MediaSource
+            let needNewMediaSource = true;
+            
+            if (mediaSource) {
+                try {
+                    if (mediaSource.readyState === 'open') {
+                        // MediaSource is working, reuse it
+                        logMessage('Reusing existing open MediaSource');
+                        needNewMediaSource = false;
+                        videoSourceBuffer = null;
+                        audioSourceBuffer = null;
+                    } else {
+                        // MediaSource is closed/ended, clean it up
+                        logMessage(`Cleaning up MediaSource in state: ${mediaSource.readyState}`);
+                        mediaSource = null;
+                        videoSourceBuffer = null;
+                        audioSourceBuffer = null;
+                    }
+                } catch (e) {
+                    console.warn('Failed to check MediaSource state:', e);
+                    mediaSource = null;
+                    videoSourceBuffer = null;
+                    audioSourceBuffer = null;
+                }
+            }
+            
+            // Initialize new MediaSource only if needed
+            if (needNewMediaSource) {
+                mediaSource = new MediaSource();
+            }
+            
+            const video = document.getElementById('videoPlayer');
+            
+            // Set up video source only if we have a new MediaSource
+            if (needNewMediaSource) {
+                // Revoke old object URL if it exists
+                if (video.src && video.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(video.src);
+                }
+                
+                video.src = URL.createObjectURL(mediaSource);
+            }
+
+            // Handle MediaSource setup (whether new or existing)
+            if (mediaSource.readyState === 'open') {
+                // MediaSource is already open, set up buffers immediately
+                setupSourceBuffers();
+            } else {
+                // MediaSource not open yet, wait for sourceopen event
+                mediaSource.addEventListener('sourceopen', setupSourceBuffers);
+            }
+            
+            function setupSourceBuffers() {
+                logMessage('MediaSource opened successfully');
+                
+                try {
+                    // Use detected video MIME type or fallback
+                    const videoMimeType = detectedVideoMimeType || 'video/mp4; codecs="avc1.42E01E"';
+                    
+                    
+                    if (MediaSource.isTypeSupported(videoMimeType)) {
+                        videoSourceBuffer = mediaSource.addSourceBuffer(videoMimeType);
+                        currentVideoMimeType = videoMimeType;
+                        logMessage(`Video source buffer created: ${videoMimeType}`);
+                        
+                        // Add event listener for buffer updates
+                        videoSourceBuffer.addEventListener('updateend', () => {
+                            const video = document.getElementById('videoPlayer');
+                            updateBufferInfo();
+                            
+                            // Auto-start playback when we have enough buffered data
+                            if (video.readyState >= 3 && video.paused && video.buffered.length > 0) {
+                                const bufferedLength = video.buffered.end(0) - video.buffered.start(0);
+                                if (bufferedLength >= 2.0) { // 2 seconds of buffer
+                                    logMessage('Auto-starting playback with sufficient buffer');
+                                    video.play().catch(e => logMessage(`Auto-play failed: ${e.message}`, 'warning'));
+                                }
+                            }
+                        });
+                        
+                        // Wait a moment for source buffer to be fully ready, then connect WebSocket
+                        setTimeout(() => {
+                            if (mediaSource && mediaSource.readyState === 'open' && videoSourceBuffer) {
+                                mediaSourceReady = true;
+                                logMessage('MediaSource and SourceBuffer ready, connecting WebSocket...');
+                                connectWebSocket();
+                            } else {
+                                logMessage('MediaSource not ready, retrying connection...', 'warning');
+                                connecting = false;
+                                mediaSourceReady = false;
+                            }
+                        }, 100); // Small delay to ensure everything is ready
+                    } else {
+                        logMessage(`Video codec not supported: ${videoMimeType}`, 'error');
+                        connecting = false;
+                    }
+
+                    // WAIT for server codec info before creating audio buffer
+                    logMessage(`⏳ Waiting for server codec information before creating audio source buffer...`);
+                    
+                    // Create audio buffer only after we receive server codec info
+                    if (!serverCodecReceived) {
+                        logMessage(`📋 Server codec not received yet - will create audio buffer when stream_info arrives`);
+                        // Don't create audio buffer yet - wait for server codec
+                    } else {
+                        // Use exact server codec (no testing/fallbacks)
+                        const serverAudioCodec = detectedAudioMimeType || 'audio/mp4; codecs="mp4a.40.2"';
+                        logMessage(`🎯 Using server-detected audio codec: ${serverAudioCodec}`);
+                        
+                        if (MediaSource.isTypeSupported(serverAudioCodec)) {
+                            try {
+                                audioSourceBuffer = mediaSource.addSourceBuffer(serverAudioCodec);
+                                currentAudioMimeType = serverAudioCodec;
+                                logMessage(`✅ Audio source buffer created with server codec: ${serverAudioCodec}`, 'success');
+                            } catch (e) {
+                                logMessage(`❌ Failed to create audio buffer with server codec: ${e.message}`, 'error');
+                            }
+                        } else {
+                            logMessage(`❌ Server codec not supported by MediaSource: ${serverAudioCodec}`, 'error');
+                        }
+                    }
+                    
+                    // MediaSource setup complete - wait for WebSocket connection
+                    if (!serverCodecReceived) {
+                        logMessage('MediaSource video buffer ready - waiting for server codec info via WebSocket', 'success');
+                    }
+                    
+                } catch (error) {
+                    logMessage(`Error setting up source buffers: ${error.message}`, 'error');
+                    connecting = false;
+                    mediaSourceReady = false;
+                }
+            }
+
+            // Add event listeners only for new MediaSource instances
+            if (needNewMediaSource) {
+                mediaSource.addEventListener('sourceended', () => {
+                    logMessage('MediaSource ended');
+                    mediaSourceReady = false;
+                });
+
+                mediaSource.addEventListener('sourceclose', () => {
+                    logMessage('MediaSource closed unexpectedly', 'warning');
+                    mediaSourceReady = false;
+                });
+
+                mediaSource.addEventListener('error', (e) => {
+                    logMessage(`MediaSource error: ${e}`, 'error');
+                    mediaSourceReady = false;
+                });
+            }
+        }
+
+        function connectWebSocket() {
+            // Connect to the OpenBroadcastNetwork streaming server
+            // Use the current host to avoid CORS issues
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/stream`;
+            
+            logMessage(`Connecting to WebSocket: ${wsUrl}`);
+            websocket = new WebSocket(wsUrl);
+            
+            websocket.addEventListener('open', () => {
+                connected = true;
+                connecting = false;
+                updateConnectionState('Connected');
+                logMessage('WebSocket connected to streaming server', 'success');
+                
+                // Enable/disable buttons
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+            });
+
+            websocket.addEventListener('message', (event) => {
+                handleStreamData(event.data);
+            });
+
+            websocket.addEventListener('close', () => {
+                connected = false;
+                connecting = false;
+                updateConnectionState('Disconnected');
+                logMessage('WebSocket connection closed');
+                
+                // Enable/disable buttons
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+            });
+
+            websocket.addEventListener('error', (error) => {
+                logMessage(`WebSocket error: ${error}`, 'error');
+                connected = false;
+                connecting = false;
+                updateConnectionState('Error');
+            });
+        }
+
+        function handleStreamData(data) {
+            try {
+                if (data instanceof ArrayBuffer || data instanceof Blob) {
+                    // Handle binary streaming data
+                    console.log('Received binary data:', data.constructor.name, 'size:', data.size || data.byteLength);
+                    
+                    if (data instanceof Blob) {
+                        data.arrayBuffer().then(buffer => {
+                            console.log('Converted Blob to ArrayBuffer:', buffer.byteLength, 'bytes');
+                            processStreamChunk(buffer);
+                        }).catch(error => {
+                            logMessage(`Failed to convert Blob to ArrayBuffer: ${error.message}`, 'error');
+                        });
+                    } else {
+                        console.log('Processing ArrayBuffer directly:', data.byteLength, 'bytes');
+                        processStreamChunk(data);
+                    }
+                } else {
+                    // Handle JSON control messages
+                    console.log('Received text data:', typeof data, 'length:', data.length);
+                    const message = JSON.parse(data);
+                    handleControlMessage(message);
+                }
+            } catch (error) {
+                logMessage(`Error handling stream data: ${error.message}`, 'error');
+            }
+        }
+
+        function processStreamChunk(arrayBuffer) {
+            chunksReceived++;
+            bytesReceived += arrayBuffer.byteLength;
+            
+            // Update statistics
+            document.getElementById('chunksReceived').textContent = chunksReceived;
+            document.getElementById('bytesReceived').textContent = formatBytes(bytesReceived);
+            
+            // Debug logging for MediaSource state and chunk data
+            console.log(`Processing chunk ${chunksReceived}, MediaSource state: ${mediaSource ? mediaSource.readyState : 'null'}, VideoSourceBuffer: ${videoSourceBuffer ? 'exists' : 'null'}`);
+            
+            // Log first few bytes of chunk to understand the data format
+            if (arrayBuffer.byteLength > 8) {
+                const view = new Uint8Array(arrayBuffer, 0, 8);
+                const hexBytes = Array.from(view).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                console.log(`Chunk ${chunksReceived} first 8 bytes: ${hexBytes}`);
+                
+                // Check if this looks like a valid MP4 box
+                if (arrayBuffer.byteLength >= 8) {
+                    const boxSize = new DataView(arrayBuffer, 0, 4).getUint32(0);
+                    const boxType = String.fromCharCode(...new Uint8Array(arrayBuffer, 4, 4));
+                    console.log(`MP4 box: size=${boxSize}, type='${boxType}'`);
+                    
+                    // Check for common MP4 box types
+                    const validBoxTypes = ['ftyp', 'moov', 'moof', 'mdat', 'free', 'skip'];
+                    if (validBoxTypes.includes(boxType)) {
+                        console.log(`Valid MP4 box detected: ${boxType}`);
+                    } else {
+                        console.log(`Unknown/invalid MP4 box type: ${boxType}`);
+                    }
+                }
+            }
+            // Check if MediaSource system is ready
+            if (!mediaSourceReady || !mediaSource || mediaSource.readyState !== 'open') {
+                logMessage(`MediaSource not ready (ready: ${mediaSourceReady}, state: ${mediaSource ? mediaSource.readyState : 'null'}), skipping chunk`, 'warning');
+                return;
+            }
+            
+            if (!videoSourceBuffer || videoSourceBuffer.updating) {
+                logMessage(`VideoSourceBuffer not ready (exists: ${!!videoSourceBuffer}, updating: ${videoSourceBuffer ? videoSourceBuffer.updating : 'N/A'}), skipping chunk`, 'warning');
+                return;
+            }
+            
+            // Check if SourceBuffer is still attached to MediaSource
+            try {
+                if (mediaSource.sourceBuffers.length === 0 || !Array.from(mediaSource.sourceBuffers).includes(videoSourceBuffer)) {
+                    logMessage('SourceBuffer was removed from MediaSource', 'warning');
+                    return;
+                }
+                
+                // Check video element state
+                const video = document.getElementById('videoPlayer');
+                if (video.error) {
+                    logMessage(`Video element error: ${video.error.message}`, 'error');
+                    return;
+                }
+                
+                // Check if the data looks like valid MP4 before appending
+                if (arrayBuffer.byteLength < 8) {
+                    logMessage('Chunk too small to be valid MP4, skipping', 'warning');
+                    return;
+                }
+                
+                // Basic MP4 validation - check for valid box header
+                const view = new DataView(arrayBuffer);
+                const boxSize = view.getUint32(0);
+                const boxType = String.fromCharCode(view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7));
+                
+                // Log first 16 bytes for debugging
+                const firstBytes = [];
+                for (let i = 0; i < Math.min(16, arrayBuffer.byteLength); i++) {
+                    firstBytes.push(view.getUint8(i).toString(16).padStart(2, '0'));
+                }
+                console.log(`First 16 bytes: ${firstBytes.join(' ')}`);
+                
+                logMessage(`Received MP4 box: type='${boxType}', size=${boxSize}, data=${arrayBuffer.byteLength} bytes`);
+                
+                // Check if this looks like an initialization segment (starts with ftyp)
+                if (boxType === 'ftyp' && initSegmentExpected) {
+                    logMessage(`🎉 INITIALIZATION SEGMENT RECEIVED (${formatBytes(arrayBuffer.byteLength)})`, 'success');
+                    logMessage(`📊 Server codec: ${detectedAudioMimeType || 'unknown'}`);
+                    logMessage(`📊 Buffer codec: ${currentAudioMimeType || 'unknown'}`);
+                    
+                    // Reset flag
+                    initSegmentExpected = false;
+                } else if (boxType === 'ftyp') {
+                    logMessage(`📦 Detected MP4 initialization segment (${formatBytes(arrayBuffer.byteLength)})`, 'success');
+                } else if (boxType === 'moof') {
+                    logMessage(`📦 Detected MP4 media segment (${formatBytes(arrayBuffer.byteLength)})`, 'success');
+                }
+                
+                // Common MP4 box types that MSE can handle
+                const validBoxTypes = ['ftyp', 'moov', 'moof', 'mdat', 'free', 'skip'];
+                if (!validBoxTypes.includes(boxType)) {
+                    logMessage(`Unknown MP4 box type '${boxType}', will try to append anyway`, 'warning');
+                }
+                
+                // Determine which buffer to use based on the chunk type
+                if (nextChunkType === 'audio' && audioSourceBuffer) {
+                    // Audio chunk
+                    if (!audioSourceBuffer.updating) {
+                        try {
+                            audioSourceBuffer.appendBuffer(arrayBuffer);
+                            logMessage(`Appended ${formatBytes(arrayBuffer.byteLength)} to audio buffer`);
+                        } catch (error) {
+                            logMessage(`Failed to append audio chunk: ${error.message}`, 'error');
+                        }
+                    } else {
+                        logMessage('Audio buffer not ready for audio chunk', 'warning');
+                    }
+                } else if (nextChunkType === 'audio' && !audioSourceBuffer) {
+                    // Skip audio chunks in video-only mode
+                    logMessage(`Skipping audio chunk (${formatBytes(arrayBuffer.byteLength)}) - video-only mode`, 'warning');
+                } else {
+                    // Video chunk (or default to video for unknown types)
+                    try {
+                        videoSourceBuffer.appendBuffer(arrayBuffer);
+                        logMessage(`Appended ${formatBytes(arrayBuffer.byteLength)} to video buffer (type: ${nextChunkType || 'unknown'})`);
+                        updateBufferInfo();
+                    } catch (error) {
+                        logMessage(`Failed to append video chunk: ${error.message}`, 'error');
+                        
+                        // Provide more specific error information
+                        if (error.name === 'TypeError') {
+                            logMessage('TypeError: Data format not compatible with SourceBuffer', 'error');
+                        } else if (error.name === 'QuotaExceededError') {
+                            logMessage('QuotaExceededError: Buffer quota exceeded', 'error');
+                        } else if (error.message.includes('decode')) {
+                            logMessage('Decode error: MP4 format may be incompatible with MSE', 'error');
+                        }
+                        
+                        // Check MediaSource state after error
+                        logMessage(`MediaSource state after error: ${mediaSource.readyState}`, 'error');
+                    }
+                }
+                
+                // Clear the chunk type after processing
+                nextChunkType = null;
+            } catch (error) {
+                logMessage(`Error appending to video buffer: ${error.message}`, 'error');
+                
+                // Different error handling strategies
+                if (error.message.includes('removed from the parent media source')) {
+                    logMessage('SourceBuffer removed - this is expected during video transitions', 'warning');
+                } else if (error.message.includes('quota exceeded')) {
+                    logMessage('Buffer quota exceeded, clearing old buffers...', 'warning');
+                    try {
+                        // Remove old buffered data to make room
+                        const video = document.getElementById('videoPlayer');
+                        const currentTime = video.currentTime;
+                        if (currentTime > 30) { // Keep 30 seconds of buffer
+                            videoSourceBuffer.remove(0, currentTime - 30);
+                        }
+                    } catch (removeError) {
+                        logMessage(`Failed to remove old buffer data: ${removeError.message}`, 'error');
+                    }
+                } else {
+                    logMessage('Unknown buffer error occurred', 'error');
+                }
+            }
+        }
+
+        function handleControlMessage(message) {
+            switch (message.type) {
+                case 'stream_info':
+                    logMessage('📋 Received stream info from server');
+                    updateStreamInfo(message.data);
+                    
+                    // Capture detected MIME types from server
+                    if (message.data.video) {
+                        document.getElementById('videoCodec').textContent = message.data.video.codec;
+                        if (message.data.video.mime_type) {
+                            detectedVideoMimeType = message.data.video.mime_type;
+                            logMessage(`📺 Server video codec: ${detectedVideoMimeType}`);
+                        }
+                    }
+                    if (message.data.audio) {
+                        document.getElementById('audioCodec').textContent = message.data.audio.codec;
+                        if (message.data.audio.mime_type) {
+                            detectedAudioMimeType = message.data.audio.mime_type;
+                            logMessage(`🎵 Server audio codec: ${detectedAudioMimeType}`);
+                            
+                            // Mark that we've received server codec info
+                            serverCodecReceived = true;
+                            
+                            // Now create audio buffer with exact server codec
+                            createAudioBufferWithServerCodec();
+                        }
+                    }
+                    break;
+                case 'chunk_info':
+                    nextChunkType = message.data.chunk_type;
+                    logMessage(`📦 Chunk info: ${message.data.chunk_type} - ${formatBytes(message.data.size)}`);
+                    
+                    // Mark that initialization segment is expected next
+                    if (message.data.chunk_type === 'initialization') {
+                        initSegmentExpected = true;
+                        logMessage(`🔄 Initialization segment expected next (${formatBytes(message.data.size)})`);
+                    }
+                    break;
+                default:
+                    logMessage(`Unknown control message: ${message.type}`);
+            }
+        }
+
+        function createAudioBufferWithServerCodec() {
+            if (!mediaSource || mediaSource.readyState !== 'open') {
+                logMessage('⚠️ MediaSource not ready for audio buffer creation', 'warning');
+                return;
+            }
+            
+            if (audioSourceBuffer) {
+                logMessage('✅ Audio source buffer already created');
+                return;
+            }
+            
+            const serverAudioCodec = detectedAudioMimeType;
+            logMessage(`🎯 Creating audio buffer with server codec: ${serverAudioCodec}`);
+            
+            if (MediaSource.isTypeSupported(serverAudioCodec)) {
+                try {
+                    audioSourceBuffer = mediaSource.addSourceBuffer(serverAudioCodec);
+                    currentAudioMimeType = serverAudioCodec;
+                    logMessage(`✅ Audio source buffer created successfully with: ${serverAudioCodec}`, 'success');
+                    
+                    // Add event listener for buffer updates
+                    audioSourceBuffer.addEventListener('updateend', () => {
+                        logMessage('🔄 Audio buffer update completed');
+                    });
+                    
+                } catch (e) {
+                    logMessage(`❌ Failed to create audio buffer: ${e.message}`, 'error');
+                }
+            } else {
+                logMessage(`❌ Server audio codec not supported: ${serverAudioCodec}`, 'error');
+            }
+        }
+
+        function updateStreamInfo(info) {
+            if (info.video) {
+                document.getElementById('videoResolution').textContent = `${info.video.width}x${info.video.height}`;
+                document.getElementById('videoFramerate').textContent = `${info.video.fps} fps`;
+            }
+            if (info.audio) {
+                document.getElementById('audioSampleRate').textContent = `${info.audio.sample_rate} Hz`;
+                document.getElementById('audioChannels').textContent = info.audio.channels;
+            }
+        }
+
+        function updateVideoInfo() {
+            const video = document.getElementById('videoPlayer');
+            if (video.videoWidth && video.videoHeight) {
+                document.getElementById('videoResolution').textContent = `${video.videoWidth}x${video.videoHeight}`;
+            }
+        }
+
+        function updateBufferInfo() {
+            const video = document.getElementById('videoPlayer');
+            if (video.buffered.length > 0) {
+                const bufferedLength = video.buffered.end(video.buffered.length - 1) - video.buffered.start(0);
+                document.getElementById('bufferLength').textContent = `${bufferedLength.toFixed(1)}s`;
+                
+                // Log detailed buffer info for debugging
+                if (video.buffered.length > 0) {
+                    const start = video.buffered.start(0);
+                    const end = video.buffered.end(video.buffered.length - 1);
+                    const currentTime = video.currentTime;
+                    const readyState = video.readyState;
+                    
+                    console.log(`Buffer: ${start.toFixed(2)}s - ${end.toFixed(2)}s (${bufferedLength.toFixed(2)}s), Current: ${currentTime.toFixed(2)}s, ReadyState: ${readyState}`);
+                }
+            } else {
+                document.getElementById('bufferLength').textContent = '0s';
+            }
+        }
+
+        function disconnectFromStream() {
+            connected = false;
+            connecting = false;
+            mediaSourceReady = false;
+            
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+            
+            // Clear tracked MIME types for fresh reconnection
+            currentVideoMimeType = null;
+            currentAudioMimeType = null;
+            
+            updateConnectionState('Disconnected');
+            logMessage('Disconnected from stream');
+            
+            // Enable/disable buttons
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+        }
+
+
+        function updateConnectionState(state) {
+            document.getElementById('connectionState').textContent = state;
+            
+            const colors = {
+                'Connected': '#A8E6CF',
+                'Disconnected': '#ffcccb',
+                'Error': '#ffcccb'
+            };
+            
+            document.getElementById('connectionState').style.color = colors[state] || '#ffffff';
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function logMessage(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const timestamp = new Date().toLocaleTimeString();
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            const timestampSpan = document.createElement('span');
+            timestampSpan.className = 'log-timestamp';
+            timestampSpan.textContent = `[${timestamp}]`;
+            
+            const messageSpan = document.createElement('span');
+            messageSpan.textContent = message;
+            
+            // Color coding for different message types
+            switch (type) {
+                case 'error':
+                    messageSpan.style.color = '#ffcccb';
+                    break;
+                case 'warning':
+                    messageSpan.style.color = '#ffeaa7';
+                    break;
+                case 'success':
+                    messageSpan.style.color = '#A8E6CF';
+                    break;
+                default:
+                    messageSpan.style.color = '#ffffff';
+            }
+            
+            logEntry.appendChild(timestampSpan);
+            logEntry.appendChild(messageSpan);
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function clearLog() {
+            const logContainer = document.getElementById('logContainer');
+            logContainer.innerHTML = '<div class="log-entry"><span class="log-timestamp">[' + 
+                new Date().toLocaleTimeString() + ']</span>Log cleared</div>';
+        }
+        
+    </script>
+</body>
+</html>

@@ -57,6 +57,12 @@ pub use peer::{Peer, PeerInfo, PeerRole, PeerConnection, LocalPeerId};
 pub use ::libp2p::PeerId;
 // Re-export our overlay implementation
 pub use crate::overlay::libp2p_impl::Libp2pOverlay;
+
+/// Default overlay implementation (libp2p-based)
+pub type DefaultOverlay = Libp2pOverlay;
+
 pub use relay::{RelayNode, RelayManager, RelayStats};
-// Re-export hybrid overlay types
+
+// Re-export hybrid overlay types (experimental)
+#[cfg(feature = "experimental-overlay")]
 pub use hybrid::{HybridOverlay, HybridOverlayConfig, StreamMetadata, StreamQuality};

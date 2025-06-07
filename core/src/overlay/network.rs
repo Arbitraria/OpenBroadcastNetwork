@@ -17,6 +17,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use futures::StreamExt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Configuration for the libp2p network
 #[derive(Debug, Clone)]
@@ -75,6 +76,13 @@ pub struct NetworkStats {
     pub messages_received: u64,
 }
 
+/// Internal statistics counters
+#[derive(Debug, Default)]
+struct StatsCounters {
+    messages_sent: AtomicU64,
+    messages_received: AtomicU64,
+}
+
 /// A wrapper around libp2p Swarm for our network functionality
 pub struct Network {
     /// The libp2p Swarm
@@ -89,6 +97,8 @@ pub struct Network {
     event_receiver: mpsc::Receiver<NetworkEvent>,
     /// Is the network running
     running: bool,
+    /// Statistics counters
+    stats_counters: StatsCounters,
 }
 
 impl Network {
@@ -149,6 +159,7 @@ impl Network {
             event_sender,
             event_receiver,
             running: false,
+            stats_counters: StatsCounters::default(),
         })
     }
 
@@ -206,6 +217,7 @@ impl Network {
         match self.swarm.behaviour_mut().publish(topic.clone(), data) {
             Ok(message_id) => {
                 debug!("Published message to topic: {:?}", topic);
+                self.stats_counters.messages_sent.fetch_add(1, Ordering::Relaxed);
                 Ok(message_id)
             }
             Err(e) => {
@@ -238,6 +250,7 @@ impl Network {
                                 propagation_source
                             );
                             
+                            self.stats_counters.messages_received.fetch_add(1, Ordering::Relaxed);
                             if let Err(e) = self.event_sender.send(NetworkEvent::MessageReceived(
                                 message.topic,
                                 message.source.unwrap_or(propagation_source),
@@ -304,12 +317,14 @@ impl Network {
     pub async fn stats(&self) -> Result<NetworkStats, Box<dyn Error + Send + Sync>> {
         let connected_peers_count = self.swarm.connected_peers().count();
         let subscribed_topics_count = self.subscribed_topics.len();
+        let messages_sent = self.stats_counters.messages_sent.load(Ordering::Relaxed);
+        let messages_received = self.stats_counters.messages_received.load(Ordering::Relaxed);
         
         Ok(NetworkStats {
             connected_peers_count,
             subscribed_topics_count,
-            messages_sent: 0, // TODO: implement counters
-            messages_received: 0, // TODO: implement counters
+            messages_sent,
+            messages_received,
         })
     }
 } 

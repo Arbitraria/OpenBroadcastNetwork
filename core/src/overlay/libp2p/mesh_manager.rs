@@ -1,6 +1,18 @@
 //! Mesh network management for libp2p overlay
 
-// Placeholders for required imports
+#[cfg(feature = "libp2p")]
 use super::*;
 
-// TODO: Move mesh logic from libp2p_impl.rs here
+/// Re-export mesh functionality from existing modules
+#[cfg(feature = "libp2p")]
+pub use crate::overlay::mesh::*;
+
+/// Stub implementation when libp2p feature is disabled
+#[cfg(not(feature = "libp2p"))]
+pub mod stub {
+    use crate::overlay::interface::OverlayError;
+    
+    pub fn create_mesh_manager() -> Result<(), OverlayError> {
+        Err(OverlayError::ProtocolError("libp2p feature not enabled".to_string()))
+    }
+}

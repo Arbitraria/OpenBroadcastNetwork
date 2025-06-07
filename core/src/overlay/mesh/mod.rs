@@ -10,8 +10,7 @@ pub use mesh::{StreamMesh, MeshStats, MeshNode};
 use crate::overlay::peer::{LocalPeerId, PeerRole};
 use crate::overlay::interface::StreamId;
 use libp2p::PeerId;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::time::Duration;
 
 /// Configuration for the mesh network

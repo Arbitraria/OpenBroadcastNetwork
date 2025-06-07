@@ -36,6 +36,17 @@ sha2 = "0.10"
 # Pure Rust codec implementations for video/audio encoding
 openh264 = "0.4"
 opus = "0.3"
+# MP4 parsing and manipulation  
+mp4parse = "0.17"
+byteorder = "1.4"
+# FFmpeg bindings for proper MP4 generation
+ffmpeg-next = "7.0"
+
+[features]
+default = ["libp2p"]
+libp2p = []
+ffmpeg = []
+experimental-overlay = []
 
 [dev-dependencies]
 tokio-test = "0.4"

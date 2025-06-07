@@ -12,8 +12,6 @@
 //! - Handling NAT traversal and connection disruptions
 //! - Monitoring connection health and quality
 
-use std::fmt;
-use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
 use std::net::SocketAddr;

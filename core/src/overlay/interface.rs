@@ -50,8 +50,6 @@
 
 use crate::overlay::peer::{LocalPeerId, PeerInfo};
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
@@ -113,6 +111,10 @@ pub enum OverlayError {
     /// System is stopping
     #[error("System is stopping")]
     Stopping,
+    
+    /// General error
+    #[error("General error: {0}")]
+    General(String),
     
     /// I/O error
     #[error("I/O error: {0}")]
