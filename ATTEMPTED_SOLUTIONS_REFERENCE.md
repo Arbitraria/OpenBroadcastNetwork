@@ -450,3 +450,44 @@ The solution required **precise understanding** of:
 4. **Bit-level manipulation**: Fixing audioObjectType within AudioSpecificConfig
 
 **Previous attempts failed** because they targeted the wrong part of the ESDS structure. The **correct solution** fixes the right field (AudioSpecificConfig.audioObjectType) while preserving codec string compatibility.
+
+## 🔄 RECENT ATTEMPT - December 7, 2025, 18:30 UTC
+
+### ❌ **Experimental objectTypeIndication Modification** - REVERTED
+
+**What was attempted**: Modified `core/src/media/mp4_parser.rs:1081-1086` to change objectTypeIndication from 0x40 to 0x02 for Chrome compatibility testing.
+
+**Implementation tried**:
+```rust
+if object_type == 0x40 {
+    info!("Found object type 0x40 - MODIFYING to 0x02 for Chrome compatibility");
+    
+    // EXPERIMENTAL: Change objectTypeIndication from 0x40 to 0x02 for Chrome
+    data[j] = 0x02;
+    info!("Modified objectTypeIndication at offset {}: 0x40 -> 0x02", j);
+}
+```
+
+**Results**:
+- ✅ **Code successfully compiled and executed**
+- ✅ **Binary modification confirmed**: ESDS objectTypeIndication changed from 0x40 to 0x02
+- ❌ **Browser compatibility**: Still produced mismatched codec string vs binary content
+- ❌ **RFC compliance**: Violated standard where mp4a.40.X should have objectTypeIndication=0x40
+
+**Why reverted**: 
+1. **Standards violation**: RFC 6381 requires objectTypeIndication=0x40 for mp4a.40.X codec strings
+2. **Wrong approach**: Chrome error "audio object type 0x40 does not match" refers to AudioSpecificConfig, not objectTypeIndication
+3. **Previous solution working**: The correct AudioSpecificConfig fix was already implemented and working
+
+**Lesson learned**: The Chrome error message is misleading - "object type 0x40" refers to the AudioSpecificConfig.audioObjectType field, NOT the ESDS objectTypeIndication field.
+
+**Current status**: Code has been reverted to the correct implementation:
+- **Keep objectTypeIndication=0x40** (for mp4a.40.2 compatibility)  
+- **Fix AudioSpecificConfig.audioObjectType=2** (for AAC-LC profile)
+- **Use standard codec string mp4a.40.2** (Chrome whitelisted)
+
+**File status**: `core/src/media/mp4_parser.rs:1081` now contains correct comment:
+```rust
+info!("Found object type 0x40 - keeping original value for codec string compatibility");
+// DO NOT modify objectTypeIndication - Chrome expects 0x40 to match mp4a.40.2
+```
