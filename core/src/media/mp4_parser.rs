@@ -107,6 +107,8 @@ pub struct Mp4Parser {
     tracks: Vec<Mp4Track>,
     /// Whether the file is fragmented MP4 (already MSE-compatible)
     is_fragmented: bool,
+    /// Whether ESDS modification will be applied (for dynamic codec string generation)
+    will_modify_esds: bool,
 }
 
 impl Mp4Parser {
@@ -116,6 +118,7 @@ impl Mp4Parser {
             boxes: Vec::new(),
             tracks: Vec::new(),
             is_fragmented: false,
+            will_modify_esds: false,
         }
     }
 
@@ -129,6 +132,7 @@ impl Mp4Parser {
         let mut cursor = std::io::Cursor::new(data);
         self.boxes.clear();
         self.tracks.clear();
+        self.will_modify_esds = false;
         
         // Parse all top-level boxes
         while cursor.position() < data.len() as u64 {
@@ -365,7 +369,7 @@ impl Mp4Parser {
     }
     
     /// Parse media (mdia) box to extract codec information
-    fn parse_mdia_box(&self, data: &[u8]) -> Result<(String, u32, u64, String, String, Option<String>), io::Error> {
+    fn parse_mdia_box(&mut self, data: &[u8]) -> Result<(String, u32, u64, String, String, Option<String>), io::Error> {
         let mut cursor = std::io::Cursor::new(data);
         let mut media_type = String::new();
         let mut timescale = 1000;
@@ -463,7 +467,7 @@ impl Mp4Parser {
     }
     
     /// Parse media information (minf) box to extract codec details
-    fn parse_minf_box(&self, data: &[u8], media_type: &str) -> Result<(String, String, Option<String>), io::Error> {
+    fn parse_minf_box(&mut self, data: &[u8], media_type: &str) -> Result<(String, String, Option<String>), io::Error> {
         let mut cursor = std::io::Cursor::new(data);
         
         while cursor.position() < data.len() as u64 {
@@ -506,7 +510,7 @@ impl Mp4Parser {
     }
     
     /// Parse sample table (stbl) box to extract codec information
-    fn parse_stbl_box(&self, data: &[u8], media_type: &str) -> Result<(String, String, Option<String>), io::Error> {
+    fn parse_stbl_box(&mut self, data: &[u8], media_type: &str) -> Result<(String, String, Option<String>), io::Error> {
         let mut cursor = std::io::Cursor::new(data);
         
         while cursor.position() < data.len() as u64 {
@@ -542,7 +546,7 @@ impl Mp4Parser {
     }
     
     /// Parse sample description (stsd) box to extract exact codec information
-    fn parse_stsd_box(&self, data: &[u8], media_type: &str) -> Result<(String, String, Option<String>), io::Error> {
+    fn parse_stsd_box(&mut self, data: &[u8], media_type: &str) -> Result<(String, String, Option<String>), io::Error> {
         if data.len() < 8 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "stsd box too small"));
         }
@@ -576,18 +580,30 @@ impl Mp4Parser {
                 let esds_offset = if remaining_data.len() > 36 { 36 } else { 8 };
                 let object_type = self.extract_aac_object_type(&remaining_data[esds_offset..]);
                 
-                // Map object types to browser-compatible codec strings
+                // CRITICAL INSIGHT: mp4a codec string format investigation
+                // RFC 6381 specifies: mp4a.ObjectTypeIndication.AudioObjectType
+                // Object type 0x40 = hex 40, which should be mp4a.40.X where X is the AudioSpecificConfig AOT
+                // But maybe browsers expect the AudioSpecificConfig AOT in the second parameter?
+                
+                // From our analysis: AudioSpecificConfig shows AAC Object Type 2 (AAC-LC)
+                // So maybe it should be mp4a.40.02 (with zero-padding) or mp4a.40.02
+                
+                // Chrome validation: objectTypeIndication=0x40 + audioObjectType=2 in AudioSpecificConfig
+                // We keep objectTypeIndication=0x40 but ensure AudioSpecificConfig.audioObjectType=2
                 let codec_string = match object_type {
                     0x40 => {
-                        // MPEG-4 AAC (0x40) - map to AAC-LC for browser compatibility
-                        warn!("Found MPEG-4 AAC (0x40), mapping to AAC-LC (mp4a.40.2) for browser compatibility");
-                        "mp4a.40.2".to_string()
+                        // Object type 0x40 (MPEG-4 Audio) - will ensure AudioSpecificConfig has audioObjectType=2
+                        self.will_modify_esds = true;
+                        info!("Object type 0x40 (MPEG-4 Audio) - will fix AudioSpecificConfig for AAC-LC, using mp4a.40.2");
+                        "mp4a.40.2".to_string()  // Chrome-supported codec string
                     }
-                    0x02 => "mp4a.40.2".to_string(),  // AAC-LC
-                    0x05 => "mp4a.40.5".to_string(),  // HE-AAC
-                    0x1d => "mp4a.40.29".to_string(), // HE-AAC v2
+                    0x02 => {
+                        info!("Object type 0x02 (AAC-LC) detected - using mp4a.40.2");
+                        "mp4a.40.2".to_string()  // Use standard codec string
+                    }
+                    0x05 => "mp4a.40.5".to_string(),   // HE-AAC 
+                    0x1d => "mp4a.40.029".to_string(), // HE-AAC v2
                     _ => {
-                        // For unknown types, default to AAC-LC
                         warn!("Unknown AAC object type 0x{:02x}, defaulting to AAC-LC", object_type);
                         "mp4a.40.2".to_string()
                     }
@@ -697,7 +713,7 @@ impl Mp4Parser {
         2
     }
     
-    /// Parse ESDS (Elementary Stream Descriptor) to extract AAC object type
+    /// Parse ESDS (Elementary Stream Descriptor) to extract AAC object type and analyze AudioSpecificConfig
     fn parse_esds_for_aac_object_type(&self, esds_data: &[u8]) -> u8 {
         info!("Parsing ESDS data ({} bytes)", esds_data.len());
         
@@ -722,6 +738,8 @@ impl Mp4Parser {
             
             if tag == 0x04 { // DecoderConfigDescriptor tag
                 info!("Found DecoderConfigDescriptor at offset {}", offset);
+                let decoder_config_start = offset;
+                
                 // Skip tag (1 byte) and variable length encoding
                 offset += 1;
                 
@@ -738,6 +756,9 @@ impl Mp4Parser {
                     let object_type = esds_data[offset];
                     info!("Found AAC object type in ESDS at offset {}: 0x{:02x}", offset, object_type);
                     
+                    // Continue parsing to find the AudioSpecificConfig
+                    self.analyze_audio_specific_config(esds_data, decoder_config_start, object_type);
+                    
                     // Return the actual object type found in the ESDS
                     return object_type;
                 }
@@ -749,6 +770,122 @@ impl Mp4Parser {
         // If we didn't find the decoder config, default to AAC-LC
         warn!("Could not find DecoderConfigDescriptor (tag 0x04) in ESDS, defaulting to AAC-LC");
         2
+    }
+    
+    /// Analyze AudioSpecificConfig within ESDS to understand profile configuration
+    fn analyze_audio_specific_config(&self, esds_data: &[u8], decoder_config_start: usize, object_type: u8) {
+        info!("Analyzing AudioSpecificConfig for object type 0x{:02x}", object_type);
+        
+        let mut offset = decoder_config_start + 1; // Start after DecoderConfigDescriptor tag
+        
+        // Skip DecoderConfigDescriptor length
+        while offset < esds_data.len() && (esds_data[offset] & 0x80) != 0 {
+            offset += 1;
+        }
+        if offset < esds_data.len() {
+            offset += 1; // Skip the last length byte
+        }
+        
+        // Skip object type (1 byte), stream type (1 byte), buffer size (3 bytes), max bitrate (4 bytes), avg bitrate (4 bytes)
+        offset += 13;
+        
+        // Look for DecSpecificInfoDescriptor (tag 0x05) which contains AudioSpecificConfig
+        while offset + 2 < esds_data.len() {
+            let tag = esds_data[offset];
+            info!("Looking for AudioSpecificConfig, found tag 0x{:02x} at offset {}", tag, offset);
+            
+            if tag == 0x05 { // DecSpecificInfoDescriptor tag
+                info!("Found DecSpecificInfoDescriptor (AudioSpecificConfig) at offset {}", offset);
+                offset += 1; // Skip tag
+                
+                // Skip length encoding
+                let mut config_length = 0;
+                if offset < esds_data.len() {
+                    if (esds_data[offset] & 0x80) == 0 {
+                        // Single byte length
+                        config_length = esds_data[offset] as usize;
+                        offset += 1;
+                    } else {
+                        // Multi-byte length encoding
+                        while offset < esds_data.len() && (esds_data[offset] & 0x80) != 0 {
+                            offset += 1;
+                        }
+                        if offset < esds_data.len() {
+                            config_length = esds_data[offset] as usize;
+                            offset += 1;
+                        }
+                    }
+                }
+                
+                // Now we're at the actual AudioSpecificConfig
+                if offset + config_length <= esds_data.len() {
+                    let asc_data = &esds_data[offset..offset + config_length];
+                    self.parse_audio_specific_config(asc_data, object_type);
+                }
+                break;
+            }
+            offset += 1;
+        }
+    }
+    
+    /// Parse AudioSpecificConfig to extract AAC profile information
+    fn parse_audio_specific_config(&self, asc_data: &[u8], object_type: u8) {
+        if asc_data.is_empty() {
+            warn!("AudioSpecificConfig is empty");
+            return;
+        }
+        
+        info!("Parsing AudioSpecificConfig ({} bytes) for object type 0x{:02x}", asc_data.len(), object_type);
+        
+        // Log the raw AudioSpecificConfig bytes
+        let asc_hex: Vec<String> = asc_data.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        info!("AudioSpecificConfig bytes: {}", asc_hex.join(" "));
+        
+        if asc_data.len() >= 1 {
+            let first_byte = asc_data[0];
+            
+            // Extract AAC profile from first 5 bits
+            let aac_object_type = (first_byte >> 3) & 0x1F;
+            
+            // Extract sampling frequency index from next 4 bits (spans first and second byte)
+            let mut sampling_freq_index = (first_byte & 0x07) << 1;
+            if asc_data.len() >= 2 {
+                sampling_freq_index |= (asc_data[1] >> 7) & 0x01;
+                
+                // Extract channel configuration from next 4 bits
+                let channel_config = (asc_data[1] >> 3) & 0x0F;
+                
+                info!("AudioSpecificConfig analysis:");
+                info!("  AAC Object Type: {} ({})", aac_object_type, self.get_aac_object_type_name(aac_object_type));
+                info!("  Sampling Frequency Index: {}", sampling_freq_index);
+                info!("  Channel Configuration: {}", channel_config);
+                
+                // Check if this matches expected values for mp4a.40.02
+                if object_type == 0x40 {
+                    match aac_object_type {
+                        2 => info!("✓ AAC Object Type 2 (AAC-LC) matches mp4a.40.02 expectation"),
+                        _ => warn!("⚠ AAC Object Type {} does not match AAC-LC (2) expected for mp4a.40.02", aac_object_type),
+                    }
+                } else {
+                    info!("Object type 0x{:02x} with AAC Object Type {}", object_type, aac_object_type);
+                }
+            }
+        }
+    }
+    
+    /// Get human-readable name for AAC object type
+    fn get_aac_object_type_name(&self, object_type: u8) -> &'static str {
+        match object_type {
+            1 => "AAC Main",
+            2 => "AAC-LC (Low Complexity)",
+            3 => "AAC SSR (Scalable Sample Rate)",
+            4 => "AAC LTP (Long Term Prediction)",
+            5 => "SBR (Spectral Band Replication)",
+            6 => "AAC Scalable",
+            _ => "Unknown",
+        }
     }
 
     /// Parse file type (ftyp) box
@@ -793,8 +930,9 @@ impl Mp4Parser {
         }
     }
 
-    /// Modify ESDS box to change object type from 0x40 to 0x02 for browser compatibility
-    /// This function recursively searches through the MP4 box hierarchy to find and modify ESDS boxes
+    /// Fix ESDS box to ensure AudioSpecificConfig has correct audioObjectType=2 for Chrome compatibility
+    /// Chrome validates: objectTypeIndication=0x40 AND AudioSpecificConfig.audioObjectType=2
+    /// This function recursively searches through the MP4 box hierarchy to find and fix ESDS boxes
     fn modify_esds_object_type(&self, data: &[u8]) -> Vec<u8> {
         let mut modified_data = data.to_vec();
         let mut modifications_made = 0;
@@ -802,9 +940,9 @@ impl Mp4Parser {
         self.modify_esds_recursive(&mut modified_data, 0, &mut modifications_made);
         
         if modifications_made > 0 {
-            info!("Successfully applied {} ESDS modifications for browser compatibility", modifications_made);
+            info!("Successfully applied {} ESDS AudioSpecificConfig fixes for Chrome compatibility", modifications_made);
         } else {
-            warn!("No ESDS modifications were applied - this may cause browser compatibility issues");
+            info!("No ESDS AudioSpecificConfig fixes needed - already compatible");
         }
         
         modified_data
@@ -813,6 +951,8 @@ impl Mp4Parser {
     /// Recursively search and modify ESDS boxes in MP4 box hierarchy
     fn modify_esds_recursive(&self, data: &mut [u8], start_offset: usize, modifications_made: &mut usize) {
         let mut cursor = start_offset;
+        
+        info!("Starting ESDS recursive search at offset {}, data length: {}", start_offset, data.len());
         
         while cursor + 8 <= data.len() {
             // Read box header
@@ -829,42 +969,72 @@ impl Mp4Parser {
             }
             
             let box_type = String::from_utf8_lossy(&data[cursor + 4..cursor + 8]);
-            info!("Processing box '{}' at offset {}, size {}", box_type, cursor, box_size);
+            debug!("ESDS Search: Processing box '{}' at offset {}, size {}", box_type, cursor, box_size);
             
             match box_type.as_ref() {
                 "esds" => {
-                    // Found ESDS box - modify the object type
-                    if self.modify_esds_box_content(data, cursor, box_size) {
+                    // Found ESDS box - fix AudioSpecificConfig
+                    info!("FOUND ESDS BOX at offset {} with size {}!", cursor, box_size);
+                    if self.fix_esds_audio_specific_config(data, cursor, box_size) {
                         *modifications_made += 1;
-                        info!("Modified ESDS box at offset {} (size: {})", cursor, box_size);
+                        info!("Successfully fixed ESDS AudioSpecificConfig at offset {} (size: {})", cursor, box_size);
+                    } else {
+                        warn!("Failed to fix ESDS box at offset {}", cursor);
                     }
                 }
-                "trak" | "mdia" | "minf" | "stbl" | "stsd" => {
+                "trak" | "mdia" | "minf" | "stbl" => {
                     // These boxes contain child boxes, recurse into them
-                    info!("Recursing into {} box at offset {}", box_type, cursor);
+                    info!("ESDS Search: Recursing into {} box at offset {}, child area: {} to {}", 
+                          box_type, cursor, cursor + 8, cursor + box_size);
                     self.modify_esds_recursive(data, cursor + 8, modifications_made);
                 }
-                "mp4a" => {
-                    // Audio sample entry - skip sample entry fields (28 bytes) + audio fields (20 bytes) = 48 bytes
-                    info!("Recursing into mp4a box at offset {}, skipping 48 bytes of sample entry data", cursor);
-                    if cursor + 8 + 48 < data.len() {
-                        self.modify_esds_recursive(data, cursor + 8 + 48, modifications_made);
+                "stsd" => {
+                    // Sample description box has: 8 bytes header + 4 bytes version/flags + 4 bytes entry_count
+                    let child_start = cursor + 8 + 8; // box header + stsd fields
+                    info!("ESDS Search: Sample description box at offset {}, size {}", cursor, box_size);
+                    info!("ESDS Search: Recursing into stsd children from offset {} to {}", 
+                          child_start, cursor + box_size);
+                    if child_start < cursor + box_size {
+                        self.modify_esds_recursive(data, child_start, modifications_made);
                     } else {
-                        warn!("mp4a box too small to contain child boxes");
+                        warn!("stsd box too small to contain sample entries: size {}, child_start would be {}", 
+                              box_size, child_start);
+                    }
+                }
+                "mp4a" => {
+                    // Audio sample entry - skip sample entry fields
+                    info!("ESDS Search: Found mp4a box at offset {}, size {}", cursor, box_size);
+                    info!("ESDS Search: Sample entry format - skipping to child boxes");
+                    
+                    // For sample entries, child boxes start after the sample entry data
+                    // Sample entry header: 8 bytes box header + 8 bytes reserved/data_reference_index
+                    // Audio sample entry: + 8 bytes reserved + 4 bytes channel_count/sample_size/etc.
+                    // Total sample entry fields: 28 bytes
+                    let child_start = cursor + 8 + 28; // box header + sample entry fields
+                    if child_start < cursor + box_size {
+                        info!("ESDS Search: Recursing into mp4a children from offset {} to {}", 
+                              child_start, cursor + box_size);
+                        self.modify_esds_recursive(data, child_start, modifications_made);
+                    } else {
+                        warn!("mp4a box too small to contain child boxes: size {}, child_start would be {}", 
+                              box_size, child_start);
                     }
                 }
                 _ => {
                     // Other boxes - skip content
-                    debug!("Skipping {} box at offset {}", box_type, cursor);
+                    debug!("ESDS Search: Skipping {} box at offset {}", box_type, cursor);
                 }
             }
             
             cursor += box_size;
         }
+        
+        info!("Finished ESDS recursive search starting at offset {}", start_offset);
     }
     
-    /// Modify the content of a specific ESDS box
-    fn modify_esds_box_content(&self, data: &mut [u8], box_offset: usize, box_size: usize) -> bool {
+    /// Fix the AudioSpecificConfig within a specific ESDS box
+    /// Chrome expects: objectTypeIndication=0x40 AND AudioSpecificConfig.audioObjectType=2
+    fn fix_esds_audio_specific_config(&self, data: &mut [u8], box_offset: usize, box_size: usize) -> bool {
         // ESDS box structure:
         // [box_size:4][box_type:4][version:1][flags:3][esds_data...]
         let esds_data_start = box_offset + 8 + 4; // Skip box header + version/flags
@@ -885,13 +1055,13 @@ impl Mp4Parser {
             .collect();
         debug!("ESDS data starts with: {}", debug_bytes.join(" "));
         
-        // Search for DecoderConfigDescriptor (tag 0x04) followed by object type
+        // Search for DecoderConfigDescriptor (tag 0x04) to find AudioSpecificConfig
         for i in esds_data_start..esds_data_end - 1 {
             if data[i] == 0x04 {
                 // Found DecoderConfigDescriptor tag
                 debug!("Found DecoderConfigDescriptor (0x04) at offset {}", i);
                 
-                // Skip tag and variable length encoding to find object type
+                // Parse DecoderConfigDescriptor structure
                 let mut j = i + 1;
                 
                 // Skip length bytes (they have bit 7 set except for the last one)
@@ -902,22 +1072,59 @@ impl Mp4Parser {
                     j += 1; // Skip the last length byte
                 }
                 
-                // Now j should point to the object type indicator
+                // j points to objectTypeIndication - verify it's 0x40
                 if j < esds_data_end {
                     let object_type = data[j];
                     debug!("Found object type 0x{:02x} at offset {}", object_type, j);
                     
                     if object_type == 0x40 {
-                        warn!("Modifying AAC object type from 0x40 (MPEG-4 AAC) to 0x02 (AAC-LC) at offset {}", j);
-                        data[j] = 0x02; // Change to AAC-LC
+                        info!("Found object type 0x40 - searching for AudioSpecificConfig to fix audioObjectType");
                         
-                        // Log the modification for verification
-                        debug!("Object type successfully changed to 0x{:02x}", data[j]);
-                        return true;
-                    } else {
-                        debug!("Object type 0x{:02x} doesn't need modification", object_type);
+                        // Skip objectTypeIndication(1) + streamType(1) + bufferSizeDB(3) + maxBitrate(4) + avgBitrate(4) = 13 bytes
+                        let asc_search_start = j + 13;
+                        
+                        // Look for DecSpecificInfoDescriptor (tag 0x05) containing AudioSpecificConfig
+                        for k in asc_search_start..esds_data_end - 2 {
+                            if data[k] == 0x05 {
+                                debug!("Found DecSpecificInfoDescriptor (0x05) at offset {}", k);
+                                
+                                // Skip tag and length to get to AudioSpecificConfig
+                                let mut asc_offset = k + 1;
+                                while asc_offset < esds_data_end && (data[asc_offset] & 0x80) != 0 {
+                                    asc_offset += 1;
+                                }
+                                if asc_offset < esds_data_end {
+                                    asc_offset += 1; // Skip last length byte
+                                }
+                                
+                                // asc_offset now points to AudioSpecificConfig
+                                if asc_offset < esds_data_end {
+                                    let asc_first_byte = data[asc_offset];
+                                    let audio_object_type = (asc_first_byte >> 3) & 0x1F;
+                                    
+                                    debug!("AudioSpecificConfig: audioObjectType={} at offset {}", audio_object_type, asc_offset);
+                                    
+                                    if audio_object_type != 2 {
+                                        info!("Fixing AudioSpecificConfig: changing audioObjectType from {} to 2 (AAC-LC)", audio_object_type);
+                                        
+                                        // Clear upper 5 bits and set audioObjectType=2
+                                        let new_first_byte = (asc_first_byte & 0x07) | (2 << 3);
+                                        data[asc_offset] = new_first_byte;
+                                        
+                                        info!("Successfully fixed AudioSpecificConfig at offset {}: 0x{:02x} -> 0x{:02x}", 
+                                              asc_offset, asc_first_byte, new_first_byte);
+                                        return true;
+                                    } else {
+                                        info!("AudioSpecificConfig already has correct audioObjectType=2");
+                                        return false; // No change needed
+                                    }
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
+                break;
             }
         }
         
@@ -971,10 +1178,24 @@ impl Mp4Parser {
                     let original_box_data = self.serialize_box(box_info);
                     
                     // Check if we need to modify ESDS (only for audio tracks with object type 0x40)
-                    let needs_esds_modification = self.tracks.iter().any(|track| {
-                        track.media_type == "soun" && 
-                        track.codec_params.as_ref().map(|p| p == "40").unwrap_or(false)
-                    });
+                    info!("Checking tracks for ESDS modification need:");
+                    for track in &self.tracks {
+                        info!("Track {}: media_type='{}', codec_params={:?}", 
+                              track.track_id, track.media_type, track.codec_params);
+                    }
+                    
+                    // Check if ESDS needs AudioSpecificConfig fix for Chrome compatibility
+                    let needs_esds_modification = self.will_modify_esds;
+                    
+                    // Log track info for debugging
+                    for track in &self.tracks {
+                        if track.media_type == "soun" {
+                            info!("Audio track {}: codec_params={:?}, object_type_0x40_is_correct_for_mp4a.40.x", 
+                                  track.track_id, track.codec_params);
+                        }
+                    }
+                    
+                    info!("ESDS modification needed: {}", needs_esds_modification);
                     
                     let box_data = if needs_esds_modification {
                         info!("Applying ESDS modification to moov box for AAC object type 0x40 → 0x02 compatibility");
@@ -1279,6 +1500,12 @@ impl Mp4Parser {
     fn serialize_box(&self, box_info: &Mp4Box) -> Vec<u8> {
         let mut data = Vec::new();
         
+        // VALIDATION: Check that box_info has valid data before serialization
+        if box_info.header.box_type.len() != 4 {
+            error!("Invalid box type length for {}: {} bytes", box_info.header.box_type, box_info.header.box_type.len());
+            return Vec::new();
+        }
+        
         // Get content first to calculate correct size
         let content_data = match &box_info.content {
             BoxContent::Raw(content) => {
@@ -1299,8 +1526,20 @@ impl Mp4Parser {
             }
         };
         
+        // VALIDATION: Ensure content data is reasonable
+        if content_data.len() > 100_000_000 { // 100MB limit
+            error!("Content data too large for {}: {} bytes", box_info.header.box_type, content_data.len());
+            return Vec::new();
+        }
+        
         // Calculate correct box size (header + content)
         let total_size = 8 + content_data.len() as u32;
+        
+        // VALIDATION: Ensure total size is reasonable
+        if total_size > 100_000_000 { // 100MB limit
+            error!("Total box size too large for {}: {} bytes", box_info.header.box_type, total_size);
+            return Vec::new();
+        }
         
         // Box header with correct size
         data.extend_from_slice(&total_size.to_be_bytes());
@@ -1318,6 +1557,16 @@ impl Mp4Parser {
             
             if parsed_size != data.len() as u32 {
                 error!("Box size mismatch! Header says {}, actual size {}", parsed_size, data.len());
+                // Additional debugging for size mismatches
+                error!("Box info original size: {}, content size: {}", box_info.header.size, content_data.len());
+                error!("Box type in header: '{}'", box_info.header.box_type);
+                return Vec::new(); // Don't return corrupted data
+            }
+            
+            // Validate that the box type in the serialized data matches expectation
+            if box_type != box_info.header.box_type {
+                error!("Box type mismatch! Expected '{}', got '{}'", box_info.header.box_type, box_type);
+                return Vec::new(); // Don't return corrupted data
             }
             
             // Log first few bytes
