@@ -571,20 +571,47 @@
                 return;
             }
             
+            // Handle orphaned initialization chunks (when nextChunkType is lost)
+            if (!initSegmentComplete && initSegmentChunks.length > 0 && expectedInitSize) {
+                const currentSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                const remaining = expectedInitSize - currentSize;
+                
+                // If this chunk would complete our initialization segment, collect it
+                if (arrayBuffer.byteLength <= remaining + 1000) { // Allow some tolerance
+                    logMessage(`🔧 Auto-collecting orphaned init chunk ${initSegmentChunks.length + 1}: ${formatBytes(arrayBuffer.byteLength)}`);
+                    initSegmentChunks.push(new Uint8Array(arrayBuffer));
+                    
+                    const newSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                    logMessage(`🔧 Auto-collection progress: ${formatBytes(newSize)} / ${formatBytes(expectedInitSize)}`);
+                    
+                    if (newSize >= expectedInitSize) {
+                        logMessage('🎉 Auto-collected complete initialization segment, assembling...', 'success');
+                        assembleAndAppendInitSegment();
+                    }
+                    
+                    return;
+                }
+            }
+            
             // Handle initialization_complete message (signals end of chunked init)
             if (nextChunkType === 'initialization_complete') {
-                logMessage('Received initialization_complete signal', 'info');
+                logMessage('Received initialization_complete signal - this should be the last chunk of initialization data', 'info');
                 
-                // Only assemble if we have collected enough chunks
-                const currentSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-                logMessage(`Final init segment check: ${formatBytes(currentSize)} / ${formatBytes(expectedInitSize || 0)}`);
-                
-                if (expectedInitSize && currentSize >= expectedInitSize) {
-                    logMessage('Complete initialization segment collected, assembling...', 'info');
-                    assembleAndAppendInitSegment();
-                } else {
-                    logMessage(`⚠️ Incomplete initialization segment: ${formatBytes(currentSize)} / ${formatBytes(expectedInitSize || 0)}`, 'warning');
-                    logMessage('Waiting for more chunks before assembly...', 'warning');
+                // Treat this as initialization chunk data, not a signal
+                if (arrayBuffer.byteLength > 0) {
+                    initSegmentChunks.push(new Uint8Array(arrayBuffer));
+                    logMessage(`Collected final init chunk ${initSegmentChunks.length}: ${formatBytes(arrayBuffer.byteLength)}`);
+                    
+                    // Check if we've received the complete init segment
+                    const currentSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                    logMessage(`Final init segment check: ${formatBytes(currentSize)} / ${formatBytes(expectedInitSize || 0)}`);
+                    
+                    if (expectedInitSize && currentSize >= expectedInitSize) {
+                        logMessage('Complete initialization segment collected, assembling...', 'info');
+                        assembleAndAppendInitSegment();
+                    } else {
+                        logMessage(`⚠️ Still incomplete: ${formatBytes(currentSize)} / ${formatBytes(expectedInitSize || 0)}`, 'warning');
+                    }
                 }
                 
                 nextChunkType = null;
@@ -695,8 +722,8 @@
                         logMessage('Audio buffer not ready for audio chunk', 'warning');
                     }
                 } else if (nextChunkType === 'audio' && !audioSourceBuffer) {
-                    // Skip audio chunks in video-only mode
-                    logMessage(`Skipping audio chunk (${formatBytes(arrayBuffer.byteLength)}) - video-only mode`, 'warning');
+                    // Skip audio chunks in video-only mode (AC-3 or unsupported audio)
+                    logMessage(`🚫 Skipping audio chunk (${formatBytes(arrayBuffer.byteLength)}) - video-only mode (AC-3 or unsupported audio)`, 'info');
                 } else {
                     // Video chunk (or default to video for unknown types)
                     try {
@@ -825,11 +852,22 @@
                             detectedAudioMimeType = message.data.audio.mime_type;
                             logMessage(`🎵 Server audio codec: ${detectedAudioMimeType}`);
                             
-                            // Mark that we've received server codec info
-                            serverCodecReceived = true;
-                            
-                            // Now create audio buffer with exact server codec
-                            createAudioBufferWithServerCodec();
+                            // Check for AC-3/Dolby Digital audio (not supported by Chrome MSE)
+                            if (detectedAudioMimeType.includes('ac-3') || detectedAudioMimeType.includes('AC-3')) {
+                                logMessage(`⚠️ AC-3/Dolby Digital audio detected - not supported by Chrome MSE`, 'warning');
+                                logMessage(`🎬 Falling back to video-only mode for Chrome compatibility`, 'info');
+                                
+                                // Mark as video-only mode (don't create audio buffer)
+                                serverCodecReceived = true;
+                                detectedAudioMimeType = null; // Clear to prevent audio buffer creation
+                                
+                            } else {
+                                // Mark that we've received server codec info
+                                serverCodecReceived = true;
+                                
+                                // Now create audio buffer with exact server codec
+                                createAudioBufferWithServerCodec();
+                            }
                         }
                     } else {
                         logMessage(`🎵 Video-only stream (no audio track)`, 'info');
@@ -868,6 +906,12 @@
                 return;
             }
             
+            // Check if we're in video-only mode (AC-3 detected or no audio)
+            if (!detectedAudioMimeType) {
+                logMessage('🎬 Video-only mode - skipping audio buffer creation', 'info');
+                return;
+            }
+            
             const serverAudioCodec = detectedAudioMimeType;
             logMessage(`🎯 Creating audio buffer with server codec: ${serverAudioCodec}`);
             
@@ -887,6 +931,8 @@
                 }
             } else {
                 logMessage(`❌ Server audio codec not supported: ${serverAudioCodec}`, 'error');
+                logMessage(`🎬 Falling back to video-only mode`, 'info');
+                detectedAudioMimeType = null; // Clear to prevent further attempts
             }
         }
 
@@ -896,7 +942,13 @@
                 logMessage(`Video codec: ${info.video.mime_type}`, 'info');
             }
             if (info.audio) {
-                logMessage(`Audio codec: ${info.audio.mime_type}`, 'info');
+                if (info.audio.mime_type && (info.audio.mime_type.includes('ac-3') || info.audio.mime_type.includes('AC-3'))) {
+                    logMessage(`Audio codec: ${info.audio.mime_type} (AC-3 - video-only mode)`, 'warning');
+                } else {
+                    logMessage(`Audio codec: ${info.audio.mime_type}`, 'info');
+                }
+            } else {
+                logMessage(`Audio: None (video-only stream)`, 'info');
             }
         }
 
