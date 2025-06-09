@@ -27,6 +27,7 @@
 use std::io::{self, Read, Seek, SeekFrom};
 use std::collections::HashMap;
 use tracing::{debug, info, warn, error};
+use crate::media::fmp4_converter::{FragmentedMp4Converter, Sample};
 
 /// MP4 box header information
 #[derive(Debug, Clone)]
@@ -109,6 +110,8 @@ pub struct Mp4Parser {
     is_fragmented: bool,
     /// Whether ESDS modification will be applied (for dynamic codec string generation)
     will_modify_esds: bool,
+    /// Fragmented MP4 converter for proper MSE segments
+    fmp4_converter: FragmentedMp4Converter,
 }
 
 impl Mp4Parser {
@@ -119,6 +122,7 @@ impl Mp4Parser {
             tracks: Vec::new(),
             is_fragmented: false,
             will_modify_esds: true, // Always enable ESDS modification for Chrome compatibility
+            fmp4_converter: FragmentedMp4Converter::new(),
         }
     }
 
@@ -617,12 +621,18 @@ impl Mp4Parser {
                 // Generic AAC
                 ("AAC".to_string(), "audio/mp4; codecs=\"mp4a.40.2\"".to_string(), Some("2".to_string()))
             }
+            ("soun", "ac-3") => {
+                // AC-3/Dolby Digital audio
+                info!("Detected AC-3 audio codec - using audio/mp4; codecs=\"ac-3\"");
+                ("AC-3".to_string(), "audio/mp4; codecs=\"ac-3\"".to_string(), None)
+            }
             ("vide", _) => {
                 // Generic video
                 ("H.264".to_string(), "video/mp4; codecs=\"avc1.42E01E\"".to_string(), None)
             }
             ("soun", _) => {
-                // Generic audio
+                // Unknown audio - assume AAC for compatibility
+                warn!("Unknown audio format '{}', defaulting to AAC", format);
                 ("AAC".to_string(), "audio/mp4; codecs=\"mp4a.40.2\"".to_string(), None)
             }
             _ => {
@@ -918,7 +928,7 @@ impl Mp4Parser {
     /// 
     /// This is the main function that converts a regular MP4 file into segments
     /// that can be fed to Media Source Extensions in browsers.
-    pub fn generate_mse_segments(&self) -> Result<Vec<MseSegment>, io::Error> {
+    pub fn generate_mse_segments(&mut self) -> Result<Vec<MseSegment>, io::Error> {
         info!("Generating MSE segments from MP4 data");
         
         if self.is_fragmented {
@@ -1385,7 +1395,7 @@ impl Mp4Parser {
     /// 1. ftyp box (file type)
     /// 2. Modified moov box with mvex (movie extends) for MSE compatibility
     /// 3. Proper moof + mdat fragment pairs
-    fn create_fragments_from_regular_mp4(&self) -> Result<Vec<MseSegment>, io::Error> {
+    fn create_fragments_from_regular_mp4(&mut self) -> Result<Vec<MseSegment>, io::Error> {
         info!("Converting regular MP4 to MSE-compatible fragmented format");
         
         let mut segments = Vec::new();
@@ -1479,25 +1489,25 @@ impl Mp4Parser {
         false
     }
     
-    /// Create a simple media segment with timing information
-    fn create_simple_media_segment_with_timing(&self, mdat_content: &[u8], timestamp: Option<u64>, is_keyframe: bool) -> Result<MseSegment, io::Error> {
-        let mut segment_data = Vec::new();
+    /// Create a proper fMP4 media segment with timing information
+    fn create_simple_media_segment_with_timing(&mut self, mdat_content: &[u8], timestamp: Option<u64>, is_keyframe: bool) -> Result<MseSegment, io::Error> {
+        // Create a sample from the mdat content
+        let duration = 1000; // 1 second default duration
+        let sample = Sample::new(mdat_content.to_vec(), duration, is_keyframe);
         
-        // Create a minimal moof box
-        let moof_content = self.create_minimal_moof(mdat_content.len() as u32)?;
-        segment_data.extend_from_slice(&moof_content);
+        // Use the proper fMP4 converter to create the segment
+        let track_id = 1; // Default video track
+        let timescale = 1000; // 1ms timescale
+        let fragment_data = self.fmp4_converter.create_fragment(&[sample], track_id, timescale)?;
         
-        // Add mdat box with content
-        let mdat_size = 8 + mdat_content.len() as u32;
-        segment_data.extend_from_slice(&mdat_size.to_be_bytes()); // Size
-        segment_data.extend_from_slice(b"mdat"); // Type
-        segment_data.extend_from_slice(mdat_content); // Content
+        info!("Created proper fMP4 segment: {} bytes (was minimal moof: {} bytes)", 
+              fragment_data.len(), mdat_content.len() + 100); // Rough estimate of old size
         
         Ok(MseSegment {
             segment_type: "media".to_string(),
-            data: segment_data,
+            data: fragment_data,
             timestamp,
-            duration: Some(1000),
+            duration: Some(duration as u64),
             is_keyframe,
         })
     }

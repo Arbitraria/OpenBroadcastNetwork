@@ -303,20 +303,22 @@
                 this.log(`Video codec supported: ${videoSupported}`, videoSupported ? 'success' : 'error');
                 this.log(`Audio codec supported: ${audioSupported}`, audioSupported ? 'success' : 'error');
                 
-                // Browser-specific codec handling
+                // Browser-specific codec handling with fallback logic
                 let mimeType;
                 const videoParts = streamInfo.video.mime_type.match(/codecs="([^"]+)"/)?.[1] || 'avc1.42E01E';
                 const audioParts = streamInfo.audio.mime_type.match(/codecs="([^"]+)"/)?.[1] || 'mp4a.40.2';
                 
-                if (this.browserInfo.name === 'Firefox' || this.mode === 'firefox') {
-                    // Firefox prefers specific codec strings
+                // Try combined video+audio first
+                if (videoSupported && audioSupported) {
                     mimeType = `video/mp4; codecs="${videoParts}, ${audioParts}"`;
+                    this.log(`Using combined video+audio: ${mimeType}`, 'info');
+                } else if (videoSupported && !audioSupported) {
+                    // Fallback to video-only when audio codec unsupported
+                    mimeType = `video/mp4; codecs="${videoParts}"`;
+                    this.log(`Using video-only (audio codec unsupported): ${mimeType}`, 'warning');
                 } else {
-                    // Chrome/Safari
-                    mimeType = `video/mp4; codecs="${videoParts}, ${audioParts}"`;
+                    throw new Error(`Video codec not supported: ${streamInfo.video.mime_type}`);
                 }
-                
-                this.log(`Using mime type: ${mimeType}`, 'info');
                 
                 try {
                     if (!MediaSource.isTypeSupported(mimeType)) {
@@ -356,6 +358,7 @@
                 if (chunk_type === 'initialization') {
                     this.log(`Initialization segment incoming: ${size} bytes`, 'info');
                     this.initSegmentChunks = [];
+                    this.expectedInitSize = size;
                 } else if (chunk_type.startsWith('initialization_chunk_')) {
                     this.log(`Init chunk ${chunk_type}: ${size} bytes`, 'info');
                 } else if (chunk_type === 'initialization_complete') {
@@ -375,6 +378,13 @@
                 // Check if this is part of chunked initialization
                 if (this.initSegmentChunks !== null && this.segmentsReceived === 0) {
                     this.initSegmentChunks.push(new Uint8Array(data));
+                    
+                    // Check if we've received the complete init segment (non-chunked case)
+                    const currentSize = this.initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                    if (this.expectedInitSize && currentSize === this.expectedInitSize) {
+                        this.log('Complete initialization segment received, appending...', 'info');
+                        this.assembleAndAppendInitSegment();
+                    }
                     return;
                 }
                 
