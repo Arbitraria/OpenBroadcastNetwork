@@ -1633,9 +1633,10 @@ impl Mp4Parser {
         // Add traf (track fragment) - simplified
         let mut traf_content = Vec::new();
         
-        // tfhd (track fragment header)
+        // tfhd (track fragment header) with MSE-compatible flags
         let tfhd_content = vec![
-            0, 0, 0, 0, // version + flags
+            0,          // version
+            0x02, 0x00, 0x38, // flags = 0x020038 (MSE-compatible: default-base-is-moof + other required flags)
             0, 0, 0, 1, // track_id = 1
         ];
         let tfhd_size = 8 + tfhd_content.len() as u32;

@@ -159,6 +159,11 @@
         let currentAudioMimeType = null; // Currently used audio MIME type
         let serverCodecReceived = false; // Flag to track if we've received server codec info
         let initSegmentExpected = false; // Flag to track if init segment is coming
+        
+        // Initialization segment chunking variables
+        let initSegmentChunks = []; // Store chunks for reassembly
+        let expectedInitSize = null; // Expected total size of init segment
+        let initSegmentComplete = false; // Flag to track if init segment is fully received
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
@@ -544,6 +549,48 @@
             document.getElementById('segmentsStat').textContent = chunksReceived;
             document.getElementById('dataStat').textContent = formatBytes(bytesReceived);
             
+            // Debug: Log what type of chunk we're processing
+            logMessage(`Processing chunk ${chunksReceived}: type="${nextChunkType}", size=${formatBytes(arrayBuffer.byteLength)}`, 'info');
+            
+            // Handle initialization segment chunking
+            if (nextChunkType && nextChunkType.startsWith('initialization_chunk_')) {
+                initSegmentChunks.push(new Uint8Array(arrayBuffer));
+                logMessage(`Collected init chunk ${initSegmentChunks.length}: ${formatBytes(arrayBuffer.byteLength)}`);
+                
+                // Check if we've received the complete init segment
+                const currentSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                logMessage(`Init segment progress: ${formatBytes(currentSize)} / ${formatBytes(expectedInitSize || 0)}`);
+                
+                if (expectedInitSize && currentSize >= expectedInitSize) {
+                    logMessage('Complete initialization segment collected, assembling...', 'info');
+                    assembleAndAppendInitSegment();
+                }
+                
+                // Clear chunk type after processing
+                nextChunkType = null;
+                return;
+            }
+            
+            // Handle initialization_complete message (signals end of chunked init)
+            if (nextChunkType === 'initialization_complete') {
+                logMessage('Received initialization_complete signal', 'info');
+                
+                // Only assemble if we have collected enough chunks
+                const currentSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                logMessage(`Final init segment check: ${formatBytes(currentSize)} / ${formatBytes(expectedInitSize || 0)}`);
+                
+                if (expectedInitSize && currentSize >= expectedInitSize) {
+                    logMessage('Complete initialization segment collected, assembling...', 'info');
+                    assembleAndAppendInitSegment();
+                } else {
+                    logMessage(`⚠️ Incomplete initialization segment: ${formatBytes(currentSize)} / ${formatBytes(expectedInitSize || 0)}`, 'warning');
+                    logMessage('Waiting for more chunks before assembly...', 'warning');
+                }
+                
+                nextChunkType = null;
+                return;
+            }
+            
             // Debug logging for MediaSource state and chunk data
             console.log(`Processing chunk ${chunksReceived}, MediaSource state: ${mediaSource ? mediaSource.readyState : 'null'}, VideoSourceBuffer: ${videoSourceBuffer ? 'exists' : 'null'}`);
             
@@ -705,6 +752,59 @@
             }
         }
 
+        function assembleAndAppendInitSegment() {
+            if (initSegmentChunks.length === 0) {
+                logMessage('No initialization chunks to assemble', 'warning');
+                return;
+            }
+            
+            if (initSegmentComplete) {
+                logMessage('Initialization segment already assembled and appended', 'info');
+                return;
+            }
+            
+            // Calculate total size
+            const totalSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            logMessage(`Assembling ${initSegmentChunks.length} chunks into ${formatBytes(totalSize)} initialization segment`, 'info');
+            
+            // Create combined buffer
+            const combinedBuffer = new ArrayBuffer(totalSize);
+            const combinedView = new Uint8Array(combinedBuffer);
+            
+            let offset = 0;
+            for (let chunk of initSegmentChunks) {
+                combinedView.set(chunk, offset);
+                offset += chunk.length;
+            }
+            
+            // Verify the assembled segment looks like valid MP4
+            if (combinedBuffer.byteLength >= 8) {
+                const dataView = new DataView(combinedBuffer);
+                const boxSize = dataView.getUint32(0);
+                const boxType = String.fromCharCode(
+                    dataView.getUint8(4), dataView.getUint8(5),
+                    dataView.getUint8(6), dataView.getUint8(7)
+                );
+                logMessage(`Assembled segment starts with: ${boxType} box (${boxSize} bytes)`, 'info');
+            }
+            
+            // Try to append the assembled initialization segment
+            if (mediaSourceReady && videoSourceBuffer && !videoSourceBuffer.updating) {
+                try {
+                    videoSourceBuffer.appendBuffer(combinedBuffer);
+                    logMessage(`✅ Successfully appended ${formatBytes(totalSize)} initialization segment`, 'success');
+                    initSegmentComplete = true;
+                } catch (error) {
+                    logMessage(`❌ Failed to append assembled initialization segment: ${error.message}`, 'error');
+                }
+            } else {
+                logMessage('VideoSourceBuffer not ready for initialization segment', 'warning');
+            }
+            
+            // Clear chunks after processing
+            initSegmentChunks.length = 0;
+        }
+
         function handleControlMessage(message) {
             logMessage(`📋 Received: ${message.type}`);
             
@@ -743,6 +843,8 @@
                     // Mark that initialization segment is expected next
                     if (message.data.chunk_type === 'initialization') {
                         initSegmentExpected = true;
+                        expectedInitSize = message.data.size;
+                        initSegmentChunks.length = 0; // Reset chunks array
                         logMessage(`🔄 Initialization segment expected next (${formatBytes(message.data.size)})`);
                     } else if (message.data.chunk_type === 'end_of_stream') {
                         logMessage('Received end_of_stream signal - finalizing MediaSource', 'info');
@@ -887,6 +989,9 @@
             detectedAudioMimeType = null;
             serverCodecReceived = false;
             initSegmentExpected = false;
+            initSegmentChunks.length = 0;
+            expectedInitSize = null;
+            initSegmentComplete = false;
             
             updateConnectionState('Disconnected');
             updateStatus('Disconnected', 'warning');
