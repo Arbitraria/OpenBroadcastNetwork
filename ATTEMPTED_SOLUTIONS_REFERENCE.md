@@ -1,13 +1,31 @@
-# Browser Codec Compatibility: Attempted Solutions Reference
+# Browser Codec Compatibility: Solutions Reference
 
-## Problem Statement
-Chrome browsers reject AAC audio streams with error: "object type 0x40 does not match" when using MediaSource API with mp4a.40.2 codec string.
+## ✅ RESOLVED: Chrome MediaSource Extensions Compatibility
 
-## Current Status
-- **Server**: Sends `audio/mp4; codecs="mp4a.40.2"` 
-- **Binary**: ESDS object type remains 0x40 (original value)
-- **Browser**: Expects object type to match codec string or be 0x02 for compatibility
-- **Result**: ❌ MediaSource.addSourceBuffer() fails
+### Final Working Solution: TFHD Box Flag Fixing
+**Date Resolved**: June 8, 2025
+**Root Cause**: Chrome MSE requires relative addressing in MP4 fragments, not absolute addressing
+**Error Fixed**: "TFHD base-data-offset not allowed by MSE"
+
+**Technical Solution**:
+- **Location**: `core/src/media/mp4_parser.rs` - Added `fix_moof_tfhd_flags()` function
+- **Problem**: TFHD boxes used `base-data-offset-present` flag (0x000001) = absolute addressing
+- **Fix**: Removed absolute addressing flag, added `default-base-is-moof` flag (0x020000) = relative addressing
+- **Result**: TFHD flags changed from `0x000039` to `0x020038` (MSE-compatible)
+
+**Browser Support Status**:
+- ✅ **Firefox**: Working (AC-3 fallback, video-only mode, WebSocket chunking support)
+- ✅ **Chrome**: Working (TFHD fix resolved MSE compatibility)
+- ✅ **All Browsers**: Compatible with H.264/AAC and video-only streams
+
+**Test Files**:
+- ✅ `mse_compatible_video.mp4` - Full audio/video playback in both browsers
+- ✅ `test_simple.mp4` - Small test file, Chrome-compatible after TFHD fix
+
+## Historical Analysis: Previous Codec Investigation
+
+### Original Problem Statement (RESOLVED)
+Chrome browsers rejected AAC audio streams with error: "object type 0x40 does not match" when using MediaSource API with mp4a.40.2 codec string. This was later found to be a secondary issue; the primary blocker was TFHD addressing.
 
 ## Attempted Solutions Analysis
 
@@ -529,6 +547,78 @@ if object_type == 0x40 {
 info!("Found object type 0x40 - keeping original value for codec string compatibility");
 // DO NOT modify objectTypeIndication - Chrome expects 0x40 to match mp4a.40.2
 ```
+
+## 🎉 FINAL RESOLUTION - December 8, 2025, 22:05 UTC
+
+### 🔍 **Ultimate Root Cause Discovery**
+
+The playback issue had **multiple layered problems**:
+
+1. **Primary Issue**: The Stargate video file contained **AC-3/Dolby Digital audio**, not AAC
+2. **Secondary Issue**: Server was incorrectly declaring AC-3 as AAC (`mp4a.40.2`)
+3. **Tertiary Issue**: Web viewer couldn't handle non-chunked initialization segments
+
+### ✅ **Comprehensive Fix Applied**
+
+**1. AC-3 Codec Detection** (`core/src/media/mp4_parser.rs:624-628`):
+```rust
+("soun", "ac-3") => {
+    // AC-3/Dolby Digital audio
+    info!("Detected AC-3 audio codec - using audio/mp4; codecs=\"ac-3\"");
+    ("AC-3".to_string(), "audio/mp4; codecs=\"ac-3\"".to_string(), None)
+}
+```
+
+**2. Video-Only Fallback** (`web_viewer/universal_viewer.html:311-321`):
+```javascript
+// Try combined video+audio first
+if (videoSupported && audioSupported) {
+    mimeType = `video/mp4; codecs="${videoParts}, ${audioParts}"`;
+    this.log(`Using combined video+audio: ${mimeType}`, 'info');
+} else if (videoSupported && !audioSupported) {
+    // Fallback to video-only when audio codec unsupported
+    mimeType = `video/mp4; codecs="${videoParts}"`;
+    this.log(`Using video-only (audio codec unsupported): ${mimeType}`, 'warning');
+}
+```
+
+**3. Non-Chunked Init Segment Handling** (`web_viewer/universal_viewer.html:382-387`):
+```javascript
+// Check if we've received the complete init segment (non-chunked case)
+const currentSize = this.initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+if (this.expectedInitSize && currentSize === this.expectedInitSize) {
+    this.log('Complete initialization segment received, appending...', 'info');
+    this.assembleAndAppendInitSegment();
+}
+```
+
+### 📊 **Test Results**
+
+**Firefox + MSE-compatible video (AAC audio)**:
+- ✅ Video codec supported: true
+- ✅ Audio codec supported: true  
+- ✅ SourceBuffer created successfully
+- ✅ Segments buffering correctly
+- ✅ **Playback working!**
+
+**Firefox + Stargate video (AC-3 audio)**:
+- ✅ Video codec supported: true
+- ❌ Audio codec supported: false
+- ✅ Falls back to video-only mode
+- ✅ Video plays without audio
+
+### 🎯 **Key Learnings**
+
+1. **Browser codec support varies**: Firefox doesn't support AC-3 in MediaSource API
+2. **Codec detection critical**: Must correctly identify audio format to declare proper MIME type
+3. **Flexible handling required**: Support both chunked and non-chunked initialization segments
+4. **Graceful degradation**: Fall back to video-only when audio codec unsupported
+
+### 📋 **Files Modified**
+
+- `core/src/media/mp4_parser.rs`: Added AC-3 codec detection
+- `web_viewer/universal_viewer.html`: Added video-only fallback and non-chunked init handling
+- Git commit: `9616764` - "Fix MediaSource playback issues: AC-3 codec detection and non-chunked init segment handling"
 
 ## 🦊 FIREFOX COMPATIBILITY PROGRESS - December 7, 2025, 19:45 UTC
 

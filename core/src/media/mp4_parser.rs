@@ -3,6 +3,12 @@
 //! This module provides functionality to parse MP4 files and generate Media Source Extensions (MSE)
 //! compatible segments for browser-based video streaming.
 //!
+//! # Overview
+//!
+//! The MP4 parser handles two main tasks:
+//! 1. **Parsing**: Reading MP4 box structure and extracting codec information
+//! 2. **Segmentation**: Converting regular MP4 files to MSE-compatible fragmented format
+//!
 //! # MSE Requirements
 //! 
 //! For MSE to work properly, we need to provide:
@@ -23,6 +29,25 @@
 //! - `moof`: Movie fragment (used in fragmented MP4)
 //! - `traf`: Track fragment
 //! - `trun`: Track run (sample data within fragment)
+//!
+//! # Codec Detection
+//!
+//! The parser detects codecs by examining sample description boxes:
+//! - **Video**: Looks for `avc1` (H.264), `hvc1` (H.265), etc.
+//! - **Audio**: Looks for `mp4a` (AAC), `ac-3` (Dolby Digital), etc.
+//!
+//! # Browser Compatibility
+//!
+//! Different browsers have different codec support:
+//! - **Chrome**: Strict validation, expects objectTypeIndication to match codec string
+//! - **Firefox**: More forgiving, supports wider range of codecs
+//! - **Safari**: Good support for Apple-standard codecs
+//!
+//! # Known Issues
+//!
+//! 1. Chrome rejects AAC with objectTypeIndication 0x40 despite standards compliance
+//! 2. AC-3 audio is not supported in most browser MediaSource implementations
+//! 3. Large initialization segments may need WebSocket chunking
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::collections::HashMap;
@@ -101,21 +126,28 @@ pub struct MseSegment {
 }
 
 /// Main MP4 parser that can extract MSE-compatible segments
+///
+/// # Usage
+/// ```ignore
+/// let mut parser = Mp4Parser::new();
+/// parser.parse(&mp4_data)?;
+/// let segments = parser.generate_mse_segments()?;
+/// ```
 pub struct Mp4Parser {
     /// All boxes found in the MP4 file
     boxes: Vec<Mp4Box>,
-    /// Track information
+    /// Track information extracted from moov box
     tracks: Vec<Mp4Track>,
     /// Whether the file is fragmented MP4 (already MSE-compatible)
     is_fragmented: bool,
-    /// Whether ESDS modification will be applied (for dynamic codec string generation)
+    /// Whether ESDS modification will be applied (for Chrome compatibility)
     will_modify_esds: bool,
     /// Fragmented MP4 converter for proper MSE segments
     fmp4_converter: FragmentedMp4Converter,
 }
 
 impl Mp4Parser {
-    /// Create a new MP4 parser
+    /// Create a new MP4 parser instance
     pub fn new() -> Self {
         Self {
             boxes: Vec::new(),
@@ -550,12 +582,26 @@ impl Mp4Parser {
     }
     
     /// Parse sample description (stsd) box to extract exact codec information
+    ///
+    /// The stsd box contains codec-specific information that browsers need to
+    /// initialize decoders. This includes:
+    /// - Video: Resolution, profile, level (e.g., avc1.42E01E)
+    /// - Audio: Sample rate, channels, object type (e.g., mp4a.40.2)
+    ///
+    /// # Format Detection
+    ///
+    /// Common formats:
+    /// - `avc1`: H.264/AVC video
+    /// - `hvc1`/`hev1`: H.265/HEVC video
+    /// - `mp4a`: AAC audio (requires ESDS parsing)
+    /// - `ac-3`: Dolby Digital audio
+    /// - `ec-3`: Dolby Digital Plus audio
     fn parse_stsd_box(&mut self, data: &[u8], media_type: &str) -> Result<(String, String, Option<String>), io::Error> {
         if data.len() < 8 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "stsd box too small"));
         }
         
-        // Skip version, flags, and entry count (8 bytes)
+        // Skip version (1 byte), flags (3 bytes), and entry count (4 bytes)
         let remaining_data = &data[8..];
         
         if remaining_data.len() < 8 {
@@ -1357,7 +1403,10 @@ impl Mp4Parser {
                self.boxes[i + 1].header.box_type == "mdat" {
                 
                 let mut media_data = Vec::new();
-                media_data.extend_from_slice(&self.serialize_box(&self.boxes[i])); // moof
+                
+                // Fix TFHD flags in moof box for MSE compatibility
+                let fixed_moof_data = self.fix_moof_tfhd_flags(&self.boxes[i])?;
+                media_data.extend_from_slice(&fixed_moof_data); // moof with MSE-compatible TFHD
                 media_data.extend_from_slice(&self.serialize_box(&self.boxes[i + 1])); // mdat
                 
                 let media_data_len = media_data.len();
@@ -1704,6 +1753,161 @@ impl Mp4Parser {
         
         debug!("Created trex box for track {}: {} bytes", track_id, trex_data.len());
         Ok(trex_data)
+    }
+
+    /// Fix TFHD flags in a moof box for MSE compatibility
+    /// 
+    /// Chrome's MSE implementation requires TFHD boxes to use relative addressing
+    /// (default-base-is-moof flag) instead of absolute addressing (base-data-offset-present flag).
+    /// 
+    /// This function modifies TFHD flags from the problematic patterns to MSE-compatible ones:
+    /// - Removes base-data-offset-present flag (0x000001)
+    /// - Sets default-base-is-moof flag (0x020000)
+    /// - Preserves other flags as needed
+    fn fix_moof_tfhd_flags(&self, moof_box: &Mp4Box) -> Result<Vec<u8>, io::Error> {
+        info!("Fixing TFHD flags in moof box for Chrome MSE compatibility");
+        
+        // Get the raw moof data
+        let original_data = match &moof_box.content {
+            BoxContent::Raw(data) => data.clone(),
+            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid moof box content")),
+        };
+        
+        // Create a modified copy
+        let mut fixed_data = original_data.clone();
+        let mut modifications_made = 0;
+        
+        // Search for TFHD boxes within the moof and fix their flags
+        self.fix_tfhd_flags_recursive(&mut fixed_data, 0, &mut modifications_made);
+        
+        if modifications_made > 0 {
+            info!("Successfully fixed {} TFHD boxes for MSE compatibility", modifications_made);
+        } else {
+            info!("No TFHD flag fixes needed - already MSE compatible");
+        }
+        
+        // Reconstruct the moof box with fixed content
+        let moof_size = 8 + fixed_data.len() as u32;
+        let mut moof_data = Vec::new();
+        moof_data.extend_from_slice(&moof_size.to_be_bytes());
+        moof_data.extend_from_slice(b"moof");
+        moof_data.extend_from_slice(&fixed_data);
+        
+        Ok(moof_data)
+    }
+    
+    /// Recursively search and fix TFHD flags in MP4 box hierarchy
+    fn fix_tfhd_flags_recursive(&self, data: &mut [u8], start_offset: usize, modifications_made: &mut usize) {
+        let mut cursor = start_offset;
+        
+        debug!("Starting TFHD flags search at offset {}, data length: {}", start_offset, data.len());
+        
+        while cursor + 8 <= data.len() {
+            // Read box header
+            let box_size = u32::from_be_bytes([
+                data[cursor], 
+                data[cursor + 1],
+                data[cursor + 2], 
+                data[cursor + 3]
+            ]) as usize;
+            
+            if box_size < 8 || cursor + box_size > data.len() {
+                debug!("Invalid box size {} at offset {}, stopping search", box_size, cursor);
+                break;
+            }
+            
+            let box_type = String::from_utf8_lossy(&data[cursor + 4..cursor + 8]);
+            debug!("TFHD Search: Processing box '{}' at offset {}, size {}", box_type, cursor, box_size);
+            
+            match box_type.as_ref() {
+                "tfhd" => {
+                    // Found TFHD box - fix its flags
+                    info!("FOUND TFHD BOX at offset {} with size {}!", cursor, box_size);
+                    if self.fix_single_tfhd_flags(data, cursor, box_size) {
+                        *modifications_made += 1;
+                        info!("Successfully fixed TFHD flags at offset {} (size: {})", cursor, box_size);
+                    } else {
+                        debug!("TFHD flags at offset {} already MSE compatible", cursor);
+                    }
+                }
+                "traf" | "mfhd" => {
+                    // These boxes can contain child boxes, recurse into them
+                    debug!("TFHD Search: Recursing into {} box at offset {}", box_type, cursor);
+                    self.fix_tfhd_flags_recursive(data, cursor + 8, modifications_made);
+                }
+                _ => {
+                    // Other boxes - skip content
+                    debug!("TFHD Search: Skipping {} box at offset {}", box_type, cursor);
+                }
+            }
+            
+            cursor += box_size;
+        }
+        
+        debug!("Finished TFHD flags search starting at offset {}", start_offset);
+    }
+    
+    /// Fix flags in a single TFHD box for MSE compatibility
+    /// 
+    /// Chrome requires TFHD to use relative addressing. This function:
+    /// 1. Removes base-data-offset-present flag (0x000001) if present
+    /// 2. Sets default-base-is-moof flag (0x020000) for relative addressing
+    /// 3. Preserves other useful flags like sample-duration-present, etc.
+    fn fix_single_tfhd_flags(&self, data: &mut [u8], box_offset: usize, box_size: usize) -> bool {
+        // TFHD box structure:
+        // [box_size:4][box_type:4][version:1][flags:3][track_id:4][optional_fields...]
+        
+        if box_size < 16 {
+            warn!("TFHD box too small at offset {}: {} bytes", box_offset, box_size);
+            return false;
+        }
+        
+        let flags_offset = box_offset + 8 + 1; // Skip box header + version
+        
+        if flags_offset + 3 > data.len() {
+            warn!("TFHD flags extend beyond data at offset {}", box_offset);
+            return false;
+        }
+        
+        // Read current flags
+        let current_flags = [data[flags_offset], data[flags_offset + 1], data[flags_offset + 2]];
+        let flags_u32 = u32::from_be_bytes([0, current_flags[0], current_flags[1], current_flags[2]]);
+        
+        debug!("Current TFHD flags at offset {}: {:02x} {:02x} {:02x} (0x{:06x})", 
+               box_offset, current_flags[0], current_flags[1], current_flags[2], flags_u32);
+        
+        // Check for problematic flags
+        let has_base_data_offset = (flags_u32 & 0x000001) != 0;
+        let has_default_base_is_moof = (flags_u32 & 0x020000) != 0;
+        
+        if has_base_data_offset {
+            warn!("TFHD at offset {} has base-data-offset-present flag - this causes Chrome MSE errors!", box_offset);
+        }
+        
+        if has_default_base_is_moof && !has_base_data_offset {
+            debug!("TFHD at offset {} already has correct MSE flags", box_offset);
+            return false; // No modification needed
+        }
+        
+        // Create MSE-compatible flags:
+        // 1. Remove base-data-offset-present (0x000001)
+        // 2. Add default-base-is-moof (0x020000)
+        // 3. Preserve other flags
+        let mut new_flags = flags_u32;
+        new_flags &= !0x000001; // Remove base-data-offset-present
+        new_flags |= 0x020000;  // Add default-base-is-moof
+        
+        // Write the new flags
+        let new_flags_bytes = new_flags.to_be_bytes();
+        data[flags_offset] = new_flags_bytes[1];     // Skip first byte (always 0)
+        data[flags_offset + 1] = new_flags_bytes[2];
+        data[flags_offset + 2] = new_flags_bytes[3];
+        
+        info!("Fixed TFHD flags at offset {}: 0x{:06x} -> 0x{:06x}", box_offset, flags_u32, new_flags);
+        info!("  Removed: base-data-offset-present (absolute addressing)");
+        info!("  Added: default-base-is-moof (relative addressing for MSE)");
+        
+        true
     }
 
     /// Serialize an MP4 box back to binary format

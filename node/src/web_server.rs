@@ -1,3 +1,35 @@
+//! Web Server for OpenBroadcastNetwork Streaming
+//!
+//! This module implements a WebSocket-based streaming server that delivers
+//! video content to web browsers using Media Source Extensions (MSE).
+//!
+//! # Architecture
+//!
+//! The server consists of:
+//! 1. **HTTP Server**: Serves static files (HTML viewers) and handles WebSocket upgrades
+//! 2. **WebSocket Handler**: Manages client connections and streams video segments
+//! 3. **Stream Manager**: Coordinates video file parsing and segment distribution
+//!
+//! # Protocol
+//!
+//! The WebSocket protocol uses a mix of JSON messages and binary data:
+//! - **JSON Messages**: Control messages (stream_info, chunk_info)
+//! - **Binary Data**: Video/audio segments in MP4 format
+//!
+//! # Message Sequence
+//!
+//! 1. Client connects via WebSocket
+//! 2. Server sends `stream_info` with codec information
+//! 3. Server sends `chunk_info` before each segment
+//! 4. Server sends binary segment data
+//! 5. Client assembles and plays video
+//!
+//! # Browser Compatibility
+//!
+//! - **Chrome**: Requires specific AAC encoding parameters
+//! - **Firefox**: More flexible codec support
+//! - **Safari**: Good support for Apple-standard codecs
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -530,6 +562,8 @@ impl WebServer {
 }
 
 /// WebSocket handler for streaming connections
+///
+/// This function upgrades HTTP connections to WebSocket for real-time streaming.
 async fn websocket_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -538,6 +572,23 @@ async fn websocket_handler(
 }
 
 /// Handle individual WebSocket connections
+///
+/// This is the main streaming loop that:
+/// 1. Sends codec information to the client
+/// 2. Sends the initialization segment
+/// 3. Streams media segments in real-time
+///
+/// # Protocol
+///
+/// Messages are sent in a specific order:
+/// 1. `stream_info`: Contains video/audio codec information
+/// 2. `chunk_info`: Metadata about the next chunk
+/// 3. Binary data: The actual MP4 segment
+///
+/// # WebSocket Frame Size Limitation
+///
+/// Firefox has a 1MB WebSocket frame limit, so large segments are
+/// automatically chunked into smaller pieces (see lines 615-700).
 async fn handle_websocket(socket: WebSocket, state: AppState) {
     let client_id = uuid::Uuid::new_v4().to_string();
     info!("New WebSocket client connected: {}", client_id);
@@ -630,8 +681,11 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
             }
         }
         
-        // WebSocket frame size limit is typically 1MB, but our init segment is 4.2MB
-        // We need to chunk it to avoid exceeding frame size limits
+        // WebSocket frame size limit handling
+        // Firefox has a default frame size limit of 1MB (1048576 bytes)
+        // Large initialization segments (e.g., 1.6MB for Stargate video) will cause
+        // WebSocket disconnection with error code 1009 ("message too big")
+        // Solution: Chunk large segments into smaller pieces
         const MAX_CHUNK_SIZE: usize = 512 * 1024; // 512KB chunks to be safe
         
         if init_segment.len() > MAX_CHUNK_SIZE {

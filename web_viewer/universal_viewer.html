@@ -114,7 +114,27 @@
     </div>
 
     <script>
-        // Universal MediaSource viewer with cross-browser compatibility
+        /**
+         * Universal MediaSource viewer with cross-browser compatibility
+         * 
+         * This viewer handles real-time video streaming using MediaSource Extensions (MSE).
+         * 
+         * Key Features:
+         * - Automatic browser detection and codec adaptation
+         * - Fallback to video-only when audio codec unsupported
+         * - Support for both chunked and non-chunked initialization segments
+         * - Real-time statistics and debugging information
+         * - WebSocket-based streaming protocol
+         * 
+         * Protocol Flow:
+         * 1. Connect to WebSocket server
+         * 2. Receive stream_info with codec details
+         * 3. Create SourceBuffer with appropriate codec string
+         * 4. Receive and append initialization segment
+         * 5. Continuously receive and buffer media segments
+         * 
+         * @class UniversalStreamViewer
+         */
         class UniversalStreamViewer {
             constructor() {
                 this.video = document.getElementById('video');
@@ -291,12 +311,23 @@
                 }
             }
             
+            /**
+             * Handle stream information from the server
+             * 
+             * This method determines which codecs to use based on browser support.
+             * If audio codec is not supported (e.g., AC-3 in Firefox), it falls back
+             * to video-only mode.
+             * 
+             * @param {Object} streamInfo - Stream metadata from server
+             * @param {Object} streamInfo.video - Video track information
+             * @param {Object} streamInfo.audio - Audio track information
+             */
             handleStreamInfo(streamInfo) {
                 this.log(`Stream: ${streamInfo.video.width}x${streamInfo.video.height} @ ${streamInfo.video.fps}fps`, 'info');
                 this.log(`Video codec: ${streamInfo.video.mime_type}`, 'info');
                 this.log(`Audio codec: ${streamInfo.audio.mime_type}`, 'info');
                 
-                // Test codec support
+                // Test codec support using MediaSource.isTypeSupported()
                 const videoSupported = MediaSource.isTypeSupported(streamInfo.video.mime_type);
                 const audioSupported = MediaSource.isTypeSupported(streamInfo.audio.mime_type);
                 
@@ -369,6 +400,19 @@
                 }
             }
             
+            /**
+             * Handle binary MP4 segment data
+             * 
+             * This method handles two cases:
+             * 1. Initialization segments (may be chunked or single piece)
+             * 2. Media segments (contain actual video/audio data)
+             * 
+             * For initialization segments, it supports both:
+             * - Single segments (e.g., 2.7KB from pre-fragmented files)
+             * - Chunked segments (e.g., 1.6MB split into 512KB chunks)
+             * 
+             * @param {ArrayBuffer} data - Binary MP4 data
+             */
             handleBinaryData(data) {
                 const size = data.byteLength;
                 this.totalBytesReceived += size;
@@ -380,6 +424,8 @@
                     this.initSegmentChunks.push(new Uint8Array(data));
                     
                     // Check if we've received the complete init segment (non-chunked case)
+                    // This fix was critical for MSE-compatible video files that send
+                    // the init segment as a single piece rather than chunks
                     const currentSize = this.initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
                     if (this.expectedInitSize && currentSize === this.expectedInitSize) {
                         this.log('Complete initialization segment received, appending...', 'info');
@@ -388,7 +434,7 @@
                     return;
                 }
                 
-                // Regular segment
+                // Regular media segment
                 this.segmentsReceived++;
                 this.appendSegment(data);
             }
