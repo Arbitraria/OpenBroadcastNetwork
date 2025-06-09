@@ -644,18 +644,18 @@ impl Mp4Parser {
                     0x40 => {
                         // Object type 0x40 (MPEG-4 Audio) - will ensure AudioSpecificConfig has audioObjectType=2
                         self.will_modify_esds = true;
-                        info!("Object type 0x40 (MPEG-4 Audio) - will fix AudioSpecificConfig for AAC-LC, using mp4a.40.2");
-                        "mp4a.40.2".to_string()  // Chrome-supported codec string
+                        info!("Object type 0x40 (MPEG-4 Audio) - will fix to 0x02, using mp4a.40.02");
+                        "mp4a.40.02".to_string()  // Chrome-compatible codec string for modified ESDS
                     }
                     0x02 => {
-                        info!("Object type 0x02 (AAC-LC) detected - using mp4a.40.2");
-                        "mp4a.40.2".to_string()  // Use standard codec string
+                        info!("Object type 0x02 (AAC-LC) detected - using mp4a.40.02");
+                        "mp4a.40.02".to_string()  // Chrome-compatible codec string
                     }
                     0x05 => "mp4a.40.5".to_string(),   // HE-AAC 
                     0x1d => "mp4a.40.029".to_string(), // HE-AAC v2
                     _ => {
                         warn!("Unknown AAC object type 0x{:02x}, defaulting to AAC-LC", object_type);
-                        "mp4a.40.2".to_string()
+                        "mp4a.40.02".to_string()
                     }
                 };
                 
@@ -1134,10 +1134,12 @@ impl Mp4Parser {
                     debug!("Found object type 0x{:02x} at offset {}", object_type, j);
                     
                     if object_type == 0x40 {
-                        info!("Found object type 0x40 - keeping original value for codec string compatibility");
+                        info!("Found object type 0x40 - CHROME COMPATIBILITY FIX: changing to 0x02");
                         
-                        // DO NOT modify objectTypeIndication - Chrome expects 0x40 to match mp4a.40.2
-                        // The issue is only with the inner AudioSpecificConfig.audioObjectType
+                        // CHROME FIX: Change objectTypeIndication from 0x40 to 0x02
+                        // Chrome rejects 0x40 even when codec string is mp4a.40.2
+                        data[j] = 0x02;
+                        info!("Modified objectTypeIndication at offset {}: 0x40 -> 0x02", j);
                         
                         info!("Searching for AudioSpecificConfig to verify audioObjectType");
                         
@@ -1497,13 +1499,27 @@ impl Mp4Parser {
         
         // Create proper fragmented segments from mdat content
         if !mdat_data.is_empty() {
+            // Get video track timescale for proper timestamp calculation
+            let video_track = self.tracks.iter().find(|t| t.media_type == "vide");
+            let timescale = video_track.map(|t| t.timescale).unwrap_or(1000);
+            
             // Split mdat into smaller chunks for streaming
             let chunk_size = 64 * 1024; // 64KB chunks
             let num_chunks = (mdat_data.len() + chunk_size - 1) / chunk_size;
             
+            info!("Creating {} segments from mdat content using timescale={}", num_chunks, timescale);
+            
             for (chunk_index, chunk) in mdat_data.chunks(chunk_size).enumerate() {
-                let timestamp = Some((chunk_index as u64) * 1000); // 1 second per chunk
+                // Calculate timestamp in timescale units (1 second per chunk in track time units)
+                let timestamp_in_track_units = (chunk_index as u64) * (timescale as u64);
+                // Convert to milliseconds for MSE
+                let timestamp_ms = (timestamp_in_track_units * 1000) / (timescale as u64);
+                let timestamp = Some(timestamp_ms);
+                
                 let is_keyframe = chunk_index == 0 || self.is_likely_keyframe(chunk, chunk_index);
+                
+                info!("Segment {}: timestamp_track_units={}, timestamp_ms={}, keyframe={}", 
+                      chunk_index, timestamp_in_track_units, timestamp_ms, is_keyframe);
                 
                 let media_segment = self.create_simple_media_segment_with_timing(chunk, timestamp, is_keyframe)?;
                 segments.push(media_segment);
@@ -1540,13 +1556,20 @@ impl Mp4Parser {
     
     /// Create a proper fMP4 media segment with timing information
     fn create_simple_media_segment_with_timing(&mut self, mdat_content: &[u8], timestamp: Option<u64>, is_keyframe: bool) -> Result<MseSegment, io::Error> {
-        // Create a sample from the mdat content
-        let duration = 1000; // 1 second default duration
+        // Get the actual video track timescale
+        let video_track = self.tracks.iter().find(|t| t.media_type == "vide");
+        let timescale = video_track.map(|t| t.timescale).unwrap_or(1000);
+        let track_id = video_track.map(|t| t.track_id).unwrap_or(1);
+        
+        // Calculate proper duration based on timescale
+        // For MSE, we want reasonable durations - use 1 second worth of timescale units
+        let duration = timescale; // 1 second duration in track units
         let sample = Sample::new(mdat_content.to_vec(), duration, is_keyframe);
         
+        info!("Creating fMP4 segment: track_id={}, timescale={}, duration={}, size={} bytes, keyframe={}", 
+              track_id, timescale, duration, mdat_content.len(), is_keyframe);
+        
         // Use the proper fMP4 converter to create the segment
-        let track_id = 1; // Default video track
-        let timescale = 1000; // 1ms timescale
         let fragment_data = self.fmp4_converter.create_fragment(&[sample], track_id, timescale)?;
         
         info!("Created proper fMP4 segment: {} bytes (was minimal moof: {} bytes)", 

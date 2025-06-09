@@ -34,8 +34,12 @@ impl FragmentedMp4Converter {
         let mdat = self.create_mdat(samples)?;
         fragment.extend_from_slice(&mdat);
         
-        // Update sequence number for next fragment
+        // Update sequence number and decode time for next fragment
         self.sequence_number += 1;
+        
+        // Update base decode time for proper timestamp continuity
+        let total_duration: u64 = samples.iter().map(|s| s.duration as u64).sum();
+        self.base_media_decode_time += total_duration;
         
         Ok(fragment)
     }

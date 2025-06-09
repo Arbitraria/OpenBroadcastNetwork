@@ -640,9 +640,9 @@ warning: unused variable: `data_size`
     |                                   ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_data_size`
 
 warning: unused variable: `timescale`
-  --> core/src/media/fmp4_converter.rs:92:9
+  --> core/src/media/fmp4_converter.rs:96:9
    |
-92 |         timescale: u32,
+96 |         timescale: u32,
    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timescale`
 
 warning: type `GeoIP` is more private than the item `TopologyConfig::geo_provider`
@@ -841,15 +841,15 @@ warning: method `lookup` is never used
    |            ^^^^^^
 
 warning: methods `create_simple_media_segment` and `create_minimal_moof` are never used
-    --> core/src/media/mp4_parser.rs:1568:8
+    --> core/src/media/mp4_parser.rs:1589:8
      |
 149  | impl Mp4Parser {
      | -------------- methods in this implementation
 ...
-1568 |     fn create_simple_media_segment(&self, mdat_content: &[u8]) -> Result<MseSegment, io::Error> {
+1589 |     fn create_simple_media_segment(&self, mdat_content: &[u8]) -> Result<MseSegment, io::Error> {
      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ...
-1594 |     fn create_minimal_moof(&self, data_size: u32) -> Result<Vec<u8>, io::Error> {
+1615 |     fn create_minimal_moof(&self, data_size: u32) -> Result<Vec<u8>, io::Error> {
      |        ^^^^^^^^^^^^^^^^^^^
 
 warning: field `buffer` is never read
@@ -1498,33 +1498,33 @@ warning: missing documentation for an associated function
    |     ^^^^^^^^^^^^^^^^^^^^
 
 warning: missing documentation for a struct field
-   --> core/src/media/fmp4_converter.rs:321:5
+   --> core/src/media/fmp4_converter.rs:325:5
     |
-321 |     pub data: Vec<u8>,
+325 |     pub data: Vec<u8>,
     |     ^^^^^^^^^^^^^^^^^
 
 warning: missing documentation for a struct field
-   --> core/src/media/fmp4_converter.rs:322:5
+   --> core/src/media/fmp4_converter.rs:326:5
     |
-322 |     pub duration: u32,
+326 |     pub duration: u32,
     |     ^^^^^^^^^^^^^^^^^
 
 warning: missing documentation for a struct field
-   --> core/src/media/fmp4_converter.rs:323:5
+   --> core/src/media/fmp4_converter.rs:327:5
     |
-323 |     pub size: u32,
+327 |     pub size: u32,
     |     ^^^^^^^^^^^^^
 
 warning: missing documentation for a struct field
-   --> core/src/media/fmp4_converter.rs:324:5
+   --> core/src/media/fmp4_converter.rs:328:5
     |
-324 |     pub is_keyframe: bool,
+328 |     pub is_keyframe: bool,
     |     ^^^^^^^^^^^^^^^^^^^^^
 
 warning: missing documentation for an associated function
-   --> core/src/media/fmp4_converter.rs:328:5
+   --> core/src/media/fmp4_converter.rs:332:5
     |
-328 |     pub fn new(data: Vec<u8>, duration: u32, is_keyframe: bool) -> Self {
+332 |     pub fn new(data: Vec<u8>, duration: u32, is_keyframe: bool) -> Self {
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: missing documentation for a module
@@ -1697,6 +1697,7 @@ warning: missing documentation for a function
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: `OpenBroadcastNetwork-node` (lib) generated 7 warnings
+   Compiling OpenBroadcastNetwork-node v0.1.0 (/home/ian/OpenBroadcastNetwork/node)
 warning: unused import: `MseSegment`
   --> node/src/web_server.rs:61:63
    |
@@ -1724,9 +1725,9 @@ warning: unused import: `MediaChunk`
    |                                        ^^^^^^^^^^
 
 warning: unexpected `cfg` condition value: `libp2p`
-   --> node/src/web_server.rs:266:11
+   --> node/src/web_server.rs:320:11
     |
-266 |     #[cfg(feature = "libp2p")]
+320 |     #[cfg(feature = "libp2p")]
     |           ^^^^^^^^^^^^^^^^^^
     |
     = note: expected values for `feature` are: `colored`, `default`, `metrics`, `term-table`, and `visualization`
@@ -1735,9 +1736,9 @@ warning: unexpected `cfg` condition value: `libp2p`
     = note: `#[warn(unexpected_cfgs)]` on by default
 
 warning: unexpected `cfg` condition value: `libp2p`
-   --> node/src/web_server.rs:318:15
+   --> node/src/web_server.rs:372:15
     |
-318 |     #[cfg(not(feature = "libp2p"))]
+372 |     #[cfg(not(feature = "libp2p"))]
     |               ^^^^^^^^^^^^^^^^^^
     |
     = note: expected values for `feature` are: `colored`, `default`, `metrics`, `term-table`, and `visualization`
@@ -1745,9 +1746,9 @@ warning: unexpected `cfg` condition value: `libp2p`
     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
 
 warning: unexpected `cfg` condition value: `ffmpeg`
-   --> node/src/web_server.rs:429:11
+   --> node/src/web_server.rs:483:11
     |
-429 |     #[cfg(feature = "ffmpeg")]
+483 |     #[cfg(feature = "ffmpeg")]
     |           ^^^^^^^^^^^^^^^^^^
     |
     = note: expected values for `feature` are: `colored`, `default`, `metrics`, `term-table`, and `visualization`
@@ -1755,9 +1756,9 @@ warning: unexpected `cfg` condition value: `ffmpeg`
     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
 
 warning: unexpected `cfg` condition value: `ffmpeg`
-   --> node/src/web_server.rs:435:15
+   --> node/src/web_server.rs:489:15
     |
-435 |     #[cfg(not(feature = "ffmpeg"))]
+489 |     #[cfg(not(feature = "ffmpeg"))]
     |               ^^^^^^^^^^^^^^^^^^
     |
     = note: expected values for `feature` are: `colored`, `default`, `metrics`, `term-table`, and `visualization`
@@ -1790,9 +1791,9 @@ help: remove these parentheses
     |
 
 warning: variable does not need to be mutable
-   --> node/src/web_server.rs:352:13
+   --> node/src/web_server.rs:406:13
     |
-352 |         let mut video_reader = VideoReader::open(video_path)
+406 |         let mut video_reader = VideoReader::open(video_path)
     |             ----^^^^^^^^^^^^
     |             |
     |             help: remove this `mut`
@@ -1872,110 +1873,371 @@ warning: missing documentation for the crate
     = note: requested on the command line with `-W missing-docs`
 
 warning: `OpenBroadcastNetwork-node` (bin "relay-node") generated 18 warnings (run `cargo fix --bin "relay-node"` to apply 7 suggestions)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.29s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.49s
      Running `target/debug/relay-node web-viewer --video test_simple.mp4`
-[2m2025-06-09T02:53:09.819774Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Decentralized Streaming Relay Node v0.1.0
-[2m2025-06-09T02:53:09.819837Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Starting web viewer server on 127.0.0.1:8080
-[2m2025-06-09T02:53:09.819986Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Web viewer available at http://127.0.0.1:8080/
-[2m2025-06-09T02:53:09.819995Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m WebSocket streaming endpoint: ws://127.0.0.1:8080/stream
-[2m2025-06-09T02:53:09.820003Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Loading video file: test_simple.mp4
-[2m2025-06-09T02:53:09.820017Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Loading video file: "test_simple.mp4"
-[2m2025-06-09T02:53:09.820025Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Using manual video reader approach
-[2m2025-06-09T02:53:09.820032Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Opening video file: "test_simple.mp4"
-[2m2025-06-09T02:53:09.820077Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Read 32873 bytes from video file
-[2m2025-06-09T02:53:09.820086Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Using simplified video reader - treating file as raw media data
-[2m2025-06-09T02:53:09.820114Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Creating default video track for simplified streaming
-[2m2025-06-09T02:53:09.820135Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Video: 640x480 @ 30.0fps, codec: H.264, bitrate: 1000000 bps
-[2m2025-06-09T02:53:09.820155Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Video track: 640x480 @ 30.00fps, codec: H.264
-[2m2025-06-09T02:53:09.820164Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Using MP4 parser to generate MSE-compatible segments
-[2m2025-06-09T02:53:09.820205Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting MP4 parsing of 32873 bytes
-[2m2025-06-09T02:53:09.820264Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Parsing moov box (734 bytes) for track information
-[2m2025-06-09T02:53:09.820302Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Found sample description: format='avc1', entry_size=148
-[2m2025-06-09T02:53:09.820314Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Detected codec: H.264 -> video/mp4; codecs="avc1.42E01E"
-[2m2025-06-09T02:53:09.820327Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Found track 1: type=vide, codec=H.264, mime=video/mp4; codecs="avc1.42E01E"
-[2m2025-06-09T02:53:09.820337Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished parsing moov box, found 1 tracks
-[2m2025-06-09T02:53:09.820346Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Detected fragmented MP4 file
-[2m2025-06-09T02:53:09.820380Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m MP4 parsing complete. Found 5 boxes, fragmented: true
-[2m2025-06-09T02:53:09.820433Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m MP4 parsing complete: MP4 Summary: 5 boxes, 1 tracks, fragmented: true, box types: [ftyp, moov, moof, mdat, mfra]
-[2m2025-06-09T02:53:09.820442Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Detected video codec: H.264 -> video/mp4; codecs="avc1.42E01E"
-[2m2025-06-09T02:53:09.820466Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Generating MSE segments from MP4 data
-[2m2025-06-09T02:53:09.820507Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Checking tracks for ESDS modification need:
-[2m2025-06-09T02:53:09.820516Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Track 1: media_type='vide', codec_params=Some("42E01E")
-[2m2025-06-09T02:53:09.820529Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS AudioSpecificConfig modification needed: true
-[2m2025-06-09T02:53:09.820536Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Applying ESDS AudioSpecificConfig fix: keeping objectTypeIndication=0x40, ensuring audioObjectType=2
-[2m2025-06-09T02:53:09.820544Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 0, data length: 734
-[2m2025-06-09T02:53:09.820557Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into trak box at offset 108, child area: 116 to 597
-[2m2025-06-09T02:53:09.820563Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 116, data length: 734
-[2m2025-06-09T02:53:09.820570Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into mdia box at offset 208, child area: 216 to 597
-[2m2025-06-09T02:53:09.820582Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 216, data length: 734
-[2m2025-06-09T02:53:09.820590Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into minf box at offset 293, child area: 301 to 597
-[2m2025-06-09T02:53:09.820596Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 301, data length: 734
-[2m2025-06-09T02:53:09.820603Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into stbl box at offset 357, child area: 365 to 597
-[2m2025-06-09T02:53:09.820609Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 365, data length: 734
-[2m2025-06-09T02:53:09.820616Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Sample description box at offset 365, size 164
-[2m2025-06-09T02:53:09.820623Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into stsd children from offset 381 to 529
-[2m2025-06-09T02:53:09.820629Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 381, data length: 734
-[2m2025-06-09T02:53:09.820638Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 381
-[2m2025-06-09T02:53:09.820645Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 365
-[2m2025-06-09T02:53:09.820652Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 301
-[2m2025-06-09T02:53:09.820658Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 216
-[2m2025-06-09T02:53:09.820665Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 116
-[2m2025-06-09T02:53:09.820671Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 0
-[2m2025-06-09T02:53:09.820678Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m No ESDS AudioSpecificConfig fixes needed - already compatible
-[2m2025-06-09T02:53:09.820690Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Creating initialization segment with boxes: ftyp(36 bytes) + moov(742 bytes)
-[2m2025-06-09T02:53:09.820705Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Init segment first 16 bytes: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
-[2m2025-06-09T02:53:09.820713Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Init segment first box: type='ftyp', size=36
-[2m2025-06-09T02:53:09.820722Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Initialization segment validation passed: 2 boxes, 778 bytes
-[2m2025-06-09T02:53:09.820753Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Created initialization segment (778 bytes)
-[2m2025-06-09T02:53:09.820764Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Fixing TFHD flags in moof box for Chrome MSE compatibility
-[2m2025-06-09T02:53:09.820775Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m FOUND TFHD BOX at offset 24 with size 36!
-[2m2025-06-09T02:53:09.820785Z[0m [33m WARN[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m TFHD at offset 24 has base-data-offset-present flag - this causes Chrome MSE errors!
-[2m2025-06-09T02:53:09.820795Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Fixed TFHD flags at offset 24: 0x000039 -> 0x020038
-[2m2025-06-09T02:53:09.820802Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m   Removed: base-data-offset-present (absolute addressing)
-[2m2025-06-09T02:53:09.820809Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m   Added: default-base-is-moof (relative addressing for MSE)
-[2m2025-06-09T02:53:09.820815Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Successfully fixed TFHD flags at offset 24 (size: 36)
-[2m2025-06-09T02:53:09.820823Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Successfully fixed 1 TFHD boxes for MSE compatibility
-[2m2025-06-09T02:53:09.820885Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Generated 2 segments from fragmented MP4
-[2m2025-06-09T02:53:09.820894Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Generated 2 MSE segments
-[2m2025-06-09T02:53:09.820912Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Stored initialization segment (778 bytes) for new clients
-[2m2025-06-09T02:53:09.820923Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Converted 2 MSE segments to MediaSample format
-[2m2025-06-09T02:53:09.820950Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Successfully loaded video file for streaming
-[2m2025-06-09T02:53:09.821158Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Serving static files from: "web_viewer"
-[2m2025-06-09T02:53:09.821186Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Starting web server on http://127.0.0.1:8080
-[2m2025-06-09T02:53:09.821194Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Web viewer available at http://127.0.0.1:8080/
-[2m2025-06-09T02:53:09.821201Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket streaming endpoint: ws://127.0.0.1:8080/stream
-[2m2025-06-09T02:53:11.822303Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Starting streaming session
-[2m2025-06-09T02:53:11.826571Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Starting real video streaming
-[2m2025-06-09T02:53:11.826669Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Streaming 2 samples from real video (will loop continuously)
-[2m2025-06-09T02:53:17.598233Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 3a1199d6-ac9f-4757-8a08-3c0480ee4d9f
-[2m2025-06-09T02:53:17.598310Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No cached audio codec, using fallback: AAC -> audio/mp4; codecs="mp4a.40.2"
-[2m2025-06-09T02:53:17.598331Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final audio codec for stream_info: AAC -> Some("audio/mp4; codecs=\"mp4a.40.2\"")
-[2m2025-06-09T02:53:17.598409Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":{"sample_rate":48000,"channels":2,"codec":"AAC","mime_type":"audio/mp4; codecs=\"mp4a.40.2\""}}}
-[2m2025-06-09T02:53:17.598483Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
-[2m2025-06-09T02:53:17.598507Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 3a1199d6-ac9f-4757-8a08-3c0480ee4d9f (778 bytes)
-[2m2025-06-09T02:53:17.598564Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
-[2m2025-06-09T02:53:17.598605Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
-[2m2025-06-09T02:53:17.598622Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
-[2m2025-06-09T02:53:17.598681Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 3a1199d6-ac9f-4757-8a08-3c0480ee4d9f
-[2m2025-06-09T02:53:17.841145Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #1
-[2m2025-06-09T02:53:17.841294Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #1
-[2m2025-06-09T02:53:17.841315Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #2
-[2m2025-06-09T02:53:17.841370Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #2
-[2m2025-06-09T02:53:17.841387Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #3
-[2m2025-06-09T02:53:17.841441Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #3
-[2m2025-06-09T02:53:17.841456Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #4
-[2m2025-06-09T02:53:17.841534Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #4
-[2m2025-06-09T02:53:17.841551Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #5
-[2m2025-06-09T02:53:17.841625Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #5
-[2m2025-06-09T02:53:17.841642Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #6
-[2m2025-06-09T02:53:17.841708Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #6
-[2m2025-06-09T02:53:17.841725Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #7
-[2m2025-06-09T02:53:17.841809Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #7
-[2m2025-06-09T02:53:17.841831Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #8
-[2m2025-06-09T02:53:17.841909Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #8
-[2m2025-06-09T02:53:17.841926Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #9
-[2m2025-06-09T02:53:17.841999Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #9
-[2m2025-06-09T02:53:17.842016Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #10
-[2m2025-06-09T02:53:17.842081Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #10
-[2m2025-06-09T02:53:17.842099Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Finished streaming real video (completed 10 loops)
-[2m2025-06-09T02:53:41.050517Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 3a1199d6-ac9f-4757-8a08-3c0480ee4d9f disconnected
+[2m2025-06-09T12:06:51.451477Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Decentralized Streaming Relay Node v0.1.0
+[2m2025-06-09T12:06:51.451521Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Starting web viewer server on 127.0.0.1:8080
+[2m2025-06-09T12:06:51.451708Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Web viewer available at http://127.0.0.1:8080/
+[2m2025-06-09T12:06:51.451720Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m WebSocket streaming endpoint: ws://127.0.0.1:8080/stream
+[2m2025-06-09T12:06:51.451728Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Loading video file: test_simple.mp4
+[2m2025-06-09T12:06:51.451760Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Loading video file: "test_simple.mp4"
+[2m2025-06-09T12:06:51.451774Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Using manual video reader approach
+[2m2025-06-09T12:06:51.451786Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Opening video file: "test_simple.mp4"
+[2m2025-06-09T12:06:51.451849Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Read 32873 bytes from video file
+[2m2025-06-09T12:06:51.451860Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Using simplified video reader - treating file as raw media data
+[2m2025-06-09T12:06:51.451884Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Creating default video track for simplified streaming
+[2m2025-06-09T12:06:51.451902Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::video_reader[0m[2m:[0m Video: 640x480 @ 30.0fps, codec: H.264, bitrate: 1000000 bps
+[2m2025-06-09T12:06:51.451930Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Video track: 640x480 @ 30.00fps, codec: H.264
+[2m2025-06-09T12:06:51.451946Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Using MP4 parser to generate MSE-compatible segments
+[2m2025-06-09T12:06:51.451996Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting MP4 parsing of 32873 bytes
+[2m2025-06-09T12:06:51.452072Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Parsing moov box (734 bytes) for track information
+[2m2025-06-09T12:06:51.452115Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Found sample description: format='avc1', entry_size=148
+[2m2025-06-09T12:06:51.452132Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Detected codec: H.264 -> video/mp4; codecs="avc1.42E01E"
+[2m2025-06-09T12:06:51.452151Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Found track 1: type=vide, codec=H.264, mime=video/mp4; codecs="avc1.42E01E"
+[2m2025-06-09T12:06:51.452166Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished parsing moov box, found 1 tracks
+[2m2025-06-09T12:06:51.452180Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Detected fragmented MP4 file
+[2m2025-06-09T12:06:51.452223Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m MP4 parsing complete. Found 5 boxes, fragmented: true
+[2m2025-06-09T12:06:51.452295Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m MP4 parsing complete: MP4 Summary: 5 boxes, 1 tracks, fragmented: true, box types: [ftyp, moov, moof, mdat, mfra]
+[2m2025-06-09T12:06:51.452307Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Detected video codec: H.264 -> video/mp4; codecs="avc1.42E01E"
+[2m2025-06-09T12:06:51.452332Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Generating MSE segments from MP4 data
+[2m2025-06-09T12:06:51.452383Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Checking tracks for ESDS modification need:
+[2m2025-06-09T12:06:51.452394Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Track 1: media_type='vide', codec_params=Some("42E01E")
+[2m2025-06-09T12:06:51.452403Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS AudioSpecificConfig modification needed: true
+[2m2025-06-09T12:06:51.452412Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Applying ESDS AudioSpecificConfig fix: keeping objectTypeIndication=0x40, ensuring audioObjectType=2
+[2m2025-06-09T12:06:51.452421Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 0, data length: 734
+[2m2025-06-09T12:06:51.452434Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into trak box at offset 108, child area: 116 to 597
+[2m2025-06-09T12:06:51.452443Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 116, data length: 734
+[2m2025-06-09T12:06:51.452452Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into mdia box at offset 208, child area: 216 to 597
+[2m2025-06-09T12:06:51.452460Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 216, data length: 734
+[2m2025-06-09T12:06:51.452470Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into minf box at offset 293, child area: 301 to 597
+[2m2025-06-09T12:06:51.452478Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 301, data length: 734
+[2m2025-06-09T12:06:51.452487Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into stbl box at offset 357, child area: 365 to 597
+[2m2025-06-09T12:06:51.452495Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 365, data length: 734
+[2m2025-06-09T12:06:51.452505Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Sample description box at offset 365, size 164
+[2m2025-06-09T12:06:51.452518Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m ESDS Search: Recursing into stsd children from offset 381 to 529
+[2m2025-06-09T12:06:51.452527Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Starting ESDS recursive search at offset 381, data length: 734
+[2m2025-06-09T12:06:51.452539Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 381
+[2m2025-06-09T12:06:51.452551Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 365
+[2m2025-06-09T12:06:51.452560Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 301
+[2m2025-06-09T12:06:51.452572Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 216
+[2m2025-06-09T12:06:51.452582Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 116
+[2m2025-06-09T12:06:51.452590Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Finished ESDS recursive search starting at offset 0
+[2m2025-06-09T12:06:51.452600Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m No ESDS AudioSpecificConfig fixes needed - already compatible
+[2m2025-06-09T12:06:51.452617Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Creating initialization segment with boxes: ftyp(36 bytes) + moov(742 bytes)
+[2m2025-06-09T12:06:51.452642Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Init segment first 16 bytes: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:06:51.452655Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Init segment first box: type='ftyp', size=36
+[2m2025-06-09T12:06:51.452669Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Initialization segment validation passed: 2 boxes, 778 bytes
+[2m2025-06-09T12:06:51.452681Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Created initialization segment (778 bytes)
+[2m2025-06-09T12:06:51.452699Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Fixing TFHD flags in moof box for Chrome MSE compatibility
+[2m2025-06-09T12:06:51.452716Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m FOUND TFHD BOX at offset 24 with size 36!
+[2m2025-06-09T12:06:51.452730Z[0m [33m WARN[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m TFHD at offset 24 has base-data-offset-present flag - this causes Chrome MSE errors!
+[2m2025-06-09T12:06:51.452749Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Fixed TFHD flags at offset 24: 0x000039 -> 0x020038
+[2m2025-06-09T12:06:51.452758Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m   Removed: base-data-offset-present (absolute addressing)
+[2m2025-06-09T12:06:51.452767Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m   Added: default-base-is-moof (relative addressing for MSE)
+[2m2025-06-09T12:06:51.452776Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Successfully fixed TFHD flags at offset 24 (size: 36)
+[2m2025-06-09T12:06:51.452788Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Successfully fixed 1 TFHD boxes for MSE compatibility
+[2m2025-06-09T12:06:51.452886Z[0m [32m INFO[0m [2mOpenBroadcastNetwork_core::media::mp4_parser[0m[2m:[0m Generated 2 segments from fragmented MP4
+[2m2025-06-09T12:06:51.452897Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Generated 2 MSE segments
+[2m2025-06-09T12:06:51.452916Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Stored initialization segment (778 bytes) for new clients
+[2m2025-06-09T12:06:51.452933Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Converted 2 MSE segments to MediaSample format
+[2m2025-06-09T12:06:51.452972Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Successfully loaded video file for streaming
+[2m2025-06-09T12:06:51.453197Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Serving static files from: "web_viewer"
+[2m2025-06-09T12:06:51.453227Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Starting web server on http://127.0.0.1:8080
+[2m2025-06-09T12:06:51.453239Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Web viewer available at http://127.0.0.1:8080/
+[2m2025-06-09T12:06:51.453248Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket streaming endpoint: ws://127.0.0.1:8080/stream
+[2m2025-06-09T12:06:53.454373Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Starting streaming session
+[2m2025-06-09T12:06:53.457795Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Starting real video streaming
+[2m2025-06-09T12:06:53.457857Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Streaming 2 samples from real video (will loop continuously)
+[2m2025-06-09T12:06:54.459683Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Starting to stream 2 loaded segments
+[2m2025-06-09T12:06:54.459715Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m No clients connected, stopping segment streaming
+[2m2025-06-09T12:06:54.459721Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Finished streaming all segments
+[2m2025-06-09T12:12:47.857613Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: da91e184-4af3-41be-b38c-6cdf6e1d2466
+[2m2025-06-09T12:12:47.857673Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:12:47.857692Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:12:47.857772Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:12:47.857847Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:12:47.857870Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client da91e184-4af3-41be-b38c-6cdf6e1d2466 (778 bytes)
+[2m2025-06-09T12:12:47.857940Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:12:47.857988Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:12:47.858007Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:12:47.858063Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client da91e184-4af3-41be-b38c-6cdf6e1d2466
+[2m2025-06-09T12:12:48.273724Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #1
+[2m2025-06-09T12:12:48.273914Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #1
+[2m2025-06-09T12:12:48.273941Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #2
+[2m2025-06-09T12:12:48.274045Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #2
+[2m2025-06-09T12:12:48.274068Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #3
+[2m2025-06-09T12:12:48.274157Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #3
+[2m2025-06-09T12:12:48.274181Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #4
+[2m2025-06-09T12:12:48.274270Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #4
+[2m2025-06-09T12:12:48.274293Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #5
+[2m2025-06-09T12:12:48.274379Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #5
+[2m2025-06-09T12:12:48.274401Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #6
+[2m2025-06-09T12:12:48.274490Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #6
+[2m2025-06-09T12:12:48.274510Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #7
+[2m2025-06-09T12:12:48.274581Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #7
+[2m2025-06-09T12:12:48.274596Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #8
+[2m2025-06-09T12:12:48.274650Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #8
+[2m2025-06-09T12:12:48.274662Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #9
+[2m2025-06-09T12:12:48.274716Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #9
+[2m2025-06-09T12:12:48.274728Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Client(s) connected, starting video loop #10
+[2m2025-06-09T12:12:48.274802Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Completed video loop #10
+[2m2025-06-09T12:12:48.274818Z[0m [32m INFO[0m [2mrelay_node[0m[2m:[0m Finished streaming real video (completed 10 loops)
+[2m2025-06-09T12:12:51.289885Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client da91e184-4af3-41be-b38c-6cdf6e1d2466
+[2m2025-06-09T12:12:51.289927Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: da91e184-4af3-41be-b38c-6cdf6e1d2466
+[2m2025-06-09T12:15:30.346539Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client da91e184-4af3-41be-b38c-6cdf6e1d2466 disconnected
+[2m2025-06-09T12:15:36.553205Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 8a3cedf5-67a3-4380-bcfc-86f06b158b1c
+[2m2025-06-09T12:15:36.553267Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:15:36.553286Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:15:36.553342Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:15:36.553417Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:15:36.553442Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 8a3cedf5-67a3-4380-bcfc-86f06b158b1c (778 bytes)
+[2m2025-06-09T12:15:36.553516Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:15:36.553567Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:15:36.553587Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:15:36.553648Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 8a3cedf5-67a3-4380-bcfc-86f06b158b1c
+[2m2025-06-09T12:15:38.556036Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 8a3cedf5-67a3-4380-bcfc-86f06b158b1c
+[2m2025-06-09T12:15:38.556071Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 8a3cedf5-67a3-4380-bcfc-86f06b158b1c
+[2m2025-06-09T12:16:41.618902Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 8a3cedf5-67a3-4380-bcfc-86f06b158b1c disconnected
+[2m2025-06-09T12:16:44.917241Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 9926db9c-9ca3-4151-9130-5d3b991c27cf
+[2m2025-06-09T12:16:44.917279Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:16:44.917288Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:16:44.917320Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:16:44.917362Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:16:44.917373Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 9926db9c-9ca3-4151-9130-5d3b991c27cf (778 bytes)
+[2m2025-06-09T12:16:44.917406Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:16:44.917432Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:16:44.917445Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:16:44.917478Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 9926db9c-9ca3-4151-9130-5d3b991c27cf
+[2m2025-06-09T12:16:45.139161Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 9926db9c-9ca3-4151-9130-5d3b991c27cf disconnected
+[2m2025-06-09T12:16:46.919178Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 9926db9c-9ca3-4151-9130-5d3b991c27cf
+[2m2025-06-09T12:17:09.445435Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 72f2372b-bd71-4a33-af13-be598cf66d08
+[2m2025-06-09T12:17:09.445471Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:17:09.445479Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:17:09.445509Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:17:09.445545Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:17:09.445554Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 72f2372b-bd71-4a33-af13-be598cf66d08 (778 bytes)
+[2m2025-06-09T12:17:09.445583Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:17:09.445615Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:17:09.445627Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:17:09.445657Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 72f2372b-bd71-4a33-af13-be598cf66d08
+[2m2025-06-09T12:17:11.447145Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 72f2372b-bd71-4a33-af13-be598cf66d08
+[2m2025-06-09T12:17:11.447182Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 72f2372b-bd71-4a33-af13-be598cf66d08
+[2m2025-06-09T12:21:40.274800Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 72f2372b-bd71-4a33-af13-be598cf66d08 disconnected
+[2m2025-06-09T12:21:41.797975Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: d75c2d6d-4e6f-4338-af81-339390e6ec5f
+[2m2025-06-09T12:21:41.798028Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:21:41.798045Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:21:41.798098Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:21:41.798171Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:21:41.798192Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client d75c2d6d-4e6f-4338-af81-339390e6ec5f (778 bytes)
+[2m2025-06-09T12:21:41.798252Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:21:41.798299Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:21:41.798316Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:21:41.798371Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client d75c2d6d-4e6f-4338-af81-339390e6ec5f
+[2m2025-06-09T12:21:43.799816Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client d75c2d6d-4e6f-4338-af81-339390e6ec5f
+[2m2025-06-09T12:21:43.799854Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: d75c2d6d-4e6f-4338-af81-339390e6ec5f
+[2m2025-06-09T12:22:01.511598Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 7ba0c86e-092f-42b8-b80a-53fda9018b31
+[2m2025-06-09T12:22:01.511665Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:22:01.511683Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:22:01.511769Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:22:01.511847Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:22:01.511870Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 7ba0c86e-092f-42b8-b80a-53fda9018b31 (778 bytes)
+[2m2025-06-09T12:22:01.511935Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:22:01.511992Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:22:01.512023Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:22:01.512089Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 7ba0c86e-092f-42b8-b80a-53fda9018b31
+[2m2025-06-09T12:22:03.513599Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 7ba0c86e-092f-42b8-b80a-53fda9018b31
+[2m2025-06-09T12:22:03.513665Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 7ba0c86e-092f-42b8-b80a-53fda9018b31
+[2m2025-06-09T12:22:18.341650Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 7ba0c86e-092f-42b8-b80a-53fda9018b31 disconnected
+[2m2025-06-09T12:26:00.280099Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client d75c2d6d-4e6f-4338-af81-339390e6ec5f disconnected
+[2m2025-06-09T12:26:01.915560Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 0f4d5628-f1d2-4325-b070-7f1aeec0c66d
+[2m2025-06-09T12:26:01.915623Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:26:01.915642Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:26:01.915702Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:26:01.915792Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:26:01.915814Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 0f4d5628-f1d2-4325-b070-7f1aeec0c66d (778 bytes)
+[2m2025-06-09T12:26:01.915880Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:26:01.915933Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:26:01.915957Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:26:01.916014Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 0f4d5628-f1d2-4325-b070-7f1aeec0c66d
+[2m2025-06-09T12:26:03.917615Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 0f4d5628-f1d2-4325-b070-7f1aeec0c66d
+[2m2025-06-09T12:26:03.917668Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 0f4d5628-f1d2-4325-b070-7f1aeec0c66d
+[2m2025-06-09T12:26:09.955337Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 0f4d5628-f1d2-4325-b070-7f1aeec0c66d disconnected
+[2m2025-06-09T12:26:25.433836Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 63bf514b-86bf-4b51-bb5a-e570f737cade
+[2m2025-06-09T12:26:25.433887Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:26:25.433901Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:26:25.433970Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:26:25.434068Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:26:25.434099Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 63bf514b-86bf-4b51-bb5a-e570f737cade (778 bytes)
+[2m2025-06-09T12:26:25.434194Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:26:25.434242Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:26:25.434261Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:26:25.434324Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 63bf514b-86bf-4b51-bb5a-e570f737cade
+[2m2025-06-09T12:26:27.435554Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 63bf514b-86bf-4b51-bb5a-e570f737cade
+[2m2025-06-09T12:26:27.435588Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 63bf514b-86bf-4b51-bb5a-e570f737cade
+[2m2025-06-09T12:33:32.602696Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 6a384159-d310-436a-8222-9957a4ecfa0f
+[2m2025-06-09T12:33:32.602769Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:33:32.602799Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:33:32.602852Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:33:32.602924Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:33:32.602956Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 6a384159-d310-436a-8222-9957a4ecfa0f (778 bytes)
+[2m2025-06-09T12:33:32.603019Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:33:32.603059Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:33:32.603073Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:33:32.603122Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 6a384159-d310-436a-8222-9957a4ecfa0f
+[2m2025-06-09T12:33:34.604584Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 6a384159-d310-436a-8222-9957a4ecfa0f
+[2m2025-06-09T12:33:34.604617Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 6a384159-d310-436a-8222-9957a4ecfa0f
+[2m2025-06-09T12:33:41.867906Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 6a384159-d310-436a-8222-9957a4ecfa0f disconnected
+[2m2025-06-09T12:33:43.650460Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 3735ed57-a7f0-4f39-974f-e90e6e6c8dd2
+[2m2025-06-09T12:33:43.650507Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:33:43.650521Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:33:43.650565Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:33:43.650622Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:33:43.650642Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 3735ed57-a7f0-4f39-974f-e90e6e6c8dd2 (778 bytes)
+[2m2025-06-09T12:33:43.650705Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:33:43.650762Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:33:43.650780Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:33:43.650834Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 3735ed57-a7f0-4f39-974f-e90e6e6c8dd2
+[2m2025-06-09T12:33:45.652477Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 3735ed57-a7f0-4f39-974f-e90e6e6c8dd2
+[2m2025-06-09T12:33:45.652516Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 3735ed57-a7f0-4f39-974f-e90e6e6c8dd2
+[2m2025-06-09T12:33:52.391063Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 3735ed57-a7f0-4f39-974f-e90e6e6c8dd2 disconnected
+[2m2025-06-09T12:35:30.298137Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 63bf514b-86bf-4b51-bb5a-e570f737cade disconnected
+[2m2025-06-09T12:52:45.618248Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Starting streaming session
+[2m2025-06-09T12:52:46.623941Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Starting to stream 2 loaded segments
+[2m2025-06-09T12:52:46.623980Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m No clients connected, stopping segment streaming
+[2m2025-06-09T12:52:46.623992Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Finished streaming all segments
+[2m2025-06-09T12:53:16.288806Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 430e2961-0266-4316-ad71-813c65ab30ed
+[2m2025-06-09T12:53:16.288851Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:53:16.288863Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:53:16.288910Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:53:16.288982Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:53:16.289003Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 430e2961-0266-4316-ad71-813c65ab30ed (778 bytes)
+[2m2025-06-09T12:53:16.289070Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:53:16.289114Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:53:16.289128Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:53:16.289176Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 430e2961-0266-4316-ad71-813c65ab30ed
+[2m2025-06-09T12:53:16.289952Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 430e2961-0266-4316-ad71-813c65ab30ed disconnected
+[2m2025-06-09T12:53:18.290335Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 430e2961-0266-4316-ad71-813c65ab30ed
+[2m2025-06-09T12:54:03.301360Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 5061d7a7-b331-4dcd-81db-2247204a5df0
+[2m2025-06-09T12:54:03.301407Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:54:03.301420Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:54:03.301459Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:54:03.301531Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:54:03.301560Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 5061d7a7-b331-4dcd-81db-2247204a5df0 (778 bytes)
+[2m2025-06-09T12:54:03.301636Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:54:03.301685Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:54:03.301708Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:54:03.301794Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 5061d7a7-b331-4dcd-81db-2247204a5df0
+[2m2025-06-09T12:54:03.302188Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 5061d7a7-b331-4dcd-81db-2247204a5df0 disconnected
+[2m2025-06-09T12:54:05.303422Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 5061d7a7-b331-4dcd-81db-2247204a5df0
+[2m2025-06-09T12:54:29.656183Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: ee403bcd-01a0-46bd-96e3-70b7133b54e8
+[2m2025-06-09T12:54:29.656223Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:54:29.656235Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:54:29.656272Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:54:29.656317Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:54:29.656330Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client ee403bcd-01a0-46bd-96e3-70b7133b54e8 (778 bytes)
+[2m2025-06-09T12:54:29.656364Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:54:29.656391Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:54:29.656400Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:54:29.656431Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client ee403bcd-01a0-46bd-96e3-70b7133b54e8
+[2m2025-06-09T12:54:29.656594Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client ee403bcd-01a0-46bd-96e3-70b7133b54e8 disconnected
+[2m2025-06-09T12:54:31.657546Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: ee403bcd-01a0-46bd-96e3-70b7133b54e8
+[2m2025-06-09T12:59:25.074149Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 54134c3f-4617-4ab1-a1a9-03a47a77bdd8
+[2m2025-06-09T12:59:25.074185Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T12:59:25.074198Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T12:59:25.074230Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T12:59:25.074274Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T12:59:25.074285Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 54134c3f-4617-4ab1-a1a9-03a47a77bdd8 (778 bytes)
+[2m2025-06-09T12:59:25.074319Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T12:59:25.074344Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T12:59:25.074354Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T12:59:25.074384Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 54134c3f-4617-4ab1-a1a9-03a47a77bdd8
+[2m2025-06-09T12:59:27.074884Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 54134c3f-4617-4ab1-a1a9-03a47a77bdd8
+[2m2025-06-09T12:59:27.074919Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 54134c3f-4617-4ab1-a1a9-03a47a77bdd8
+[2m2025-06-09T12:59:32.080644Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 54134c3f-4617-4ab1-a1a9-03a47a77bdd8 disconnected
+[2m2025-06-09T13:02:45.658303Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 9ab53e7e-fff5-413a-999c-6ef66ab7e5e5
+[2m2025-06-09T13:02:45.658348Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T13:02:45.658360Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T13:02:45.658399Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T13:02:45.658459Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T13:02:45.658481Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 9ab53e7e-fff5-413a-999c-6ef66ab7e5e5 (778 bytes)
+[2m2025-06-09T13:02:45.658546Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T13:02:45.658587Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T13:02:45.658600Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T13:02:45.658646Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 9ab53e7e-fff5-413a-999c-6ef66ab7e5e5
+[2m2025-06-09T13:02:47.660174Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 9ab53e7e-fff5-413a-999c-6ef66ab7e5e5
+[2m2025-06-09T13:02:47.660213Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 9ab53e7e-fff5-413a-999c-6ef66ab7e5e5
+[2m2025-06-09T13:02:50.663956Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 9ab53e7e-fff5-413a-999c-6ef66ab7e5e5 disconnected
+[2m2025-06-09T13:05:06.789106Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 72d1e172-03c8-449a-8348-2d7e0ce8882e
+[2m2025-06-09T13:05:06.789141Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T13:05:06.789150Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T13:05:06.789181Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T13:05:06.789220Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T13:05:06.789232Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 72d1e172-03c8-449a-8348-2d7e0ce8882e (778 bytes)
+[2m2025-06-09T13:05:06.789263Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T13:05:06.789287Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T13:05:06.789296Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T13:05:06.789323Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 72d1e172-03c8-449a-8348-2d7e0ce8882e
+[2m2025-06-09T13:05:06.789576Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 72d1e172-03c8-449a-8348-2d7e0ce8882e disconnected
+[2m2025-06-09T13:05:08.790643Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 72d1e172-03c8-449a-8348-2d7e0ce8882e
+[2m2025-06-09T13:05:08.792335Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 6abd0b84-e0df-43c0-b841-459f94204578
+[2m2025-06-09T13:05:08.792364Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T13:05:08.792375Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T13:05:08.792408Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T13:05:08.792477Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T13:05:08.792501Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 6abd0b84-e0df-43c0-b841-459f94204578 (778 bytes)
+[2m2025-06-09T13:05:08.792563Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T13:05:08.792605Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T13:05:08.792623Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T13:05:08.792674Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 6abd0b84-e0df-43c0-b841-459f94204578
+[2m2025-06-09T13:05:08.792849Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 6abd0b84-e0df-43c0-b841-459f94204578 disconnected
+[2m2025-06-09T13:05:10.794077Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 6abd0b84-e0df-43c0-b841-459f94204578
+[2m2025-06-09T13:05:10.795612Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 240bb2fa-8531-4a80-98d5-ed36034e2366
+[2m2025-06-09T13:05:10.795646Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T13:05:10.795657Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T13:05:10.795694Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T13:05:10.795768Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T13:05:10.795791Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 240bb2fa-8531-4a80-98d5-ed36034e2366 (778 bytes)
+[2m2025-06-09T13:05:10.795844Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T13:05:10.795876Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T13:05:10.795887Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T13:05:10.795929Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 240bb2fa-8531-4a80-98d5-ed36034e2366
+[2m2025-06-09T13:05:10.796191Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 240bb2fa-8531-4a80-98d5-ed36034e2366 disconnected
+[2m2025-06-09T13:05:12.797013Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 240bb2fa-8531-4a80-98d5-ed36034e2366
+[2m2025-06-09T13:05:12.798612Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 54174d37-c043-42db-8f71-32c8fb6bf4c9
+[2m2025-06-09T13:05:12.798657Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T13:05:12.798668Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T13:05:12.798706Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T13:05:12.798781Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T13:05:12.798798Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 54174d37-c043-42db-8f71-32c8fb6bf4c9 (778 bytes)
+[2m2025-06-09T13:05:12.798845Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T13:05:12.798876Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T13:05:12.798887Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T13:05:12.798926Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 54174d37-c043-42db-8f71-32c8fb6bf4c9
+[2m2025-06-09T13:05:14.800339Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 54174d37-c043-42db-8f71-32c8fb6bf4c9
+[2m2025-06-09T13:05:14.800371Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 54174d37-c043-42db-8f71-32c8fb6bf4c9
+[2m2025-06-09T13:05:17.804039Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 54174d37-c043-42db-8f71-32c8fb6bf4c9 disconnected
+[2m2025-06-09T13:05:17.805440Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 2e5bc5da-c127-498b-aca6-a475d56d28ff
+[2m2025-06-09T13:05:17.805476Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T13:05:17.805490Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T13:05:17.805532Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T13:05:17.805585Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T13:05:17.805602Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 2e5bc5da-c127-498b-aca6-a475d56d28ff (778 bytes)
+[2m2025-06-09T13:05:17.805649Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T13:05:17.805686Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T13:05:17.805699Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T13:05:17.805749Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 2e5bc5da-c127-498b-aca6-a475d56d28ff
+[2m2025-06-09T13:05:17.805917Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 2e5bc5da-c127-498b-aca6-a475d56d28ff disconnected
+[2m2025-06-09T13:05:19.806985Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 2e5bc5da-c127-498b-aca6-a475d56d28ff
+[2m2025-06-09T13:07:18.424658Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m New WebSocket client connected: 032359a2-5920-469a-ab83-a1718f4e76fa
+[2m2025-06-09T13:07:18.424707Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info
+[2m2025-06-09T13:07:18.424721Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Final stream configuration - Video: Some("video/mp4; codecs=\"avc1.42E01E\""), Audio: None
+[2m2025-06-09T13:07:18.424784Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Serialized stream_info message: {"type":"stream_info","data":{"video":{"width":640,"height":480,"fps":30.0,"codec":"H.264","mime_type":"video/mp4; codecs=\"avc1.42E01E\""},"audio":null}}
+[2m2025-06-09T13:07:18.424844Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m 🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client
+[2m2025-06-09T13:07:18.424861Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending initialization segment to new client 032359a2-5920-469a-ab83-a1718f4e76fa (778 bytes)
+[2m2025-06-09T13:07:18.424910Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sending binary initialization segment: 778 bytes
+[2m2025-06-09T13:07:18.424948Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First 16 bytes of init segment: 00 00 00 24 66 74 79 70 69 73 6f 6d 00 00 02 00
+[2m2025-06-09T13:07:18.424961Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m First box in init segment: type='ftyp', size=36
+[2m2025-06-09T13:07:18.425003Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Successfully sent initialization segment to client 032359a2-5920-469a-ab83-a1718f4e76fa
+[2m2025-06-09T13:07:20.426383Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Sent end_of_stream signal to client 032359a2-5920-469a-ab83-a1718f4e76fa
+[2m2025-06-09T13:07:20.426423Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m WebSocket handler finished for client: 032359a2-5920-469a-ab83-a1718f4e76fa
+[2m2025-06-09T13:07:30.209265Z[0m [32m INFO[0m [2mrelay_node::web_server[0m[2m:[0m Client 032359a2-5920-469a-ab83-a1718f4e76fa disconnected

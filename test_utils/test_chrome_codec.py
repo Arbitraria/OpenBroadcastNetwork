@@ -17,7 +17,7 @@ class ChromeCodecTester:
         self.results = {}
         
     async def test_websocket_connection(self):
-        """Test basic WebSocket connectivity"""
+        """Test basic WebSocket connectivity and analyze stream data"""
         print("🔌 Testing WebSocket Connection")
         print("=" * 50)
         
@@ -25,26 +25,44 @@ class ChromeCodecTester:
             async with websockets.connect(self.server_url) as websocket:
                 print("✅ WebSocket connection successful")
                 
-                # Wait for first message
-                try:
-                    message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-                    
-                    if isinstance(message, bytes):
-                        print(f"📦 Received binary data: {len(message)} bytes")
-                        return self.analyze_initialization_segment(message)
-                    else:
-                        # JSON control message
-                        try:
-                            data = json.loads(message)
-                            print(f"📋 Received control message: {data.get('type', 'unknown')}")
-                            if data.get('type') == 'stream_info':
-                                return self.analyze_stream_info(data)
-                        except json.JSONDecodeError:
-                            print(f"📄 Received text data: {len(message)} chars")
-                            
-                except asyncio.TimeoutError:
-                    print("⏱️ Timeout waiting for server data")
-                    return False
+                # Process first few messages to get both stream_info and initialization segment
+                messages_received = 0
+                max_messages = 5
+                stream_info_received = False
+                init_segment_received = False
+                
+                while messages_received < max_messages and not (stream_info_received and init_segment_received):
+                    try:
+                        message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                        messages_received += 1
+                        
+                        if isinstance(message, bytes):
+                            print(f"📦 Received binary data: {len(message)} bytes")
+                            if not init_segment_received:
+                                init_segment_received = self.analyze_initialization_segment(message)
+                        else:
+                            # JSON control message
+                            try:
+                                data = json.loads(message)
+                                msg_type = data.get('type', 'unknown')
+                                print(f"📋 Received control message: {msg_type}")
+                                
+                                if msg_type == 'stream_info' and not stream_info_received:
+                                    stream_info_received = self.analyze_stream_info(data)
+                                elif msg_type == 'chunk_info':
+                                    chunk_type = data.get('data', {}).get('chunk_type', 'unknown')
+                                    chunk_size = data.get('data', {}).get('size', 0)
+                                    print(f"📦 Chunk info: {chunk_type} ({chunk_size} bytes)")
+                                    
+                            except json.JSONDecodeError:
+                                print(f"📄 Received text data: {len(message)} chars")
+                                
+                    except asyncio.TimeoutError:
+                        print("⏱️ Timeout waiting for server data")
+                        break
+                
+                # Return success if we got both essential pieces
+                return stream_info_received
                     
         except Exception as e:
             print(f"❌ WebSocket connection failed: {e}")
@@ -116,17 +134,12 @@ class ChromeCodecTester:
         
         stream_data = data.get('data', {})
         
-        if 'audio' in stream_data:
-            audio_info = stream_data['audio']
-            codec = audio_info.get('codec', 'Unknown')
-            mime_type = audio_info.get('mime_type', 'Unknown')
+        if not stream_data:
+            print("⚠️ No data field in stream_info message")
+            return False
             
-            print(f"🎵 Audio codec: {codec}")
-            print(f"🎵 Audio MIME: {mime_type}")
-            
-            self.results['server_audio_codec'] = mime_type
-            
-        if 'video' in stream_data:
+        # Handle video info
+        if 'video' in stream_data and stream_data['video']:
             video_info = stream_data['video']
             codec = video_info.get('codec', 'Unknown')
             mime_type = video_info.get('mime_type', 'Unknown')
@@ -135,6 +148,22 @@ class ChromeCodecTester:
             print(f"📺 Video MIME: {mime_type}")
             
             self.results['server_video_codec'] = mime_type
+        else:
+            print("⚠️ No video info in stream")
+            
+        # Handle audio info (may be None for video-only streams)
+        if 'audio' in stream_data and stream_data['audio']:
+            audio_info = stream_data['audio']
+            codec = audio_info.get('codec', 'Unknown')
+            mime_type = audio_info.get('mime_type', 'Unknown')
+            
+            print(f"🎵 Audio codec: {codec}")
+            print(f"🎵 Audio MIME: {mime_type}")
+            
+            self.results['server_audio_codec'] = mime_type
+        else:
+            print("📺 Video-only stream (no audio track)")
+            self.results['server_audio_codec'] = None
             
         return True
         

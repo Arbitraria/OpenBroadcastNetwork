@@ -259,6 +259,60 @@ impl StreamManager {
             }
         }
         
+        // Start streaming loaded video segments if available
+        let video_samples = Arc::clone(&self.video_samples);
+        let chunk_sender = self.chunk_sender.clone();
+        let is_streaming = Arc::clone(&self.is_streaming);
+        
+        tokio::spawn(async move {
+            // Wait a bit for clients to connect
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            
+            let samples = video_samples.lock().await;
+            if let Some(ref video_samples) = *samples {
+                info!("Starting to stream {} loaded segments", video_samples.len());
+                
+                for (index, sample) in video_samples.iter().enumerate() {
+                    // Skip initialization segment (track_id 99) as it's sent separately
+                    if sample.track_id == 99 {
+                        continue;
+                    }
+                    
+                    // Only send if there are active receivers
+                    if chunk_sender.receiver_count() == 0 {
+                        info!("No clients connected, stopping segment streaming");
+                        break;
+                    }
+                    
+                    let timestamp = sample.timestamp.as_millis() as u64;
+                    let chunk = StreamChunk::Video {
+                        data: sample.data.clone(),
+                        timestamp,
+                        is_keyframe: sample.is_sync,
+                    };
+                    
+                    match chunk_sender.send(chunk) {
+                        Ok(_) => {
+                            info!("Sent video segment {} ({} bytes, ts={}ms, keyframe={})", 
+                                  index, sample.data.len(), timestamp, sample.is_sync);
+                            
+                            // Add delay between segments to simulate streaming
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                        },
+                        Err(_) => {
+                            info!("All receivers dropped, stopping segment streaming");
+                            break;
+                        }
+                    }
+                }
+                
+                info!("Finished streaming all segments");
+                *is_streaming.lock().await = false;
+            } else {
+                warn!("No video samples loaded");
+            }
+        });
+        
         Ok(())
     }
 
@@ -606,15 +660,21 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
         ("H.264".to_string(), Some("video/mp4; codecs=\"avc1.42E01E\"".to_string()))
     };
     
-    let (audio_codec, audio_mime) = if let Some((codec, mime)) = &*state.stream_manager.audio_codec_info.lock().await {
+    // Check if we actually have an audio track
+    let audio_info = if let Some((codec, mime)) = &*state.stream_manager.audio_codec_info.lock().await {
         info!("🔍 WEBSOCKET DEBUG: Using cached audio codec info: {} -> {}", codec, mime);
-        (codec.clone(), Some(mime.clone()))
+        Some(AudioInfo {
+            sample_rate: 48000,
+            channels: 2,
+            codec: codec.clone(),
+            mime_type: Some(mime.clone()),
+        })
     } else {
-        info!("🔍 WEBSOCKET DEBUG: No cached audio codec, using fallback: AAC -> audio/mp4; codecs=\"mp4a.40.2\"");
-        ("AAC".to_string(), Some("audio/mp4; codecs=\"mp4a.40.2\"".to_string()))
+        info!("🔍 WEBSOCKET DEBUG: No audio track detected - sending video-only stream info");
+        None
     };
     
-    info!("🔍 WEBSOCKET DEBUG: Final audio codec for stream_info: {} -> {:?}", audio_codec, audio_mime);
+    info!("🔍 WEBSOCKET DEBUG: Final stream configuration - Video: {:?}, Audio: {:?}", video_mime, audio_info.as_ref().map(|a| &a.mime_type));
     
     let stream_info = ClientMessage::StreamInfo {
         data: StreamInfo {
@@ -625,12 +685,7 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
                 codec: video_codec,
                 mime_type: video_mime,
             }),
-            audio: Some(AudioInfo {
-                sample_rate: 48000,
-                channels: 2,
-                codec: audio_codec,
-                mime_type: audio_mime,
-            }),
+            audio: audio_info,
         },
     };
 
@@ -806,6 +861,10 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
                                     }
                                 }
 
+                                // Add a small delay to prevent overwhelming the client's SourceBuffer
+                                // Chrome's SourceBuffer needs time to process each segment
+                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
                                 // Then send the actual data
                                 Message::Binary(data)
                             }
@@ -863,6 +922,26 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
                         // Channel closed, exit gracefully
                         break;
                     }
+                }
+            }
+            // Check if we should signal end of stream after a timeout
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
+                // If no more data is being streamed, send end of stream signal
+                if !*state.stream_manager.is_streaming.lock().await {
+                    let end_signal = ClientMessage::ChunkInfo {
+                        data: ChunkInfo {
+                            chunk_type: "end_of_stream".to_string(),
+                            size: 0,
+                            timestamp: 0,
+                        },
+                    };
+                    
+                    if let Ok(end_message) = serde_json::to_string(&end_signal) {
+                        if sender.send(Message::Text(end_message)).await.is_ok() {
+                            info!("Sent end_of_stream signal to client {}", client_id);
+                        }
+                    }
+                    break;
                 }
             }
         }

@@ -764,3 +764,61 @@ The remaining issue is **media format compatibility**, not **connectivity or tra
 - `web_viewer/universal_viewer.html`: Enhanced cross-browser debugging
 
 **Commit record**: `4075ba4` - "Fix Firefox MediaSource playback with WebSocket chunking and enhanced debugging"
+
+## 🎯 CHROME VIDEO DECODE ERROR - TFHD FLAG INVESTIGATION - December 9, 2025, 14:22 UTC
+
+### 📊 **Current Status**: Progress on Chrome MSE Compatibility
+
+**Current Achievement**: Video metadata now loads in Chrome (duration bar visible), representing significant progress from previous audio codec failures.
+
+**Current Issue**: "Failed to prepare video sample for decode" error in Chrome browser.
+
+#### TFHD Flag Analysis 🔍
+
+**From Attempted Solutions**: The document shows that TFHD flag changes from `0x000039` to `0x020038` were the "Final Working Solution" for Chrome MSE compatibility.
+
+**Current Investigation**:
+- ✅ TFHD fix function `fix_moof_tfhd_flags()` exists in codebase
+- ✅ Function implementation looks complete with recursive search  
+- ❓ **Need to verify**: Is TFHD fix being applied to current video_only.mp4 processing?
+
+**Server Log Analysis**:
+```
+Generated 3256 segments from regular MP4
+Generated 3256 MSE segments  
+Stored initialization segment (261227 bytes)
+```
+
+**Missing from logs**: No "Fixing TFHD flags in moof box" or "Successfully fixed X TFHD boxes" messages.
+
+#### Hypothesis 🤔
+
+**Likely Issue**: The TFHD fix may not be triggered because:
+1. Current MP4 processing might not create `moof` boxes that trigger the fix function
+2. TFHD flags in video_only.mp4 may already be 0x020038 (MSE-compatible)  
+3. Fix function may not be called in the current segmentation pipeline
+
+#### Next Actions Required 🔧
+
+1. **Verify TFHD Fix Application**: Check if TFHD fixes are being applied to video_only.mp4
+2. **Manual TFHD Analysis**: Examine raw video_only.mp4 TFHD flags 
+3. **Test with Known Problematic File**: Try a file that definitely has 0x000039 flags
+4. **Chrome Test**: Verify if TFHD fixes resolve the "Failed to prepare video sample" error
+
+#### Evidence of Progress 📈
+
+**User Report**: "excellent, i can see the video length in the bar we are getting closer"
+
+This confirms:
+- ✅ WebSocket connectivity working
+- ✅ Video metadata loading (duration visible)
+- ✅ Initialization segment processing successful
+- 🔄 **Current bottleneck**: Video decode preparation in Chrome MSE
+
+#### Files to Investigate 📁
+
+**TFHD Implementation**:
+- `core/src/media/mp4_parser.rs` - Contains `fix_moof_tfhd_flags()` function
+- Need to verify this function is called during video_only.mp4 processing
+
+**Test approach**: Verify TFHD flag state in current segments and ensure fix is applied.

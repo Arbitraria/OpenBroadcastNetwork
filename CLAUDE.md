@@ -115,7 +115,47 @@ cargo run -p OpenBroadcastNetwork-node -- --config path/to/config.toml
 
 # Enable debug logging
 RUST_LOG=debug cargo run -p OpenBroadcastNetwork-node
+
+# Start web viewer with video file
+cargo run -p OpenBroadcastNetwork-node web-viewer --video sample_video.mp4
+
+# Start web viewer with logging to file
+cargo run -p OpenBroadcastNetwork-node web-viewer --video sample_video.mp4 > logs/server_current.log 2>&1 &
 ```
+
+## Logging and Debugging
+
+### Server Logs Location
+- **Primary logs directory**: `logs/` (from project root)
+- **Current server log**: `logs/server_current.log` or `logs/server_sample.log`
+- **Historical logs**: `logs/server_final_working.log`, `logs/server_output.log`, etc.
+
+### Accessing Logs
+```bash
+# View recent server output
+tail -f logs/server_current.log
+
+# Check server startup logs
+head -20 logs/server_startup.log
+
+# Search for specific errors
+grep -i "error\|fail" logs/*.log
+
+# Find log files by pattern
+ls -la logs/server*.log
+```
+
+### Test Files and Debugging
+- **Test videos**: 
+  - `test_simple.mp4` (32KB, short, video-only)
+  - `sample_video.mp4` (257MB, full-length, H.264 + AAC)
+  - `Stargate SG1 S01E03.mp4` (360MB, target test file)
+  - `bigtroublelittlechina.mp4` (1.9GB, target test file)
+- **WebSocket tests**: 
+  - `test_utils/test_websocket_order.py` - Message flow analysis
+  - `test_utils/test_chrome_codec.py` - Chrome compatibility testing
+  - `test_utils/test_modernized_viewer.py` - Comprehensive end-to-end test
+- **Browser testing**: `http://127.0.0.1:8080/` (modernized universal viewer)
 
 ## Key Implementation Guidelines
 

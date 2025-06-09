@@ -68,9 +68,23 @@ async def test_message_order():
                             print(f"   JSON type: {msg_type}")
                             
                             if msg_type == 'stream_info' and 'data' in data:
-                                audio = data['data'].get('audio', {})
-                                if 'mime_type' in audio:
-                                    print(f"   Audio MIME: {audio['mime_type']}")
+                                stream_data = data['data']
+                                
+                                # Handle video info
+                                if 'video' in stream_data and stream_data['video']:
+                                    video_info = stream_data['video']
+                                    codec = video_info.get('codec', 'Unknown')
+                                    mime_type = video_info.get('mime_type', 'Unknown')
+                                    print(f"   Video: {codec} -> {mime_type}")
+                                
+                                # Handle audio info (may be None for video-only streams)
+                                if 'audio' in stream_data and stream_data['audio']:
+                                    audio_info = stream_data['audio']
+                                    codec = audio_info.get('codec', 'Unknown')
+                                    mime_type = audio_info.get('mime_type', 'Unknown')
+                                    print(f"   Audio: {codec} -> {mime_type}")
+                                else:
+                                    print(f"   📺 Video-only stream (no audio track)")
                                     
                         except json.JSONDecodeError:
                             print(f"   Content: {message[:100]}...")
