@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenBroadcastNetwork - Chunked Stream Viewer</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        video { width: 100%; max-width: 800px; border: 2px solid #333; }
+        #status { margin: 10px 0; padding: 10px; background: #f0f0f0; }
+        #log { height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; font-family: monospace; font-size: 12px; }
+        .error { color: red; }
+        .success { color: green; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <h1>OpenBroadcastNetwork - Chunked Stream Viewer</h1>
+    <video id="video" controls></video>
+    <div id="status">Initializing...</div>
+    <div id="log"></div>
+
+    <script>
+        const video = document.getElementById('video');
+        const status = document.getElementById('status');
+        const logDiv = document.getElementById('log');
+        
+        let mediaSource = null;
+        let sourceBuffer = null;
+        let ws = null;
+        let streamInfo = null;
+        let initSegmentChunks = [];
+        let totalInitSize = 0;
+        let receivedInitBytes = 0;
+        let isReceivingInit = false;
+
+        function log(message, className = '') {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = className;
+            entry.textContent = `[${timestamp}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+
+        function updateStatus(message, isError = false) {
+            status.textContent = message;
+            status.style.color = isError ? 'red' : 'black';
+        }
+
+        function initMediaSource() {
+            if (!window.MediaSource) {
+                log('MediaSource API not supported', 'error');
+                updateStatus('Browser does not support MediaSource API', true);
+                return false;
+            }
+
+            try {
+                mediaSource = new MediaSource();
+                video.src = URL.createObjectURL(mediaSource);
+
+                mediaSource.addEventListener('sourceopen', () => {
+                    log('MediaSource opened', 'success');
+                    connectWebSocket();
+                });
+
+                mediaSource.addEventListener('sourceended', () => {
+                    log('MediaSource ended');
+                });
+
+                mediaSource.addEventListener('sourceclose', () => {
+                    log('MediaSource closed');
+                });
+
+                video.addEventListener('error', (e) => {
+                    const error = video.error;
+                    if (error) {
+                        log(`Video error: ${error.code} - ${error.message}`, 'error');
+                    }
+                });
+
+                return true;
+            } catch (e) {
+                log(`Failed to initialize MediaSource: ${e.message}`, 'error');
+                return false;
+            }
+        }
+
+        function connectWebSocket() {
+            const wsUrl = `ws://${window.location.host}/stream`;
+            log(`Connecting to WebSocket: ${wsUrl}`);
+            updateStatus('Connecting to stream...');
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                log('WebSocket connected', 'success');
+                updateStatus('Connected, waiting for stream info...');
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    handleJsonMessage(JSON.parse(event.data));
+                } else {
+                    handleBinaryData(event.data);
+                }
+            };
+
+            ws.onerror = (error) => {
+                log('WebSocket error', 'error');
+                updateStatus('Connection error', true);
+            };
+
+            ws.onclose = (event) => {
+                log(`WebSocket closed: ${event.code} - ${event.reason}`);
+                updateStatus('Disconnected', true);
+            };
+        }
+
+        function handleJsonMessage(message) {
+            log(`Received message: ${message.type}`, 'info');
+
+            switch (message.type) {
+                case 'stream_info':
+                    streamInfo = message.data;
+                    log(`Stream info: ${streamInfo.video.width}x${streamInfo.video.height} @ ${streamInfo.video.fps}fps`);
+                    log(`Video codec: ${streamInfo.video.mime_type}`);
+                    log(`Audio codec: ${streamInfo.audio.mime_type}`);
+                    
+                    // Test codec support
+                    const videoSupported = MediaSource.isTypeSupported(streamInfo.video.mime_type);
+                    const audioSupported = MediaSource.isTypeSupported(streamInfo.audio.mime_type);
+                    
+                    log(`Video codec supported: ${videoSupported ? 'YES' : 'NO'}`, videoSupported ? 'success' : 'error');
+                    log(`Audio codec supported: ${audioSupported ? 'YES' : 'NO'}`, audioSupported ? 'success' : 'error');
+                    
+                    if (!videoSupported || !audioSupported) {
+                        updateStatus('Codec not supported by browser', true);
+                        return;
+                    }
+                    
+                    // Create source buffer with combined mime type
+                    const mimeType = `video/mp4; codecs="${streamInfo.video.mime_type.split('"')[1]}, ${streamInfo.audio.mime_type.split('"')[1]}"`;
+                    
+                    try {
+                        sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+                        log(`Created SourceBuffer with: ${mimeType}`, 'success');
+                        
+                        sourceBuffer.addEventListener('updateend', () => {
+                            log('SourceBuffer update completed');
+                        });
+                        
+                        sourceBuffer.addEventListener('error', (e) => {
+                            log('SourceBuffer error', 'error');
+                        });
+                        
+                        updateStatus('Waiting for initialization segment...');
+                    } catch (e) {
+                        log(`Failed to create SourceBuffer: ${e.message}`, 'error');
+                        updateStatus('Failed to create source buffer', true);
+                    }
+                    break;
+
+                case 'chunk_info':
+                    const chunkType = message.data.chunk_type;
+                    const chunkSize = message.data.size;
+                    
+                    if (chunkType === 'initialization') {
+                        log(`Initialization segment incoming: ${chunkSize} bytes`);
+                        totalInitSize = chunkSize;
+                        isReceivingInit = true;
+                    } else if (chunkType.startsWith('initialization_chunk_')) {
+                        log(`Initialization chunk ${chunkType}: ${chunkSize} bytes`);
+                        isReceivingInit = true;
+                    } else if (chunkType === 'initialization_complete') {
+                        log(`All initialization chunks received, assembling ${chunkSize} bytes...`, 'info');
+                        assembleInitSegment();
+                    } else if (chunkType === 'media') {
+                        log(`Media segment: ${chunkSize} bytes at ${message.data.timestamp}ms`);
+                    }
+                    break;
+
+                case 'error':
+                    log(`Stream error: ${message.data}`, 'error');
+                    updateStatus(`Error: ${message.data}`, true);
+                    break;
+            }
+        }
+
+        function handleBinaryData(data) {
+            const size = data.byteLength;
+            log(`Received binary data: ${size} bytes`);
+
+            if (isReceivingInit) {
+                // This is part of the initialization segment
+                initSegmentChunks.push(new Uint8Array(data));
+                receivedInitBytes += size;
+                log(`Initialization chunk received: ${receivedInitBytes}/${totalInitSize} bytes`);
+                updateStatus(`Receiving initialization: ${Math.round(receivedInitBytes/totalInitSize*100)}%`);
+            } else if (sourceBuffer && !sourceBuffer.updating && mediaSource.readyState === 'open') {
+                // Regular media segment
+                try {
+                    sourceBuffer.appendBuffer(data);
+                    updateStatus('Streaming...');
+                } catch (e) {
+                    log(`Failed to append media segment: ${e.message}`, 'error');
+                }
+            }
+        }
+
+        function assembleInitSegment() {
+            if (initSegmentChunks.length === 0) {
+                log('No initialization chunks to assemble', 'error');
+                return;
+            }
+
+            // Calculate total size
+            const totalSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            log(`Assembling ${initSegmentChunks.length} chunks into ${totalSize} bytes`);
+
+            // Combine all chunks
+            const combined = new Uint8Array(totalSize);
+            let offset = 0;
+            for (const chunk of initSegmentChunks) {
+                combined.set(chunk, offset);
+                offset += chunk.length;
+            }
+
+            // Append to source buffer
+            if (sourceBuffer && !sourceBuffer.updating && mediaSource.readyState === 'open') {
+                try {
+                    sourceBuffer.appendBuffer(combined);
+                    log(`Successfully appended initialization segment (${totalSize} bytes)`, 'success');
+                    updateStatus('Initialization complete, waiting for media segments...');
+                    
+                    // Clear chunks
+                    initSegmentChunks = [];
+                    receivedInitBytes = 0;
+                    isReceivingInit = false;
+                } catch (e) {
+                    log(`Failed to append initialization segment: ${e.message}`, 'error');
+                    updateStatus('Failed to initialize stream', true);
+                }
+            } else {
+                log('SourceBuffer not ready for initialization segment', 'error');
+            }
+        }
+
+        // Initialize
+        if (initMediaSource()) {
+            log('MediaSource initialized successfully', 'success');
+        } else {
+            log('Failed to initialize MediaSource', 'error');
+        }
+    </script>
+</body>
+</html>

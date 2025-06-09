@@ -630,12 +630,74 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
             }
         }
         
-        if let Err(e) = sender.send(Message::Binary(init_segment.clone())).await {
-            error!("Failed to send initialization segment: {}", e);
-            return;
-        }
+        // WebSocket frame size limit is typically 1MB, but our init segment is 4.2MB
+        // We need to chunk it to avoid exceeding frame size limits
+        const MAX_CHUNK_SIZE: usize = 512 * 1024; // 512KB chunks to be safe
         
-        info!("Successfully sent initialization segment to client {}", client_id);
+        if init_segment.len() > MAX_CHUNK_SIZE {
+            info!("Initialization segment exceeds WebSocket frame limit, chunking into {} chunks", 
+                  (init_segment.len() + MAX_CHUNK_SIZE - 1) / MAX_CHUNK_SIZE);
+            
+            let mut offset = 0;
+            let mut chunk_num = 0;
+            
+            while offset < init_segment.len() {
+                let chunk_end = std::cmp::min(offset + MAX_CHUNK_SIZE, init_segment.len());
+                let chunk = &init_segment[offset..chunk_end];
+                chunk_num += 1;
+                
+                // Send chunk info
+                let chunk_info = ClientMessage::ChunkInfo {
+                    data: ChunkInfo {
+                        chunk_type: format!("initialization_chunk_{}", chunk_num),
+                        size: chunk.len(),
+                        timestamp: offset as u64, // Use offset as timestamp for ordering
+                    },
+                };
+                
+                if let Ok(info_message) = serde_json::to_string(&chunk_info) {
+                    if let Err(e) = sender.send(Message::Text(info_message)).await {
+                        error!("Failed to send chunk {} info: {}", chunk_num, e);
+                        return;
+                    }
+                }
+                
+                // Send the chunk
+                if let Err(e) = sender.send(Message::Binary(chunk.to_vec())).await {
+                    error!("Failed to send initialization chunk {}: {}", chunk_num, e);
+                    return;
+                }
+                
+                info!("Sent initialization chunk {} ({} bytes)", chunk_num, chunk.len());
+                offset = chunk_end;
+            }
+            
+            // Send completion marker
+            let completion_info = ClientMessage::ChunkInfo {
+                data: ChunkInfo {
+                    chunk_type: "initialization_complete".to_string(),
+                    size: init_segment.len(),
+                    timestamp: 0,
+                },
+            };
+            
+            if let Ok(info_message) = serde_json::to_string(&completion_info) {
+                if let Err(e) = sender.send(Message::Text(info_message)).await {
+                    error!("Failed to send completion marker: {}", e);
+                    return;
+                }
+            }
+            
+            info!("Successfully sent chunked initialization segment to client {}", client_id);
+        } else {
+            // Small enough to send in one frame
+            if let Err(e) = sender.send(Message::Binary(init_segment.clone())).await {
+                error!("Failed to send initialization segment: {}", e);
+                return;
+            }
+            
+            info!("Successfully sent initialization segment to client {}", client_id);
+        }
     } else {
         warn!("No initialization segment available for client {}", client_id);
     }

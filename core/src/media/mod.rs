@@ -35,6 +35,8 @@ pub mod stream;
 pub mod stream_chunk;
 /// Video file reading and MP4 parsing for real media content
 pub mod video_reader;
+/// Proper fragmented MP4 converter for MSE compatibility
+pub mod fmp4_converter;
 
 #[cfg(test)]
 mod tests;
@@ -56,6 +58,7 @@ pub use ffmpeg_reader::{FFmpegVideoReader, FFmpegReaderError, FFmpegSample, FFmp
 pub use mp4_parser::{Mp4Parser, MseSegment, Mp4Track, BoxHeader};
 pub use fragment_parser::FragmentParser;
 pub use fragment_writer::FragmentWriter;
+pub use fmp4_converter::{FragmentedMp4Converter, Sample};
 
 /// Convenience type alias for Result<T, MediaError>
 pub type Result<T> = std::result::Result<T, MediaError>;

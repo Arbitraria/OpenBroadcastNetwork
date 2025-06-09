@@ -118,7 +118,7 @@ impl Mp4Parser {
             boxes: Vec::new(),
             tracks: Vec::new(),
             is_fragmented: false,
-            will_modify_esds: false,
+            will_modify_esds: true, // Always enable ESDS modification for Chrome compatibility
         }
     }
 
@@ -132,7 +132,7 @@ impl Mp4Parser {
         let mut cursor = std::io::Cursor::new(data);
         self.boxes.clear();
         self.tracks.clear();
-        self.will_modify_esds = false;
+        // Keep will_modify_esds setting from constructor
         
         // Parse all top-level boxes
         while cursor.position() < data.len() as u64 {
@@ -1078,7 +1078,12 @@ impl Mp4Parser {
                     debug!("Found object type 0x{:02x} at offset {}", object_type, j);
                     
                     if object_type == 0x40 {
-                        info!("Found object type 0x40 - searching for AudioSpecificConfig to fix audioObjectType");
+                        info!("Found object type 0x40 - keeping original value for codec string compatibility");
+                        
+                        // DO NOT modify objectTypeIndication - Chrome expects 0x40 to match mp4a.40.2
+                        // The issue is only with the inner AudioSpecificConfig.audioObjectType
+                        
+                        info!("Searching for AudioSpecificConfig to verify audioObjectType");
                         
                         // Skip objectTypeIndication(1) + streamType(1) + bufferSizeDB(3) + maxBitrate(4) + avgBitrate(4) = 13 bytes
                         let asc_search_start = j + 13;
@@ -1115,8 +1120,20 @@ impl Mp4Parser {
                                               asc_offset, asc_first_byte, new_first_byte);
                                         return true;
                                     } else {
-                                        info!("AudioSpecificConfig already has correct audioObjectType=2");
-                                        return false; // No change needed
+                                        // FORCE the fix for Chrome compatibility testing
+                                        info!("AudioSpecificConfig already has audioObjectType=2, but FORCING update for Chrome compatibility");
+                                        
+                                        // Set audioObjectType=2 explicitly to ensure Chrome compatibility
+                                        let new_first_byte = (asc_first_byte & 0x07) | (2 << 3);
+                                        if new_first_byte != asc_first_byte {
+                                            data[asc_offset] = new_first_byte;
+                                            info!("FORCED AudioSpecificConfig update at offset {}: 0x{:02x} -> 0x{:02x}", 
+                                                  asc_offset, asc_first_byte, new_first_byte);
+                                            return true;
+                                        } else {
+                                            info!("AudioSpecificConfig byte already optimal: 0x{:02x}", asc_first_byte);
+                                            return false;
+                                        }
                                     }
                                 }
                                 break;
@@ -1195,10 +1212,10 @@ impl Mp4Parser {
                         }
                     }
                     
-                    info!("ESDS modification needed: {}", needs_esds_modification);
+                    info!("ESDS AudioSpecificConfig modification needed: {}", needs_esds_modification);
                     
                     let box_data = if needs_esds_modification {
-                        info!("Applying ESDS modification to moov box for AAC object type 0x40 → 0x02 compatibility");
+                        info!("Applying ESDS AudioSpecificConfig fix: keeping objectTypeIndication=0x40, ensuring audioObjectType=2");
                         // Extract just the content part (without the box header)
                         if let BoxContent::Raw(content) = &box_info.content {
                             let modified_content = self.modify_esds_object_type(content);
@@ -1364,23 +1381,29 @@ impl Mp4Parser {
 
     /// Create fragments from a regular (non-fragmented) MP4 file
     /// 
-    /// This is more complex as we need to:
-    /// 1. Extract the moov box and modify it for fragmented streaming
-    /// 2. Split the mdat content into chunks
-    /// 3. Create moof boxes for each chunk
+    /// This creates proper MSE-compatible fragmented MP4 with:
+    /// 1. ftyp box (file type)
+    /// 2. Modified moov box with mvex (movie extends) for MSE compatibility
+    /// 3. Proper moof + mdat fragment pairs
     fn create_fragments_from_regular_mp4(&self) -> Result<Vec<MseSegment>, io::Error> {
-        warn!("Converting regular MP4 to fragmented format - this is a simplified implementation");
+        info!("Converting regular MP4 to MSE-compatible fragmented format");
         
         let mut segments = Vec::new();
         
-        // For now, create a single initialization segment with ftyp + moov
+        // Create MSE-compatible initialization segment with ftyp + modified moov
         let mut init_data = Vec::new();
         let mut mdat_data = Vec::new();
+        let mut original_moov: Option<&Mp4Box> = None;
         
         for box_info in &self.boxes {
             match box_info.header.box_type.as_str() {
-                "ftyp" | "moov" => {
+                "ftyp" => {
+                    // Copy ftyp box as-is
                     init_data.extend_from_slice(&self.serialize_box(box_info));
+                }
+                "moov" => {
+                    // Store reference to original moov for MSE conversion
+                    original_moov = Some(box_info);
                 }
                 "mdat" => {
                     // Store mdat for chunking
@@ -1390,6 +1413,15 @@ impl Mp4Parser {
                 }
                 _ => {}
             }
+        }
+        
+        // Create MSE-compatible moov box with mvex structure
+        if let Some(moov_box) = original_moov {
+            let mse_moov = self.create_mse_compatible_moov(moov_box)?;
+            init_data.extend_from_slice(&mse_moov);
+            info!("Created MSE-compatible moov box with mvex structure");
+        } else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "No moov box found in MP4"));
         }
         
         // Create initialization segment
@@ -1555,6 +1587,113 @@ impl Mp4Parser {
         
         debug!("Created minimal moof box ({} bytes)", moof_data.len());
         Ok(moof_data)
+    }
+
+    /// Create MSE-compatible moov box with mvex structure
+    /// 
+    /// Takes the original moov box and creates a new one with:
+    /// - All original track information 
+    /// - Added mvex (Movie Extends) box with trex for each track
+    /// - Proper MSE fragmentation headers
+    fn create_mse_compatible_moov(&self, original_moov: &Mp4Box) -> Result<Vec<u8>, io::Error> {
+        info!("Creating MSE-compatible moov box with mvex structure");
+        
+        // Get the original moov content
+        let original_content = match &original_moov.content {
+            BoxContent::Raw(data) => data,
+            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid moov box content")),
+        };
+        
+        // Apply ESDS AudioSpecificConfig modification for Chrome compatibility
+        let modified_content = if self.will_modify_esds {
+            info!("Applying ESDS AudioSpecificConfig fix during MSE moov creation");
+            self.modify_esds_object_type(original_content)
+        } else {
+            original_content.clone()
+        };
+        
+        // Create new moov content with mvex appended
+        let mut new_moov_content = modified_content;
+        
+        // Create and append mvex box
+        let mvex_box = self.create_mvex_box()?;
+        new_moov_content.extend_from_slice(&mvex_box);
+        
+        // Create complete moov box with updated size
+        let moov_size = 8 + new_moov_content.len() as u32;
+        let mut moov_data = Vec::new();
+        moov_data.extend_from_slice(&moov_size.to_be_bytes());
+        moov_data.extend_from_slice(b"moov");
+        moov_data.extend_from_slice(&new_moov_content);
+        
+        info!("Created MSE-compatible moov box: {} bytes (original: {} bytes)", 
+              moov_data.len(), original_moov.header.size);
+        
+        Ok(moov_data)
+    }
+    
+    /// Create mvex (Movie Extends) box required for MSE
+    /// 
+    /// The mvex box contains:
+    /// - mehd (Movie Extends Header) - optional
+    /// - trex (Track Extends) boxes for each track
+    fn create_mvex_box(&self) -> Result<Vec<u8>, io::Error> {
+        info!("Creating mvex box with trex entries for {} tracks", self.tracks.len());
+        
+        let mut mvex_content = Vec::new();
+        
+        // Create trex (Track Extends) box for each track
+        for track in &self.tracks {
+            let trex_box = self.create_trex_box(track.track_id)?;
+            mvex_content.extend_from_slice(&trex_box);
+            debug!("Added trex box for track {}", track.track_id);
+        }
+        
+        // Create complete mvex box
+        let mvex_size = 8 + mvex_content.len() as u32;
+        let mut mvex_data = Vec::new();
+        mvex_data.extend_from_slice(&mvex_size.to_be_bytes());
+        mvex_data.extend_from_slice(b"mvex");
+        mvex_data.extend_from_slice(&mvex_content);
+        
+        info!("Created mvex box: {} bytes with {} trex entries", mvex_data.len(), self.tracks.len());
+        Ok(mvex_data)
+    }
+    
+    /// Create trex (Track Extends) box for a specific track
+    /// 
+    /// The trex box defines default values for track fragments:
+    /// - track_id: Track identifier
+    /// - default_sample_description_index: Usually 1
+    /// - default_sample_duration: Default duration per sample
+    /// - default_sample_size: Default size per sample (0 = variable)
+    /// - default_sample_flags: Default sample flags
+    fn create_trex_box(&self, track_id: u32) -> Result<Vec<u8>, io::Error> {
+        // trex box content:
+        // version (1) + flags (3) + track_id (4) + default_sample_description_index (4) +
+        // default_sample_duration (4) + default_sample_size (4) + default_sample_flags (4)
+        let trex_content = vec![
+            0, 0, 0, 0, // version + flags
+            // track_id (4 bytes, big-endian)
+            (track_id >> 24) as u8,
+            (track_id >> 16) as u8,
+            (track_id >> 8) as u8,
+            track_id as u8,
+            0, 0, 0, 1, // default_sample_description_index = 1
+            0, 0, 0, 0, // default_sample_duration = 0 (variable)
+            0, 0, 0, 0, // default_sample_size = 0 (variable)
+            0, 0, 0, 0, // default_sample_flags = 0
+        ];
+        
+        // Create complete trex box
+        let trex_size = 8 + trex_content.len() as u32;
+        let mut trex_data = Vec::new();
+        trex_data.extend_from_slice(&trex_size.to_be_bytes());
+        trex_data.extend_from_slice(b"trex");
+        trex_data.extend_from_slice(&trex_content);
+        
+        debug!("Created trex box for track {}: {} bytes", track_id, trex_data.len());
+        Ok(trex_data)
     }
 
     /// Serialize an MP4 box back to binary format

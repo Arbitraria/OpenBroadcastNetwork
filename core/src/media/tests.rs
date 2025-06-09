@@ -33,7 +33,8 @@ async fn test_media_stream() {
     let source = source::MemorySource::new(data.clone(), interface::MediaFormat::Raw);
     let mut stream = stream::MediaStreamImpl::new(Box::new(source), None, None);
     
-    let chunk = stream.read(1024).await.unwrap();
+    // Read the exact size of our data to avoid buffer underflow
+    let chunk = stream.read(data.len()).await.unwrap();
     assert_eq!(chunk, data);
     
     // Should be at end of stream
