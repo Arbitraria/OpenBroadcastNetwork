@@ -1211,6 +1211,20 @@ impl Mp4Parser {
     fn extract_fragmented_segments(&self) -> Result<Vec<MseSegment>, io::Error> {
         let mut segments = Vec::new();
         
+        // Check if we have AC-3 audio that needs video-only mode
+        let has_ac3_audio = self.tracks.iter().any(|track| {
+            if track.media_type == "soun" && track.codec_params.as_deref() == Some("AC-3") {
+                info!("AC-3 audio detected in track {} - Chrome MSE does not support AC-3", track.track_id);
+                true
+            } else {
+                false
+            }
+        });
+        
+        if has_ac3_audio {
+            warn!("AC-3 audio detected - will create video-only initialization segment for Chrome MSE compatibility");
+        }
+        
         // Create initialization segment from ftyp + moov boxes
         let mut init_data = Vec::new();
         
@@ -1249,7 +1263,31 @@ impl Mp4Parser {
                     init_data.extend_from_slice(&box_data);
                 }
                 "moov" => {
-                    // Add moov box with ESDS modification if needed
+                    // Check if we need video-only mode for AC-3 audio
+                    if has_ac3_audio {
+                        info!("Creating video-only moov box due to AC-3 audio incompatibility");
+                        
+                        // Create video-only moov box by removing audio tracks
+                        if let BoxContent::Raw(content) = &box_info.content {
+                            let video_only_content = self.create_video_only_moov(content);
+                            
+                            // Reconstruct the box with video-only content
+                            let mut video_only_box = Vec::new();
+                            let total_size = 8 + video_only_content.len() as u32;
+                            video_only_box.extend_from_slice(&total_size.to_be_bytes());
+                            video_only_box.extend_from_slice(b"moov");
+                            video_only_box.extend_from_slice(&video_only_content);
+                            
+                            info!("Created video-only moov box: {} bytes (original: {} bytes)", 
+                                  video_only_box.len(), self.serialize_box(box_info).len());
+                            
+                            included_boxes.push(format!("moov-video-only({} bytes)", video_only_box.len()));
+                            init_data.extend_from_slice(&video_only_box);
+                            continue; // Skip the regular moov processing
+                        }
+                    }
+                    
+                    // Regular moov processing (with ESDS modification if needed)
                     let original_box_data = self.serialize_box(box_info);
                     
                     // Check if we need to modify ESDS (only for audio tracks with object type 0x40)
@@ -1448,6 +1486,22 @@ impl Mp4Parser {
     /// 3. Proper moof + mdat fragment pairs
     fn create_fragments_from_regular_mp4(&mut self) -> Result<Vec<MseSegment>, io::Error> {
         info!("Converting regular MP4 to MSE-compatible fragmented format");
+        
+        // Check if we have AC-3 audio that needs video-only mode
+        let has_ac3_audio = self.tracks.iter().any(|track| {
+            if track.media_type == "soun" && track.codec_params.as_deref() == Some("AC-3") {
+                error!("🚨 AC-3 AUDIO DETECTED in track {} - Chrome MSE does not support AC-3!", track.track_id);
+                error!("🎬 ACTIVATING VIDEO-ONLY MODE for Chrome compatibility");
+                true
+            } else {
+                false
+            }
+        });
+        
+        if has_ac3_audio {
+            error!("⚠️ AC-3 AUDIO INCOMPATIBLE WITH CHROME MSE - Creating video-only initialization segment");
+            error!("🎬 VIDEO-ONLY MODE ACTIVE - Audio tracks will be removed from moov box");
+        }
         
         let mut segments = Vec::new();
         
@@ -1687,8 +1741,16 @@ impl Mp4Parser {
             _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid moov box content")),
         };
         
-        // Apply ESDS AudioSpecificConfig modification for Chrome compatibility
-        let modified_content = if self.will_modify_esds {
+        // Check if we have AC-3 audio that needs video-only mode
+        let has_ac3_audio = self.tracks.iter().any(|track| {
+            track.media_type == "soun" && track.codec_params.as_deref() == Some("AC-3")
+        });
+        
+        let modified_content = if has_ac3_audio {
+            error!("🚨 AC-3 AUDIO IN MOOV - Creating video-only moov box!");
+            error!("🎬 REMOVING AUDIO TRACKS from moov box for Chrome MSE compatibility");
+            self.create_video_only_moov(original_content)
+        } else if self.will_modify_esds {
             info!("Applying ESDS AudioSpecificConfig fix during MSE moov creation");
             self.modify_esds_object_type(original_content)
         } else {
@@ -1932,6 +1994,115 @@ impl Mp4Parser {
         info!("  Added: default-base-is-moof (relative addressing for MSE)");
         
         true
+    }
+
+    /// Create a video-only moov box by removing audio tracks
+    fn create_video_only_moov(&self, moov_content: &[u8]) -> Vec<u8> {
+        error!("🎬 CREATING VIDEO-ONLY MOOV BOX - Removing all audio tracks");
+        info!("Original moov box size: {} bytes", moov_content.len());
+        
+        let mut output = Vec::new();
+        let mut cursor = 0;
+        
+        // Parse child boxes within moov
+        while cursor + 8 <= moov_content.len() {
+            let box_size = u32::from_be_bytes([
+                moov_content[cursor], 
+                moov_content[cursor + 1],
+                moov_content[cursor + 2], 
+                moov_content[cursor + 3]
+            ]) as usize;
+            
+            if box_size < 8 || cursor + box_size > moov_content.len() {
+                warn!("Invalid box size {} at offset {}", box_size, cursor);
+                break;
+            }
+            
+            let box_type = String::from_utf8_lossy(&moov_content[cursor + 4..cursor + 8]);
+            debug!("Processing moov child box '{}' at offset {}, size {}", box_type, cursor, box_size);
+            
+            match box_type.as_ref() {
+                "trak" => {
+                    // Check if this is a video track by parsing the trak box
+                    if self.is_video_track(&moov_content[cursor..cursor + box_size]) {
+                        info!("Including video track in video-only moov");
+                        output.extend_from_slice(&moov_content[cursor..cursor + box_size]);
+                    } else {
+                        info!("Skipping audio track in video-only moov");
+                    }
+                }
+                _ => {
+                    // Include all other boxes (mvhd, udta, etc.)
+                    debug!("Including '{}' box in video-only moov", box_type);
+                    output.extend_from_slice(&moov_content[cursor..cursor + box_size]);
+                }
+            }
+            
+            cursor += box_size;
+        }
+        
+        info!("Video-only moov created: {} bytes (reduced from {} bytes)", 
+              output.len(), moov_content.len());
+        
+        output
+    }
+    
+    /// Check if a trak box contains a video track
+    fn is_video_track(&self, trak_data: &[u8]) -> bool {
+        // Parse trak box to find mdia/hdlr box
+        let mut cursor = 8; // Skip trak box header
+        
+        while cursor + 8 <= trak_data.len() {
+            let box_size = u32::from_be_bytes([
+                trak_data[cursor], 
+                trak_data[cursor + 1],
+                trak_data[cursor + 2], 
+                trak_data[cursor + 3]
+            ]) as usize;
+            
+            if box_size < 8 || cursor + box_size > trak_data.len() {
+                break;
+            }
+            
+            let box_type = String::from_utf8_lossy(&trak_data[cursor + 4..cursor + 8]);
+            
+            if box_type == "mdia" {
+                // Found mdia box, look for hdlr inside it
+                let mdia_end = cursor + box_size;
+                let mut mdia_cursor = cursor + 8; // Skip mdia header
+                
+                while mdia_cursor + 8 <= mdia_end {
+                    let inner_box_size = u32::from_be_bytes([
+                        trak_data[mdia_cursor], 
+                        trak_data[mdia_cursor + 1],
+                        trak_data[mdia_cursor + 2], 
+                        trak_data[mdia_cursor + 3]
+                    ]) as usize;
+                    
+                    if inner_box_size < 8 || mdia_cursor + inner_box_size > mdia_end {
+                        break;
+                    }
+                    
+                    let inner_box_type = String::from_utf8_lossy(&trak_data[mdia_cursor + 4..mdia_cursor + 8]);
+                    
+                    if inner_box_type == "hdlr" && mdia_cursor + 16 <= mdia_end {
+                        // hdlr box structure: size(4) + type(4) + version(1) + flags(3) + component_type(4)
+                        let handler_type = String::from_utf8_lossy(&trak_data[mdia_cursor + 12..mdia_cursor + 16]);
+                        debug!("Found handler type: '{}'", handler_type);
+                        
+                        // Return true if this is a video handler
+                        return handler_type == "vide";
+                    }
+                    
+                    mdia_cursor += inner_box_size;
+                }
+            }
+            
+            cursor += box_size;
+        }
+        
+        // Default to false if we couldn't determine
+        false
     }
 
     /// Serialize an MP4 box back to binary format

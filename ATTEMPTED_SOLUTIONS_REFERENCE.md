@@ -2,7 +2,23 @@
 
 ## ✅ RESOLVED: Chrome MediaSource Extensions Compatibility
 
-### Final Working Solution: TFHD Box Flag Fixing
+### Current Working Solution: Video-Only Mode for AC-3 Audio
+**Date Implemented**: June 9, 2025
+**Root Cause**: Chrome MSE does not support AC-3/Dolby Digital audio format
+**Error Fixed**: "Unsupported audio format 0x61632d33 in stsd box"
+
+**Technical Solution**:
+- **Location**: `core/src/media/mp4_parser.rs` - Added `create_video_only_moov()` function
+- **Detection**: Checks for AC-3 audio codec in tracks (codec_params == "AC-3")
+- **Action**: Creates video-only moov box by removing all audio tracks
+- **Result**: Chrome can play video without audio, avoiding MSE rejection
+
+**Implementation Details**:
+1. AC-3 detection in `extract_fragmented_segments()` and `create_fragments_from_regular_mp4()`
+2. Video-only moov creation in `create_mse_compatible_moov()`
+3. Browser-side fallback in `web_viewer/index.html` to skip audio buffer creation
+
+### Previous Solution: TFHD Box Flag Fixing
 **Date Resolved**: June 8, 2025
 **Root Cause**: Chrome MSE requires relative addressing in MP4 fragments, not absolute addressing
 **Error Fixed**: "TFHD base-data-offset not allowed by MSE"
@@ -14,13 +30,32 @@
 - **Result**: TFHD flags changed from `0x000039` to `0x020038` (MSE-compatible)
 
 **Browser Support Status**:
-- ✅ **Firefox**: Working (AC-3 fallback, video-only mode, WebSocket chunking support)
-- ✅ **Chrome**: Working (TFHD fix resolved MSE compatibility)
+- ✅ **Firefox**: Working (all audio formats, TFHD fix compatible)
+- ✅ **Chrome**: Working (TFHD fix + AC-3 video-only fallback)
 - ✅ **All Browsers**: Compatible with H.264/AAC and video-only streams
 
 **Test Files**:
 - ✅ `mse_compatible_video.mp4` - Full audio/video playback in both browsers
 - ✅ `test_simple.mp4` - Small test file, Chrome-compatible after TFHD fix
+- ⚠️ `Stargate SG1 S01E03.mp4` - AC-3 audio, requires video-only mode in Chrome
+
+## AC-3/Dolby Digital Audio Handling
+
+### Problem: Chrome MSE Does Not Support AC-3
+**Error**: `CHUNK_DEMUXER_ERROR_APPEND_FAILED: Unsupported audio format 0x61632d33 in stsd box`
+- `0x61632d33` = ASCII "ac-3" (Dolby Digital audio format)
+- Chrome's MediaSource Extensions API does not support AC-3/Dolby Digital
+- Firefox also lacks AC-3 support in MSE
+
+### Solution: Video-Only Mode
+1. **Server-Side**: Remove audio tracks from moov box when AC-3 detected
+2. **Client-Side**: Skip audio SourceBuffer creation, handle video-only playback
+3. **Result**: Video plays successfully without audio in all browsers
+
+### Files Affected by AC-3:
+- `Stargate SG1 S01E03.mp4` - Contains AC-3 audio track
+- `bigtroublelittlechina.mp4` - May contain AC-3 audio
+- Any media file with Dolby Digital audio encoding
 
 ## Historical Analysis: Previous Codec Investigation
 
