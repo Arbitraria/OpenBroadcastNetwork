@@ -857,3 +857,134 @@ This confirms:
 - Need to verify this function is called during video_only.mp4 processing
 
 **Test approach**: Verify TFHD flag state in current segments and ensure fix is applied.
+
+## 🚨 PROGRESSIVE STREAMING TRANSCODING ISSUE - December 10, 2025, 19:17 UTC
+
+### ❌ **Critical Problem**: No Initialization Segment in Progressive Streaming
+
+**User Request Context**: User asked for progressive streaming transcoding: "can we make it so it loads pieces as they are transcoded?" 
+
+**Implementation Status**: ✅ Progressive transcoding infrastructure implemented and working
+- ✅ AC-3 detection working: "Detected AC-3/E-AC-3 audio in Stargate SG1 S01E03.mp4"
+- ✅ FFmpeg progressive transcoding: "Starting progressive transcoding" with proper fMP4 flags  
+- ✅ Transcoding completion: "FFmpeg transcoding completed successfully"
+- ✅ WebSocket infrastructure: Client connections successful
+
+**Critical Failure**: ❌ **"No initialization segment available for client"**
+
+#### Root Cause Analysis 🔍
+
+**Server-side logs show**:
+```
+[WARN] No initialization segment available for client ca0ccbe6-4160-4758-a9fe-456144531fd6
+[INFO] Sent end_of_stream signal to client ca0ccbe6-4160-4758-a9fe-456144531fd6  
+[INFO] Progressive transcoding completed - sent 0 segments
+```
+
+**Browser-side debug shows**:
+```
+[3:15:28 PM] Received end_of_stream signal - finalizing MediaSource
+[3:15:28 PM] Video error: DEMUXER_ERROR_COULD_NOT_OPEN: MediaSource endOfStream before demuxer initialization completes
+[3:15:28 PM] Still no buffered ranges after endOfStream()
+```
+
+#### Problem Analysis 📊
+
+**Data Flow Issue**: Progressive transcoding completes successfully but no segments reach the WebSocket clients.
+
+**Current Implementation Gap**:
+1. ✅ FFmpeg generates progressive fMP4 output to `/tmp/.tmpXXXXXX.mp4`
+2. ✅ Monitor task waits 3 seconds for file readiness  
+3. ❌ **Missing**: Segment parsing and delivery from transcoded file to WebSocket
+4. ❌ **Result**: No initialization segment stored, no media segments sent
+
+**Code Location**: `core/src/media/streaming_transcoder.rs:155-217`
+
+#### Technical Issue: Simplified Monitor Implementation 🔧
+
+**Current monitor logic** (`streaming_transcoder.rs:155-217`):
+```rust
+// Read the file and parse it - simplified approach to avoid Send issues
+for attempt in 0..30 {
+    if let Ok(file_data) = tokio::fs::read(&output_path).await {
+        if file_data.len() > 1000 { 
+            // Send raw data as segments (WRONG - bypasses MP4 parsing)
+            let init_segment = TranscodedSegment {
+                segment_type: "initialization".to_string(),
+                data: file_data[0..min(file_data.len() / 2, 1MB)].to_vec(),
+                // ...
+            };
+        }
+    }
+}
+```
+
+**Problem**: The implementation sends **raw binary chunks** instead of **proper MP4 segments**.
+
+#### Missing Integration: MP4 Parser Pipeline ❌
+
+**What should happen**:
+1. ✅ FFmpeg writes progressive fMP4 to temp file
+2. ❌ **Missing**: Parse temp file with `Mp4Parser::process_media_file_codec_aware()`
+3. ❌ **Missing**: Extract proper initialization segment and media segments  
+4. ❌ **Missing**: Send parsed segments through `TranscodedSegment` channel
+5. ❌ **Missing**: WebSocket handler receives and delivers proper MP4 segments
+
+**Current gap**: Streaming transcoder bypasses the entire MP4 parsing pipeline.
+
+#### Architecture Problem: Send Trait Workaround 🏗️
+
+**Why parsing was removed**: Code comments show the original implementation had `Send` trait issues:
+```rust
+// Read the file and parse it - simplified approach to avoid Send issues  
+// This avoids the Send trait issues with Mp4Parser
+```
+
+**The "simplified approach"** was a **temporary workaround** that became **permanent**, breaking the segment delivery pipeline.
+
+#### Required Fix: Proper MP4 Integration 🔧
+
+**Needed changes**:
+
+1. **Fix Send trait issues** in `Mp4Parser` to work in async context
+2. **Restore MP4 parsing** in monitor task:
+   ```rust
+   // Create parser and process transcoded file  
+   let mut mp4_parser = Mp4Parser::new();
+   let segments = mp4_parser.process_media_file_codec_aware(&output_path, false)?;
+   
+   // Send proper initialization segment
+   for segment in segments {
+       let transcoded = TranscodedSegment {
+           segment_type: segment.segment_type,
+           data: segment.data,
+           timestamp: segment.timestamp.map(|t| t as i64),
+           duration: segment.duration.map(|d| d as u32),
+           is_keyframe: segment.is_keyframe,
+       };
+       segment_tx.send(transcoded).await?;
+   }
+   ```
+
+3. **WebSocket integration**: Ensure `StreamManager` properly handles `TranscodedSegment` delivery
+
+#### User Impact: Progressive Streaming Not Working ⚠️
+
+**Current state**: 
+- ✅ User can see transcoding progress in logs
+- ❌ User gets immediate "end of stream" with no video content
+- ❌ Progressive streaming benefit not delivered (main user request)
+
+**Expected behavior**:
+- ✅ Transcoding starts immediately  
+- ✅ Initialization segment becomes available within seconds
+- ✅ Media segments arrive progressively during transcoding
+- ✅ User can start watching while transcoding continues
+
+#### Commit Record 📝
+
+**Implementation completed**: Progressive transcoding infrastructure with FFmpeg integration
+**Critical gap**: MP4 parsing integration removed due to Send trait workaround
+**User impact**: Progressive streaming appears to work but delivers no content
+
+This represents a **critical architectural gap** between the transcoding system and the media delivery pipeline.
