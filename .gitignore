@@ -29,4 +29,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
-.history/ 
+.history/
+
+# Video files (too large for git)
+*.mp4 
