@@ -32,4 +32,11 @@ Thumbs.db
 .history/
 
 # Video files (too large for git)
-*.mp4 
+*.mp4
+
+# Logs directory
+logs/
+
+# Webpack build outputs
+web_viewer/main.*.js
+web_viewer/main.*.js.map 

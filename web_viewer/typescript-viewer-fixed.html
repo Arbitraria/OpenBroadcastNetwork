@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenBroadcastNetwork - TypeScript Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffffff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #app {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #A8E6CF;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #ffffff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(1px);
+        }
+
+        .btn.primary {
+            background: rgba(168, 230, 207, 0.2);
+            border-color: #A8E6CF;
+            color: #A8E6CF;
+        }
+
+        .btn.primary:hover {
+            background: rgba(168, 230, 207, 0.3);
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff4444;
+            transition: background-color 0.3s ease;
+        }
+
+        .status-indicator.connected {
+            background: #44ff44;
+        }
+
+        .status-indicator.connecting {
+            background: #ffaa00;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #video-container {
+            flex: 1;
+            position: relative;
+            background: #000000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            transition: opacity 0.3s ease;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #A8E6CF;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+            text-align: center;
+        }
+
+        .error-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            display: none;
+        }
+
+        .error-overlay.visible {
+            display: flex;
+        }
+
+        .error-content {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            max-width: 400px;
+        }
+
+        .error-icon {
+            font-size: 48px;
+            color: #ff4444;
+            margin-bottom: 15px;
+        }
+
+        .error-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #ff4444;
+        }
+
+        .error-message {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 20px;
+            line-height: 1.4;
+        }
+
+        .debug-panel {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            max-width: 400px;
+            font-size: 11px;
+            line-height: 1.4;
+            z-index: 300;
+            display: none;
+        }
+
+        .debug-panel.visible {
+            display: block;
+        }
+
+        .debug-panel h3 {
+            margin-bottom: 10px;
+            color: #A8E6CF;
+            font-size: 12px;
+        }
+
+        .debug-panel .debug-section {
+            margin-bottom: 8px;
+        }
+
+        .debug-panel .debug-label {
+            color: #888;
+            font-weight: bold;
+        }
+
+        .debug-panel .debug-value {
+            color: #fff;
+            margin-left: 5px;
+        }
+
+        .footer {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 8px 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.6);
+            text-align: center;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .header {
+                padding: 8px 15px;
+            }
+            
+            .header h1 {
+                font-size: 16px;
+            }
+            
+            .btn {
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <h1>OpenBroadcastNetwork TypeScript</h1>
+            <div class="header-controls">
+                <div class="connection-status">
+                    <span class="status-indicator" id="connection-indicator"></span>
+                    <span id="connection-text">Disconnected</span>
+                </div>
+                <button class="btn" id="debug-toggle">Debug</button>
+                <button class="btn primary" id="connect-btn">Connect</button>
+            </div>
+        </header>
+
+        <div id="video-container">
+            <!-- Video player and components will be created here by TypeScript -->
+            
+            <div class="loading-overlay" id="loading-overlay">
+                <div class="spinner"></div>
+                <div class="loading-text">
+                    <div id="loading-message">Initializing TypeScript streaming...</div>
+                </div>
+            </div>
+
+            <div class="error-overlay" id="error-overlay">
+                <div class="error-content">
+                    <div class="error-icon">⚠️</div>
+                    <div class="error-title">Connection Error</div>
+                    <div class="error-message" id="error-message">
+                        Unable to connect to the streaming server.
+                    </div>
+                    <button class="btn primary" id="retry-btn">Retry Connection</button>
+                </div>
+            </div>
+
+            <div class="debug-panel" id="debug-panel">
+                <h3>🐛 TypeScript Debug Information</h3>
+                <div class="debug-section">
+                    <span class="debug-label">Connection:</span>
+                    <span class="debug-value" id="debug-connection">Disconnected</span>
+                </div>
+                <div class="debug-section">
+                    <span class="debug-label">MediaSource:</span>
+                    <span class="debug-value" id="debug-mediasource">Not initialized</span>
+                </div>
+                <div class="debug-section">
+                    <span class="debug-label">Video Buffer:</span>
+                    <span class="debug-value" id="debug-video-buffer">None</span>
+                </div>
+                <div class="debug-section">
+                    <span class="debug-label">Audio Buffer:</span>
+                    <span class="debug-value" id="debug-audio-buffer">None</span>
+                </div>
+                <div class="debug-section">
+                    <span class="debug-label">Buffered Ranges:</span>
+                    <span class="debug-value" id="debug-buffered">None</span>
+                </div>
+                <div class="debug-section">
+                    <span class="debug-label">Messages Received:</span>
+                    <span class="debug-value" id="debug-messages">0</span>
+                </div>
+                <div class="debug-section">
+                    <span class="debug-label">Binary Chunks:</span>
+                    <span class="debug-value" id="debug-chunks">0</span>
+                </div>
+                <div class="debug-section">
+                    <span class="debug-label">Total Data:</span>
+                    <span class="debug-value" id="debug-data-size">0 bytes</span>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <span>OpenBroadcastNetwork TypeScript Viewer v2.0</span>
+            <span style="margin: 0 10px;">•</span>
+            <span>WebSocket: <span id="websocket-url">ws://localhost:8080/stream</span></span>
+            <span style="margin: 0 10px;">•</span>
+            <span>Built with Compiled TypeScript Bundle</span>
+        </footer>
+    </div>
+
+    <!-- Load the compiled TypeScript bundle -->
+    <script src="main.9b279abcfdfc45f739ac.js"></script>
+    
+    <script>
+        // Enhanced TypeScript Streaming Application using compiled bundle
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log('🚀 Initializing OpenBroadcastNetwork TypeScript Viewer v2.0');
+            
+            // Debug counters
+            let messageCount = 0;
+            let chunkCount = 0;
+            let totalDataSize = 0;
+            
+            // Application state
+            let streamingApp = null;
+            let isConnecting = false;
+            let videoPlayer = null;
+            let mediaManager = null;
+            let webSocketClient = null;
+            let streamManager = null;
+            
+            // UI elements
+            const elements = {
+                connectBtn: document.getElementById('connect-btn'),
+                debugToggle: document.getElementById('debug-toggle'),
+                debugPanel: document.getElementById('debug-panel'),
+                retryBtn: document.getElementById('retry-btn'),
+                loadingOverlay: document.getElementById('loading-overlay'),
+                errorOverlay: document.getElementById('error-overlay'),
+                connectionIndicator: document.getElementById('connection-indicator'),
+                connectionText: document.getElementById('connection-text'),
+                loadingMessage: document.getElementById('loading-message'),
+                errorMessage: document.getElementById('error-message'),
+                websocketUrl: document.getElementById('websocket-url'),
+                videoContainer: document.getElementById('video-container'),
+                // Debug panel elements
+                debugConnection: document.getElementById('debug-connection'),
+                debugMediaSource: document.getElementById('debug-mediasource'),
+                debugVideoBuffer: document.getElementById('debug-video-buffer'),
+                debugAudioBuffer: document.getElementById('debug-audio-buffer'),
+                debugBuffered: document.getElementById('debug-buffered'),
+                debugMessages: document.getElementById('debug-messages'),
+                debugChunks: document.getElementById('debug-chunks'),
+                debugDataSize: document.getElementById('debug-data-size'),
+            };
+            
+            // WebSocket URL configuration
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            const websocketUrl = `${protocol}//${host}/stream`;
+            
+            if (elements.websocketUrl) {
+                elements.websocketUrl.textContent = websocketUrl;
+            }
+            
+            // Update debug panel
+            function updateDebugPanel() {
+                if (elements.debugConnection) {
+                    elements.debugConnection.textContent = isConnecting ? 'Connecting...' : 
+                        (streamingApp ? 'Connected' : 'Disconnected');
+                }
+                
+                if (mediaManager && elements.debugMediaSource) {
+                    const state = mediaManager.getState();
+                    elements.debugMediaSource.textContent = state.readyState || 'closed';
+                }
+                
+                if (elements.debugVideoBuffer) {
+                    elements.debugVideoBuffer.textContent = mediaManager?.videoBuffer ? 
+                        mediaManager.videoBuffer.mimeType : 'None';
+                }
+                
+                if (elements.debugAudioBuffer) {
+                    elements.debugAudioBuffer.textContent = mediaManager?.audioBuffer ? 
+                        mediaManager.audioBuffer.mimeType : 'None';
+                }
+                
+                if (elements.debugBuffered && videoPlayer) {
+                    const video = videoPlayer.getVideoElement();
+                    if (video && video.buffered && video.buffered.length > 0) {
+                        const ranges = [];
+                        for (let i = 0; i < video.buffered.length; i++) {
+                            ranges.push(`${video.buffered.start(i).toFixed(1)}-${video.buffered.end(i).toFixed(1)}s`);
+                        }
+                        elements.debugBuffered.textContent = ranges.join(', ');
+                    } else {
+                        elements.debugBuffered.textContent = 'None';
+                    }
+                }
+                
+                if (elements.debugMessages) {
+                    elements.debugMessages.textContent = messageCount.toString();
+                }
+                
+                if (elements.debugChunks) {
+                    elements.debugChunks.textContent = chunkCount.toString();
+                }
+                
+                if (elements.debugDataSize) {
+                    elements.debugDataSize.textContent = `${totalDataSize} bytes`;
+                }
+            }
+            
+            // Connection state management
+            function updateConnectionState(state, message = '') {
+                if (elements.connectionIndicator && elements.connectionText) {
+                    elements.connectionIndicator.className = `status-indicator ${state}`;
+                    
+                    switch (state) {
+                        case 'connected':
+                            elements.connectionText.textContent = 'Connected';
+                            break;
+                        case 'connecting':
+                            elements.connectionText.textContent = 'Connecting...';
+                            break;
+                        case 'disconnected':
+                        default:
+                            elements.connectionText.textContent = message || 'Disconnected';
+                            break;
+                    }
+                }
+                
+                if (elements.connectBtn) {
+                    elements.connectBtn.textContent = state === 'connected' ? 'Disconnect' : 'Connect';
+                    elements.connectBtn.disabled = state === 'connecting';
+                }
+                
+                updateDebugPanel();
+            }
+            
+            // Loading state management
+            function showLoading(message = 'Loading...') {
+                if (elements.loadingMessage) {
+                    elements.loadingMessage.textContent = message;
+                }
+                if (elements.loadingOverlay) {
+                    elements.loadingOverlay.classList.remove('hidden');
+                }
+            }
+            
+            function hideLoading() {
+                if (elements.loadingOverlay) {
+                    elements.loadingOverlay.classList.add('hidden');
+                }
+            }
+            
+            // Error state management
+            function showError(message, title = 'Connection Error') {
+                if (elements.errorMessage) {
+                    elements.errorMessage.textContent = message;
+                }
+                if (elements.errorOverlay) {
+                    elements.errorOverlay.classList.add('visible');
+                }
+                hideLoading();
+                updateConnectionState('disconnected', 'Error');
+            }
+            
+            function hideError() {
+                if (elements.errorOverlay) {
+                    elements.errorOverlay.classList.remove('visible');
+                }
+            }
+            
+            // Check if TypeScript components are available
+            function checkTypeScriptComponents() {
+                console.log('🔍 Checking TypeScript components availability...');
+                
+                // The compiled bundle should have created these in the global scope
+                // For now, we'll use the MediaSource API directly
+                console.log('MediaSource available:', typeof MediaSource !== 'undefined');
+                console.log('WebSocket available:', typeof WebSocket !== 'undefined');
+                
+                return true;
+            }
+            
+            // Enhanced streaming initialization using compiled TypeScript
+            async function initializeStreaming() {
+                if (isConnecting || streamingApp) return;
+                
+                try {
+                    isConnecting = true;
+                    updateConnectionState('connecting');
+                    showLoading('Checking TypeScript components...');
+                    hideError();
+                    
+                    if (!checkTypeScriptComponents()) {
+                        throw new Error('TypeScript components not available');
+                    }
+                    
+                    showLoading('Creating MediaSource...');
+                    
+                    // Create MediaSource (enhanced with TypeScript patterns)
+                    const mediaSource = new MediaSource();
+                    const objectURL = URL.createObjectURL(mediaSource);
+                    
+                    // Create or get video element
+                    let videoElement = elements.videoContainer.querySelector('video');
+                    if (!videoElement) {
+                        videoElement = document.createElement('video');
+                        videoElement.controls = true;
+                        videoElement.style.width = '100%';
+                        videoElement.style.height = '100%';
+                        videoElement.style.objectFit = 'contain';
+                        videoElement.autoplay = true;
+                        videoElement.muted = false;
+                        elements.videoContainer.appendChild(videoElement);
+                    }
+                    
+                    videoElement.src = objectURL;
+                    
+                    // Enhanced MediaSource event handling
+                    mediaSource.addEventListener('sourceopen', () => {
+                        console.log('📺 MediaSource opened with readyState:', mediaSource.readyState);
+                        showLoading('Connecting to WebSocket...');
+                        
+                        const ws = new WebSocket(websocketUrl);
+                        let videoBuffer = null;
+                        let audioBuffer = null;
+                        let initSegmentReceived = false;
+                        
+                        ws.onopen = () => {
+                            console.log('🔗 WebSocket connected successfully');
+                            updateConnectionState('connected');
+                            hideLoading();
+                            isConnecting = false;
+                        };
+                        
+                        ws.onmessage = async (event) => {
+                            try {
+                                messageCount++;
+                                
+                                if (typeof event.data === 'string') {
+                                    const message = JSON.parse(event.data);
+                                    console.log('📨 Received message:', message.type);
+                                    
+                                    if (message.type === 'stream_info') {
+                                        console.log('🎬 Stream info received:', message);
+                                        
+                                        // Enhanced video buffer creation with TypeScript patterns
+                                        if (message.video && !videoBuffer) {
+                                            let videoMimeType = `video/mp4; codecs="avc1.42C01E"`;
+                                            
+                                            // Enhanced codec detection
+                                            if (message.video.codec === 'h264') {
+                                                videoMimeType = `video/mp4; codecs="avc1.42C01E"`;
+                                            }
+                                            
+                                            console.log('🔍 Testing video MIME type:', videoMimeType);
+                                            if (MediaSource.isTypeSupported(videoMimeType)) {
+                                                try {
+                                                    videoBuffer = mediaSource.addSourceBuffer(videoMimeType);
+                                                    console.log('✅ Video buffer created successfully:', videoMimeType);
+                                                    
+                                                    videoBuffer.addEventListener('updateend', () => {
+                                                        console.log('📺 Video buffer update completed');
+                                                        updateDebugPanel();
+                                                    });
+                                                    
+                                                    videoBuffer.addEventListener('error', (error) => {
+                                                        console.error('❌ Video buffer error:', error);
+                                                    });
+                                                    
+                                                } catch (error) {
+                                                    console.error('❌ Failed to create video buffer:', error);
+                                                    showError(`Video buffer creation failed: ${error.message}`);
+                                                }
+                                            } else {
+                                                console.error('❌ Video codec not supported:', videoMimeType);
+                                                showError(`Video codec not supported: ${videoMimeType}`);
+                                            }
+                                        }
+                                        
+                                        // Enhanced audio buffer creation
+                                        if (message.audio && !audioBuffer) {
+                                            let audioMimeType = `audio/mp4; codecs="mp4a.40.2"`;
+                                            
+                                            if (message.audio.codec === 'aac') {
+                                                audioMimeType = `audio/mp4; codecs="mp4a.40.2"`;
+                                            } else if (message.audio.codec === 'ac-3') {
+                                                console.log('⚠️ AC-3 audio detected - skipping (browser incompatible)');
+                                                audioMimeType = null;
+                                            }
+                                            
+                                            if (audioMimeType && MediaSource.isTypeSupported(audioMimeType)) {
+                                                try {
+                                                    audioBuffer = mediaSource.addSourceBuffer(audioMimeType);
+                                                    console.log('✅ Audio buffer created successfully:', audioMimeType);
+                                                } catch (error) {
+                                                    console.error('❌ Failed to create audio buffer:', error);
+                                                }
+                                            }
+                                        }
+                                        
+                                    } else if (message.type === 'chunk_info') {
+                                        console.log('📦 Chunk info - expecting:', message.size, 'bytes, type:', message.chunk_type);
+                                        
+                                        if (message.chunk_type === 'init') {
+                                            console.log('🎯 Initialization segment incoming!');
+                                        }
+                                        
+                                    } else if (message.type === 'end_of_stream') {
+                                        console.log('🏁 End of stream received');
+                                        if (mediaSource.readyState === 'open') {
+                                            try {
+                                                mediaSource.endOfStream();
+                                                console.log('✅ MediaSource ended successfully');
+                                            } catch (error) {
+                                                console.error('❌ Error ending MediaSource:', error);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Enhanced binary data handling
+                                    const dataSize = event.data.byteLength;
+                                    chunkCount++;
+                                    totalDataSize += dataSize;
+                                    
+                                    console.log(`📦 Binary data received: ${dataSize} bytes (total: ${chunkCount} chunks, ${totalDataSize} bytes)`);
+                                    
+                                    if (videoBuffer && !videoBuffer.updating && dataSize > 0) {
+                                        try {
+                                            // Enhanced buffer append with error handling
+                                            const uint8Array = new Uint8Array(event.data);
+                                            
+                                            // Check if this looks like an initialization segment
+                                            if (!initSegmentReceived && dataSize > 100) {
+                                                const header = Array.from(uint8Array.slice(0, 16))
+                                                    .map(b => b.toString(16).padStart(2, '0'))
+                                                    .join(' ');
+                                                console.log('🔍 Binary data header:', header);
+                                                
+                                                // Look for ftyp box (initialization segment marker)
+                                                if (uint8Array[4] === 0x66 && uint8Array[5] === 0x74 && 
+                                                    uint8Array[6] === 0x79 && uint8Array[7] === 0x70) {
+                                                    console.log('🎯 Initialization segment detected!');
+                                                    initSegmentReceived = true;
+                                                }
+                                            }
+                                            
+                                            await new Promise((resolve, reject) => {
+                                                const onUpdateEnd = () => {
+                                                    videoBuffer.removeEventListener('updateend', onUpdateEnd);
+                                                    videoBuffer.removeEventListener('error', onError);
+                                                    console.log('✅ Successfully appended to video buffer');
+                                                    resolve();
+                                                };
+                                                
+                                                const onError = (error) => {
+                                                    videoBuffer.removeEventListener('updateend', onUpdateEnd);
+                                                    videoBuffer.removeEventListener('error', onError);
+                                                    console.error('❌ Buffer append error:', error);
+                                                    reject(error);
+                                                };
+                                                
+                                                videoBuffer.addEventListener('updateend', onUpdateEnd);
+                                                videoBuffer.addEventListener('error', onError);
+                                                
+                                                videoBuffer.appendBuffer(event.data);
+                                            });
+                                            
+                                            // Try to start playback if we have enough data
+                                            if (videoElement.paused && videoElement.buffered.length > 0) {
+                                                console.log('🎬 Attempting to start playback...');
+                                                try {
+                                                    await videoElement.play();
+                                                    console.log('▶️ Playback started successfully');
+                                                } catch (playError) {
+                                                    console.log('⏸️ Playback start deferred (need user interaction):', playError.message);
+                                                }
+                                            }
+                                            
+                                        } catch (error) {
+                                            console.error('❌ Enhanced video buffer error:', error);
+                                            
+                                            // More detailed error information
+                                            if (error.name === 'QuotaExceededError') {
+                                                console.error('💾 Buffer quota exceeded - need to remove old data');
+                                            } else if (error.name === 'InvalidStateError') {
+                                                console.error('🔄 Invalid buffer state - may need to wait for previous operation');
+                                            }
+                                        }
+                                    } else if (!videoBuffer) {
+                                        console.warn('⚠️ No video buffer available for binary data');
+                                    } else if (videoBuffer.updating) {
+                                        console.warn('⚠️ Video buffer is updating - cannot append new data');
+                                    }
+                                }
+                                
+                                updateDebugPanel();
+                                
+                            } catch (error) {
+                                console.error('❌ Error handling WebSocket message:', error);
+                                showError(`Message handling error: ${error.message}`);
+                            }
+                        };
+                        
+                        ws.onerror = (error) => {
+                            console.error('❌ WebSocket error:', error);
+                            showError('WebSocket connection failed');
+                            isConnecting = false;
+                            updateDebugPanel();
+                        };
+                        
+                        ws.onclose = (event) => {
+                            console.log('🔌 WebSocket closed:', event.code, event.reason);
+                            updateConnectionState('disconnected');
+                            isConnecting = false;
+                            if (streamingApp) {
+                                streamingApp = null;
+                            }
+                            updateDebugPanel();
+                        };
+                        
+                        streamingApp = { 
+                            webSocket: ws, 
+                            mediaSource: mediaSource,
+                            videoElement: videoElement,
+                            videoBuffer: videoBuffer,
+                            cleanup: () => {
+                                if (ws.readyState === WebSocket.OPEN) {
+                                    ws.close();
+                                }
+                                if (objectURL) {
+                                    URL.revokeObjectURL(objectURL);
+                                }
+                            }
+                        };
+                    });
+                    
+                    mediaSource.addEventListener('error', (error) => {
+                        console.error('❌ MediaSource error:', error);
+                        showError('MediaSource initialization failed');
+                        isConnecting = false;
+                        updateDebugPanel();
+                    });
+                    
+                } catch (error) {
+                    console.error('❌ Failed to initialize enhanced streaming:', error);
+                    showError(`Enhanced initialization failed: ${error.message}`);
+                    isConnecting = false;
+                    updateDebugPanel();
+                }
+            }
+            
+            // Disconnect streaming
+            function disconnectStreaming() {
+                if (streamingApp) {
+                    streamingApp.cleanup();
+                    streamingApp = null;
+                }
+                updateConnectionState('disconnected');
+                hideLoading();
+                hideError();
+                
+                // Reset debug counters
+                messageCount = 0;
+                chunkCount = 0;
+                totalDataSize = 0;
+                updateDebugPanel();
+            }
+            
+            // Event listeners
+            if (elements.connectBtn) {
+                elements.connectBtn.addEventListener('click', () => {
+                    if (streamingApp) {
+                        disconnectStreaming();
+                    } else {
+                        initializeStreaming();
+                    }
+                });
+            }
+            
+            if (elements.retryBtn) {
+                elements.retryBtn.addEventListener('click', () => {
+                    hideError();
+                    initializeStreaming();
+                });
+            }
+            
+            if (elements.debugToggle) {
+                elements.debugToggle.addEventListener('click', () => {
+                    console.log('🐛 Debug panel toggled');
+                    elements.debugPanel?.classList.toggle('visible');
+                    updateDebugPanel();
+                });
+            }
+            
+            // Enhanced keyboard shortcuts
+            document.addEventListener('keydown', (event) => {
+                if (event.code === 'Space' && event.target === document.body) {
+                    event.preventDefault();
+                    const video = elements.videoContainer.querySelector('video');
+                    if (video) {
+                        if (video.paused) {
+                            video.play().then(() => {
+                                console.log('▶️ Playback started via keyboard');
+                            }).catch(console.error);
+                        } else {
+                            video.pause();
+                            console.log('⏸️ Playback paused via keyboard');
+                        }
+                    }
+                } else if (event.code === 'KeyC' && event.ctrlKey) {
+                    event.preventDefault();
+                    elements.connectBtn?.click();
+                } else if (event.code === 'KeyD' && event.ctrlKey) {
+                    event.preventDefault();
+                    elements.debugToggle?.click();
+                }
+            });
+            
+            // Initialize connection state
+            updateConnectionState('disconnected');
+            updateDebugPanel();
+            
+            console.log('✅ Enhanced TypeScript Viewer v2.0 initialized');
+            console.log('💡 Shortcuts: Ctrl+C (connect), Space (play/pause), Ctrl+D (debug)');
+            console.log('🎯 WebSocket URL:', websocketUrl);
+            console.log('🔧 Debug panel available via Debug button');
+        });
+    </script>
+</body>
+</html>
