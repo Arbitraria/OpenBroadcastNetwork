@@ -10,7 +10,7 @@
 //! 1. **Network Layer (`Libp2pOverlay`)** - Implements the `Overlay` trait and manages
 //!    the libp2p Swarm. This is the entry point for network operations.
 //!
-//! 2. **Behavior Layer (`OverlayBehavior`)** - Combines multiple libp2p protocols 
+//! 2. **Behavior Layer (`OverlayBehavior`)** - Combines multiple libp2p protocols
 //!    (Gossipsub, Kademlia, Identify) into a unified behavior.
 //!
 //! 3. **Management Layer** - Specialized components that handle specific aspects:
@@ -26,45 +26,37 @@
 //! - `RwLock<T>` for data structures that are read frequently but written to occasionally
 
 // Core library imports
+use futures::channel::mpsc;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use std::pin::Pin;
-use std::future::Future;
-use futures::{FutureExt, StreamExt, SinkExt};
-use futures::channel::mpsc;
 use tokio::sync::{Mutex, RwLock};
 
 // External dependencies
-use libp2p::gossipsub::{self, Behaviour as Gossipsub, Event as GossipsubEvent, IdentTopic, MessageAuthenticity, MessageId, ConfigBuilder, ValidationMode};
-use libp2p::identify::{Behaviour as Identify, Event as IdentifyEvent, Config as IdentifyConfig};
-use libp2p::kad::{Behaviour as Kademlia, Event as KademliaEvent, Config as KademliaConfig, store::MemoryStore, QueryResult};
-use libp2p::tcp::Config as GenTcpConfig;
-use libp2p::noise;
 use libp2p::core::upgrade;
+use libp2p::gossipsub::{self, Behaviour as Gossipsub, MessageAuthenticity, ValidationMode};
+use libp2p::identify::{Behaviour as Identify, Config as IdentifyConfig};
 use libp2p::identity;
-use libp2p::{Transport, SwarmBuilder, Swarm};
-use libp2p::swarm::{SwarmEvent, NetworkBehaviour};
+use libp2p::kad::{store::MemoryStore, Behaviour as Kademlia, Config as KademliaConfig};
+use libp2p::noise;
+use libp2p::tcp::Config as GenTcpConfig;
 use libp2p::Multiaddr;
 use libp2p::PeerId as Libp2pPeerId;
-use tracing::{info, debug, warn, error};
-use tokio::time;
+use libp2p::{Swarm, SwarmBuilder, Transport};
+use tracing::{debug, warn};
 
 // Local crate imports
+use crate::discovery::{
+    BootstrapDiscoveryConfig, DhtDiscoveryConfig, DiscoveryManager, DiscoveryManagerConfig,
+};
 use crate::overlay::interface::{OverlayConfig, OverlayError, OverlayEvent, StreamId};
-use crate::overlay::peer::{Peer, LocalPeerId, PeerInfo, ConnectionStatus};
+use crate::overlay::libp2p::behavior::OverlayBehavior;
+use crate::overlay::mesh::{MeshConfig, MeshNetwork};
+use crate::overlay::peer::{LocalPeerId, Peer};
+use crate::overlay::relay::{RelayConfig, RelayManager};
 use crate::overlay::topology::{TopologyConfig, TopologyManager};
-use crate::overlay::relay::{RelayManager, RelayNode, RelayConfig, StreamChunk};
-use crate::overlay::mesh::{MeshNetwork, MeshConfig, StreamMesh, MeshStats};
-use crate::overlay::libp2p::behavior::{OverlayBehavior, OverlayBehaviorEvent};
-use crate::discovery::{DiscoveryManager, DiscoveryManagerConfig, BootstrapDiscoveryConfig, DhtDiscoveryConfig};
 
-// Import LocalPeerId directly
-use crate::overlay::libp2p::types::{to_libp2p_peer_id, from_libp2p_peer_id};
-// PeerId is already imported as Libp2pPeerId from libp2p on line 50
 use crate::overlay::libp2p::topics;
-use crate::overlay::libp2p::overlay_utils;
-use std::convert::TryFrom;
 
 /// libp2p implementation of the overlay network
 pub struct Libp2pOverlay {
@@ -85,17 +77,38 @@ pub struct Libp2pOverlay {
     /// Discovery manager
     pub discovery: Arc<Mutex<DiscoveryManager>>,
     /// Peers
-    pub peers: RwLock<HashMap<LocalPeerId, Peer>>,
+    pub peers: Arc<RwLock<HashMap<LocalPeerId, Peer>>>,
     /// Active streams
-    pub streams: RwLock<HashSet<StreamId>>,
+    pub streams: Arc<RwLock<HashSet<StreamId>>>,
     /// Event channel sender
     pub event_tx: mpsc::Sender<OverlayEvent>,
     /// Event channel receiver
-    pub event_rx: Mutex<mpsc::Receiver<OverlayEvent>>,
+    pub event_rx: Arc<Mutex<mpsc::Receiver<OverlayEvent>>>,
     /// Is the overlay running
-    pub running: RwLock<bool>,
-    /// Worker task handle - renamed from worker to worker_task
-    pub worker_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub running: Arc<RwLock<bool>>,
+    /// Worker task handle
+    pub worker_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+impl Clone for Libp2pOverlay {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            local_peer_id: self.local_peer_id.clone(),
+            libp2p_peer_id: self.libp2p_peer_id.clone(),
+            swarm: self.swarm.clone(),
+            topology: self.topology.clone(),
+            relay: self.relay.clone(),
+            mesh: self.mesh.clone(),
+            discovery: self.discovery.clone(),
+            peers: self.peers.clone(),
+            streams: self.streams.clone(),
+            event_tx: self.event_tx.clone(),
+            event_rx: self.event_rx.clone(),
+            running: self.running.clone(),
+            worker_task: self.worker_task.clone(),
+        }
+    }
 }
 
 impl Libp2pOverlay {
@@ -105,180 +118,189 @@ impl Libp2pOverlay {
         let local_key = identity::Keypair::generate_ed25519();
         let libp2p_peer_id = local_key.public().to_peer_id();
         let local_peer_id = LocalPeerId::from(libp2p_peer_id);
-        
+
         // Create channel for events
         let (event_tx, event_rx) = mpsc::channel(100);
-        
-        // Topology configuration
-        let topology_config = TopologyConfig::default();
-        
-        let topology = Arc::new(
-            TopologyManager::new(
-                libp2p_peer_id,
-                topology_config,
-                None // No metrics for now
-            )
-        );
-        
+
+        // Topology configuration - propagate geo-aware setting from OverlayConfig
+        let mut topology_config = TopologyConfig::default();
+        topology_config.enable_geo_aware = config.enable_geo_aware;
+
+        let topology = Arc::new(TopologyManager::new(
+            libp2p_peer_id,
+            topology_config,
+            None, // No metrics for now
+        ));
+
         // Relay configuration
         let relay_config = RelayConfig::default();
-        
-        let relay = Arc::new(
-            RelayManager::new(
-                libp2p_peer_id,
-                relay_config,
-                topology.clone()
-            )
-        );
-        
+
+        let relay = Arc::new(RelayManager::new(
+            libp2p_peer_id,
+            relay_config,
+            topology.clone(),
+        ));
+
         // Mesh configuration
         let mesh_config = MeshConfig::default();
-        
+
         let mesh = Arc::new(MeshNetwork::new(config.local_peer_id.clone(), mesh_config));
-        
+
         // Create discovery manager configuration
         let mut discovery_config = DiscoveryManagerConfig::default();
         discovery_config.enable_bootstrap = config.enable_bootstrap_discovery;
         discovery_config.enable_dht = config.enable_dht_discovery;
-        
+
         // Configure bootstrap discovery if enabled
         if config.enable_bootstrap_discovery {
             let mut bootstrap_config = BootstrapDiscoveryConfig::default();
-            // Convert bootstrap peers from strings to multiaddrs
-            for peer in &config.bootstrap_peers {
-                if let Ok(multiaddr) = peer.parse::<libp2p::Multiaddr>() {
-                    bootstrap_config.bootstrap_nodes.push(multiaddr);
+            if !config.bootstrap_peers.is_empty() {
+                for peer_str in &config.bootstrap_peers {
+                    if let Ok(addr) = peer_str.parse::<Multiaddr>() {
+                        bootstrap_config.bootstrap_nodes.push(addr);
+                    } else {
+                        warn!("Invalid bootstrap peer address: {}", peer_str);
+                    }
                 }
             }
             discovery_config.bootstrap_config = Some(bootstrap_config);
         }
-        
+
         // Configure DHT discovery if enabled
         if config.enable_dht_discovery {
             let mut dht_config = DhtDiscoveryConfig::default();
-            // Convert bootstrap peers from strings to multiaddrs
-            for peer in &config.bootstrap_peers {
-                if let Ok(multiaddr) = peer.parse::<libp2p::Multiaddr>() {
-                    dht_config.bootstrap_peers.push(multiaddr);
+            // In a real implementation, we'd configure DHT bootstrap nodes here
+            // For now, reuse the bootstrap peers if any
+            if !config.bootstrap_peers.is_empty() {
+                for peer_str in &config.bootstrap_peers {
+                    if let Ok(addr) = peer_str.parse::<Multiaddr>() {
+                        dht_config.bootstrap_peers.push(addr);
+                    }
                 }
             }
             discovery_config.dht_config = Some(dht_config);
         }
-        
+
         let discovery = Arc::new(Mutex::new(DiscoveryManager::new(discovery_config)));
-        
-        // Create the Libp2pOverlay
-        let overlay = Self {
-            local_peer_id: config.local_peer_id.clone(),
-            libp2p_peer_id,
+
+        // Swarm is created lazily when start() is called, but we initialize the container here
+        let swarm = Arc::new(Mutex::new(None));
+
+        Ok(Self {
             config,
-            swarm: Arc::new(Mutex::new(None)),
+            local_peer_id,
+            libp2p_peer_id,
+            swarm,
             topology,
             relay,
             mesh,
             discovery,
-            peers: RwLock::new(HashMap::new()),
-            streams: RwLock::new(HashSet::new()),
+            peers: Arc::new(RwLock::new(HashMap::new())),
+            streams: Arc::new(RwLock::new(HashSet::new())),
             event_tx,
-            event_rx: Mutex::new(event_rx),
-            running: RwLock::new(false),
-            worker_task: Mutex::new(None),
-        };
-        
-        Ok(overlay)
+            event_rx: Arc::new(Mutex::new(event_rx)),
+            running: Arc::new(RwLock::new(false)),
+            worker_task: Arc::new(Mutex::new(None)),
+        })
     }
-    
-    /// Initialize the swarm
+
+    /// Initialize the swarm with behaviors
     pub async fn init_swarm(&self) -> Result<Swarm<OverlayBehavior>, OverlayError> {
-        // Create a key pair for authentication
+        // Create keypair from local identity (in a real app we'd load this)
         let local_key = identity::Keypair::generate_ed25519();
-        let libp2p_peer_id = local_key.public().to_peer_id();
         
-        // Set up gossipsub
-        let gossipsub_config = ConfigBuilder::default()
+        // Create transport
+        let transport = libp2p::tcp::tokio::Transport::new(GenTcpConfig::default().nodelay(true))
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::Config::new(&local_key).map_err(|e| OverlayError::Other(format!("Noise init failed: {}", e)))?)
+            .multiplex(libp2p::yamux::Config::default())
+            .boxed();
+
+        // Create Gossipsub behavior
+        let gossipsub_config = libp2p::gossipsub::ConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(1))
             .validation_mode(ValidationMode::Strict)
             .build()
-            .expect("Valid gossipsub config");
-            
+            .map_err(|e| OverlayError::Other(format!("Invalid gossipsub config: {}", e)))?;
+
         let gossipsub = Gossipsub::new(
             MessageAuthenticity::Signed(local_key.clone()),
-            gossipsub_config
-        ).expect("Valid gossipsub");
-        
-        // Set up kademlia
-        let store = MemoryStore::new(libp2p_peer_id);
-        let kademlia = Kademlia::new(libp2p_peer_id, store);
-        
-        // Set up identify
-        let identify = Identify::new(
-            IdentifyConfig::new(
-                "/obn/0.1.0".to_string(),
-                local_key.public()
-            )
+            gossipsub_config,
+        ).map_err(|e| OverlayError::Other(format!("Failed to create gossipsub: {}", e)))?;
+
+        // Create Kademlia behavior
+        let store = MemoryStore::new(self.libp2p_peer_id);
+        let kademlia_config = KademliaConfig::default();
+        let kademlia = Kademlia::with_config(self.libp2p_peer_id, store, kademlia_config);
+
+        // Create Identify behavior
+        let identify_config = IdentifyConfig::new(
+            "/open-broadcast-network/1.0.0".to_string(),
+            local_key.public(),
         );
-        
-        // Create the behavior
+        let identify = Identify::new(identify_config);
+
+        // Combine behaviors
         let behavior = OverlayBehavior::new(
             gossipsub,
             kademlia,
             identify,
         );
-        
-        // Build the swarm with new libp2p 0.53.0 API
+
+        // Create Swarm
         let swarm = SwarmBuilder::with_existing_identity(local_key)
             .with_tokio()
-            .with_tcp(
-                GenTcpConfig::default().nodelay(true), 
-                noise::Config::new,
-                libp2p::yamux::Config::default
-            )
-            .map_err(|e| OverlayError::Other(format!("Failed to build swarm with TCP: {}", e)))?
+            .with_other_transport(|_key| transport)
+            .unwrap()
             .with_behaviour(|_| behavior)
             .map_err(|e| OverlayError::Other(format!("Failed to build swarm with behavior: {}", e)))?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
-        
+
         Ok(swarm)
     }
-    
+
     /// Run the swarm
     pub async fn run_swarm(&self) -> Result<(), OverlayError> {
         let mut swarm_lock = self.swarm.lock().await;
-        
+
         if swarm_lock.is_some() {
             return Ok(());
         }
-        
+
         // Initialize the swarm
         let mut swarm = self.init_swarm().await?;
-        
+
         // Setup listeners
-        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
+        swarm
+            .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
             .map_err(|e| OverlayError::Other(format!("Failed to listen: {:?}", e)))?;
-        
+
         // Connect to bootstrap peers
         for addr_str in &self.config.bootstrap_peers {
             match addr_str.parse::<Multiaddr>() {
                 Ok(addr) => {
                     debug!("Dialing bootstrap peer: {}", addr);
                     match swarm.dial(addr.clone()) {
-                        Ok(_) => {},
+                        Ok(_) => {}
                         Err(e) => warn!("Failed to dial bootstrap peer: {}", e),
                     }
-                },
+                }
                 Err(e) => warn!("Invalid bootstrap address {}: {}", addr_str, e),
             }
         }
-        
+
         // Start the discovery topic
         let discovery_topic = gossipsub::IdentTopic::new(topics::discovery());
-        swarm.behaviour_mut().gossipsub.subscribe(&discovery_topic)
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&discovery_topic)
             .map_err(|e| OverlayError::Other(format!("Failed to subscribe to discovery: {}", e)))?;
-        
+
         // Store the swarm
         *swarm_lock = Some(swarm);
-        
+
         Ok(())
     }
 
@@ -290,42 +312,35 @@ impl Libp2pOverlay {
         Ok(())
     }
 
-    /// Initialize the relay manager
-    pub async fn init_relay(&self) -> Result<(), OverlayError> {
-        debug!("Initializing relay manager");
-        // Initialize the relay manager
-        // For example, start background tasks, configure relay settings, etc.
-        Ok(())
-    }
-
-    /// Initialize the mesh network
-    pub async fn init_mesh(&self) -> Result<(), OverlayError> {
-        debug!("Initializing mesh network");
-        // Initialize the mesh network
-        // For example, establish initial connections, set up routing tables, etc.
-        Ok(())
-    }
-
     /// Stop the topology manager
     pub async fn stop_topology(&self) -> Result<(), OverlayError> {
         debug!("Stopping topology manager");
-        // Stop any background tasks, clean up resources, etc.
+        Ok(())
+    }
+
+    /// Initialize the relay manager
+    pub async fn init_relay(&self) -> Result<(), OverlayError> {
+        debug!("Initializing relay manager");
+        // This method would typically initialize the relay manager
         Ok(())
     }
 
     /// Stop the relay manager
     pub async fn stop_relay(&self) -> Result<(), OverlayError> {
         debug!("Stopping relay manager");
-        // Stop any background tasks, clean up resources, etc.
+        Ok(())
+    }
+
+    /// Initialize the mesh network
+    pub async fn init_mesh(&self) -> Result<(), OverlayError> {
+        debug!("Initializing mesh network");
+        // This method would typically initialize the mesh network
         Ok(())
     }
 
     /// Stop the mesh network
     pub async fn stop_mesh(&self) -> Result<(), OverlayError> {
         debug!("Stopping mesh network");
-        // Stop any background tasks, clean up resources, etc.
         Ok(())
     }
-
-    // NOTE: process_swarm_events method moved to event_handlers.rs
 }

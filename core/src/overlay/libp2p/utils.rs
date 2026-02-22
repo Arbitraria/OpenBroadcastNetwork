@@ -1,13 +1,13 @@
 //! Utility functions for the libp2p implementation
-//! 
+//!
 //! This module contains utility functions like peer ID conversion
 
+use crate::overlay::interface::OverlayError;
 use crate::overlay::peer::LocalPeerId;
 use libp2p::PeerId as Libp2pPeerId;
-use std::convert::{TryFrom, TryInto};
-use crate::overlay::interface::OverlayError;
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use serde::de::{self, Visitor};
+use serde::{Deserializer, Serializer};
+use std::convert::TryFrom;
 use std::fmt;
 use std::str::FromStr;
 
@@ -38,57 +38,63 @@ where
     D: Deserializer<'de>,
 {
     struct PeerIdVisitor;
-    
+
     impl<'de> Visitor<'de> for PeerIdVisitor {
         type Value = Libp2pPeerId;
-        
+
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a string containing a base58-encoded peer ID")
         }
-        
+
         fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
-            Libp2pPeerId::from_str(value).map_err(|_| de::Error::custom(format!("Invalid peer ID: {}", value)))
+            Libp2pPeerId::from_str(value)
+                .map_err(|_| de::Error::custom(format!("Invalid peer ID: {}", value)))
         }
     }
-    
+
     deserializer.deserialize_str(PeerIdVisitor)
 }
 
 /// Serialization helper for Option<PeerId>
-pub fn serialize_optional_peer_id<S>(peer_id: &Option<Libp2pPeerId>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_optional_peer_id<S>(
+    peer_id: &Option<Libp2pPeerId>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     match peer_id {
         Some(id) => serializer.serialize_some(&id.to_string()),
-        None => serializer.serialize_none()
+        None => serializer.serialize_none(),
     }
 }
 
 /// Deserialization helper for Option<PeerId>
-pub fn deserialize_optional_peer_id<'de, D>(deserializer: D) -> Result<Option<Libp2pPeerId>, D::Error>
+pub fn deserialize_optional_peer_id<'de, D>(
+    deserializer: D,
+) -> Result<Option<Libp2pPeerId>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct OptionalPeerIdVisitor;
-    
+
     impl<'de> Visitor<'de> for OptionalPeerIdVisitor {
         type Value = Option<Libp2pPeerId>;
-        
+
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a string containing a base58-encoded peer ID or null")
         }
-        
+
         fn visit_none<E>(self) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
             Ok(None)
         }
-        
+
         fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
         where
             D: Deserializer<'de>,
@@ -96,23 +102,24 @@ where
             deserializer.deserialize_str(PeerIdVisitor).map(Some)
         }
     }
-    
+
     struct PeerIdVisitor;
-    
+
     impl<'de> Visitor<'de> for PeerIdVisitor {
         type Value = Libp2pPeerId;
-        
+
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a string containing a base58-encoded peer ID")
         }
-        
+
         fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
-            Libp2pPeerId::from_str(value).map_err(|_| de::Error::custom(format!("Invalid peer ID: {}", value)))
+            Libp2pPeerId::from_str(value)
+                .map_err(|_| de::Error::custom(format!("Invalid peer ID: {}", value)))
         }
     }
-    
+
     deserializer.deserialize_option(OptionalPeerIdVisitor)
 }

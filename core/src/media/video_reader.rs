@@ -1,12 +1,12 @@
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
 // Simplified approach - just read file as raw bytes
-use thiserror::Error;
-use tracing::{debug, info, warn};
 use mp4parse::Status;
+use thiserror::Error;
+use tracing::{debug, info};
 
 #[derive(Error, Debug)]
 pub enum VideoReaderError {
@@ -71,34 +71,34 @@ impl VideoReader {
     /// Open an MP4 file for reading
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         info!("Opening video file: {:?}", path.as_ref());
-        
+
         // Read the entire file into memory (for simplicity)
         let mut file = File::open(path.as_ref())?;
         let mut file_data = Vec::new();
         file.read_to_end(&mut file_data)?;
-        
+
         info!("Read {} bytes from video file", file_data.len());
-        
+
         // Skip MP4 parsing for now - just use the raw file data
         info!("Using simplified video reader - treating file as raw media data");
-        
+
         let file_duration = Duration::from_secs(30); // Default duration - enough for proper playback
-        
+
         let mut video_reader = Self {
             video_track: None,
             audio_track: None,
             file_duration,
             file_data,
         };
-        
+
         video_reader.analyze_tracks()?;
         Ok(video_reader)
     }
-    
+
     /// Create default tracks since we're not parsing MP4 structure
     fn analyze_tracks(&mut self) -> Result<()> {
         info!("Creating default video track for simplified streaming");
-        
+
         // Create a default video track
         self.video_track = Some(VideoTrackInfo {
             track_id: 0,
@@ -109,48 +109,51 @@ impl VideoReader {
             duration: self.file_duration,
             bitrate: 1000000,
         });
-        
+
         info!("Video: 640x480 @ 30.0fps, codec: H.264, bitrate: 1000000 bps");
-        
+
         Ok(())
     }
-    
+
     /// Get video track information
     pub fn video_track(&self) -> Option<&VideoTrackInfo> {
         self.video_track.as_ref()
     }
-    
+
     /// Get audio track information
     pub fn audio_track(&self) -> Option<&AudioTrackInfo> {
         self.audio_track.as_ref()
     }
-    
+
     /// Get file duration
     pub fn duration(&self) -> Duration {
         self.file_duration
     }
-    
+
     /// Generate synthetic samples from the file data
     /// This is a simplified approach that chunks the file data into time-based samples
     pub fn read_all_samples(&mut self) -> Result<Vec<MediaSample>> {
         let mut samples = Vec::new();
-        
-        info!("Generating samples from {} bytes of file data", self.file_data.len());
-        
+
+        info!(
+            "Generating samples from {} bytes of file data",
+            self.file_data.len()
+        );
+
         // Create synthetic samples by chunking the file data
         let chunk_size = 4096; // 4KB chunks for more frames
         let fps = 30.0;
         let frame_duration = Duration::from_secs_f64(1.0 / fps);
-        
+
         let mut current_time = Duration::ZERO;
         let mut frame_count = 0;
-        
+
         // Generate enough frames for the full duration by cycling through file data
         while current_time < self.file_duration {
             // Calculate which chunk of the file to use (cycle through the data)
             let chunk_index = (frame_count * chunk_size) % self.file_data.len();
             let chunk_end = std::cmp::min(chunk_index + chunk_size, self.file_data.len());
-            
+
             let chunk_data = if chunk_end > chunk_index {
                 // Normal case - chunk doesn't wrap around
                 self.file_data[chunk_index..chunk_end].to_vec()
@@ -170,11 +173,11 @@ impl VideoReader {
                 }
                 data
             };
-            
+
             if !chunk_data.is_empty() {
                 // Create a video sample
                 let is_keyframe = frame_count % 30 == 0; // Keyframe every second
-                
+
                 samples.push(MediaSample {
                     data: chunk_data,
                     timestamp: current_time,
@@ -182,40 +185,47 @@ impl VideoReader {
                     is_sync: is_keyframe,
                     track_id: 0, // Video track
                 });
-                
+
                 frame_count += 1;
             }
-            
+
             current_time += frame_duration;
         }
-        
-        info!("Generated {} synthetic samples from file data", samples.len());
+
+        info!(
+            "Generated {} synthetic samples from file data",
+            samples.len()
+        );
         Ok(samples)
     }
-    
+
     /// Convert H.264 sample to proper MP4 segment format for MSE
     pub fn prepare_h264_sample(&self, sample: &MediaSample) -> Result<Vec<u8>> {
         // Generate a simple MP4 media segment (moof + mdat boxes)
         // This is a minimal implementation to make MSE work
-        
+
         let mut segment = Vec::new();
-        
+
         if sample.is_sync {
             // For keyframes, include initialization segment first
             segment.extend_from_slice(&self.generate_init_segment()?);
         }
-        
+
         // Generate media segment
         segment.extend_from_slice(&self.generate_media_segment(sample)?);
-        
-        debug!("Prepared MP4 segment: {} bytes -> {} bytes", sample.data.len(), segment.len());
+
+        debug!(
+            "Prepared MP4 segment: {} bytes -> {} bytes",
+            sample.data.len(),
+            segment.len()
+        );
         Ok(segment)
     }
-    
+
     /// Generate MP4 initialization segment (ftyp + moov)
     fn generate_init_segment(&self) -> Result<Vec<u8>> {
         let mut segment = Vec::new();
-        
+
         // ftyp box (file type)
         let ftyp = [
             0x00, 0x00, 0x00, 0x18, // box size (24 bytes)
@@ -225,7 +235,7 @@ impl VideoReader {
             b'i', b's', b'o', b'm', // compatible brands
         ];
         segment.extend_from_slice(&ftyp);
-        
+
         // moov box (movie header) - minimal version
         let moov = [
             0x00, 0x00, 0x00, 0x28, // box size (40 bytes)
@@ -241,50 +251,50 @@ impl VideoReader {
             0x00, 0x01, 0x00, 0x00, // rate (1.0)
         ];
         segment.extend_from_slice(&moov);
-        
+
         Ok(segment)
     }
-    
+
     /// Generate MP4 media segment (moof + mdat)
     fn generate_media_segment(&self, sample: &MediaSample) -> Result<Vec<u8>> {
         let mut segment = Vec::new();
-        
+
         // Prepare H.264 data with proper NAL unit format
         let mut h264_data = Vec::new();
-        
+
         // Add H.264 start code
         h264_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
-        
+
         // Add NAL unit header
         if sample.is_sync {
             h264_data.push(0x65); // IDR frame
         } else {
             h264_data.push(0x41); // P frame
         }
-        
+
         // Add sample data
         h264_data.extend_from_slice(&sample.data);
-        
+
         // moof box (movie fragment)
         let moof_size = 16 + h264_data.len() as u32;
         segment.extend_from_slice(&moof_size.to_be_bytes());
         segment.extend_from_slice(b"moof");
-        
+
         // mfhd box (movie fragment header)
         segment.extend_from_slice(&[0x00, 0x00, 0x00, 0x10]); // size
         segment.extend_from_slice(b"mfhd");
         segment.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // version + flags
         segment.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]); // sequence number
-        
+
         // mdat box (media data)
         let mdat_size = 8 + h264_data.len() as u32;
         segment.extend_from_slice(&mdat_size.to_be_bytes());
         segment.extend_from_slice(b"mdat");
         segment.extend_from_slice(&h264_data);
-        
+
         Ok(segment)
     }
-    
+
     /// Prepare audio sample (pass through)
     pub fn prepare_audio_sample(&self, sample: &MediaSample) -> Result<Vec<u8>> {
         Ok(sample.data.clone())
@@ -330,13 +340,14 @@ else
     echo "❌ Failed to convert video"
     exit 1
 fi
-"#.to_string()
+"#
+    .to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_sample_script_generation() {
         let script = create_sample_video_script();

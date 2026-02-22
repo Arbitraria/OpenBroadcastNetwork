@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
-use std::time::{SystemTime, Duration};
-use std::fs::{OpenOptions, File};
-use std::io::{self, BufReader, BufWriter, Write};
+use serde::{Deserialize, Serialize};
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
+use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TestResult {
@@ -21,21 +21,28 @@ pub struct TestReport {
 
 impl TestReport {
     pub fn new() -> Self {
-        Self { results: Vec::new() }
+        Self {
+            results: Vec::new(),
+        }
     }
 
     pub fn add_result(&mut self, result: TestResult) {
         self.results.push(result);
         // Sort by module (lexical), then by status (fail before pass), then by name
         self.results.sort_by(|a, b| {
-            a.module.cmp(&b.module)
+            a.module
+                .cmp(&b.module)
                 .then_with(|| b.status.cmp(&a.status))
                 .then_with(|| a.name.cmp(&b.name))
         });
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, &self)?;
         Ok(())
@@ -50,14 +57,24 @@ impl TestReport {
 
     pub fn print_summary(&self) {
         println!("\nTest Report Summary:");
-        let mut by_module: std::collections::BTreeMap<&str, Vec<&TestResult>> = std::collections::BTreeMap::new();
+        let mut by_module: std::collections::BTreeMap<&str, Vec<&TestResult>> =
+            std::collections::BTreeMap::new();
         for result in &self.results {
             by_module.entry(&result.module).or_default().push(result);
         }
         for (module, results) in by_module.iter() {
             println!("\nModule: {}", module);
             for res in results {
-                println!("  [{}] {} ({} ms){}", res.status, res.name, res.duration_ms, res.error.as_ref().map(|e| format!(" - {}", e)).unwrap_or_default());
+                println!(
+                    "  [{}] {} ({} ms){}",
+                    res.status,
+                    res.name,
+                    res.duration_ms,
+                    res.error
+                        .as_ref()
+                        .map(|e| format!(" - {}", e))
+                        .unwrap_or_default()
+                );
             }
         }
     }

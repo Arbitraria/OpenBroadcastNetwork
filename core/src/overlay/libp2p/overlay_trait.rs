@@ -2,21 +2,18 @@
 //!
 //! This module contains the implementation of the Overlay trait for Libp2pOverlay.
 
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
 use anyhow::Result;
 use futures::StreamExt;
+use std::time::Duration;
+use tracing::{debug, error, info};
 
 // Local imports
-use crate::overlay::interface::{Overlay, OverlayError, OverlayEvent, StreamId, OverlayStats};
-use crate::overlay::relay::StreamChunk;
-use crate::overlay::peer::{LocalPeerId, ConnectionStatus, PeerInfo, PeerRole};
+use crate::overlay::interface::{Overlay, OverlayError, OverlayEvent, OverlayStats, StreamId};
 use crate::overlay::libp2p::impl_core::Libp2pOverlay;
-use crate::overlay::libp2p::topics;
 use crate::overlay::libp2p::overlay_utils;
+use crate::overlay::libp2p::topics;
 use crate::overlay::libp2p::types::to_libp2p_peer_id;
+use crate::overlay::peer::{ConnectionStatus, LocalPeerId, PeerInfo, PeerRole};
 
 #[async_trait::async_trait]
 impl Overlay for Libp2pOverlay {
@@ -25,130 +22,157 @@ impl Overlay for Libp2pOverlay {
         // Use try_read to avoid blocking in an async runtime
         self.running.try_read().map_or(false, |r| *r)
     }
-    
+
     /// Get the local peer ID
     fn local_peer_id(&self) -> LocalPeerId {
         self.local_peer_id.clone()
     }
-    
+
     /// Connect to a peer
     async fn connect_peer(&self, addr: &str) -> Result<PeerInfo, OverlayError> {
         use crate::overlay::libp2p::overlay_utils::connect_peer_impl;
         connect_peer_impl(self, addr).await
     }
-    
+
     /// Disconnect from a peer
     async fn disconnect_peer(&self, peer_id: &LocalPeerId) -> Result<(), OverlayError> {
         use crate::overlay::libp2p::overlay_utils::disconnect_peer_impl;
         disconnect_peer_impl(self, peer_id).await
     }
-    
+
     /// Publish a stream
     async fn publish_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         debug!("Publishing stream {}", stream_id);
-        
+
         // Add the stream to the relay manager's node
         let relay_node = self.relay.relay_node();
-        relay_node.add_stream(stream_id.clone(), self.libp2p_peer_id.clone()).await?;
-        
+        relay_node
+            .add_stream(stream_id.clone(), self.libp2p_peer_id.clone())
+            .await?;
+
         // Add to local streams set
         let mut streams = self.streams.write().await;
         streams.insert(stream_id.clone());
-        
+
         Ok(())
     }
-    
+
     /// Stop a stream
     async fn stop_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         debug!("Stopping stream {}", stream_id);
-        
+
         // Remove the stream from the relay manager's node
         let relay_node = self.relay.relay_node();
         relay_node.remove_stream(stream_id).await?;
-        
+
         // Remove from local streams set
         let mut streams = self.streams.write().await;
         streams.remove(stream_id);
-        
+
         Ok(())
     }
-    
+
     /// Get list of connected peers with their info
     async fn connected_peers(&self) -> Result<Vec<PeerInfo>, OverlayError> {
         let peers = self.peers.read().await;
-        
+
         // Filter for connected peers only and get their info
-        let connected_peer_info: Vec<PeerInfo> = peers.iter()
+        let connected_peer_info: Vec<PeerInfo> = peers
+            .iter()
             .filter(|(_, peer)| peer.info.status == ConnectionStatus::Connected)
             .map(|(_, peer)| peer.info.clone())
             .collect();
-            
+
         Ok(connected_peer_info)
     }
+
     /// Start the overlay network
     async fn start(&self) -> Result<(), OverlayError> {
         info!("Starting libp2p overlay");
-        
+
         // Initialize the overlay components
         self.init_topology().await?;
         self.init_relay().await?;
         self.init_mesh().await?;
-        
+
         // Start the discovery manager
         let mut discovery = self.discovery.lock().await;
-        discovery.start().await
-            .map_err(|e| OverlayError::DiscoveryError(format!("Failed to start discovery: {}", e)))?;
+        discovery.start().await.map_err(|e| {
+            OverlayError::DiscoveryError(format!("Failed to start discovery: {}", e))
+        })?;
         drop(discovery);
-        
+
         // Start the swarm processing loop
         self.run_swarm().await?;
-        
+
         // Mark the overlay as running
         *self.running.write().await = true;
+
+        // Start the worker task
+        let overlay = self.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                // Check if running
+                if !*overlay.running.read().await {
+                    break;
+                }
+                
+                if let Err(e) = overlay.process_swarm_events().await {
+                    error!("Error processing swarm events: {}", e);
+                    // Sleep to avoid busy loop on error
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        });
         
-        // The worker task will be managed separately
-        // For now, we'll start the overlay without the background task
+        *self.worker_task.lock().await = Some(handle);
+
         info!("Libp2p overlay started successfully");
         Ok(())
     }
-    
+
     /// Stop the overlay network
     async fn stop(&self) -> Result<(), OverlayError> {
         info!("Stopping libp2p overlay");
-        
+
         // Mark the overlay as not running
         *self.running.write().await = false;
-        
+
         // Abort the worker task
         if let Some(worker) = self.worker_task.lock().await.take() {
             worker.abort();
         }
-        
+
         // Stop the discovery manager
         let mut discovery = self.discovery.lock().await;
-        discovery.stop().await
-            .map_err(|e| OverlayError::DiscoveryError(format!("Failed to stop discovery: {}", e)))?;
+        discovery.stop().await.map_err(|e| {
+            OverlayError::DiscoveryError(format!("Failed to stop discovery: {}", e))
+        })?;
         drop(discovery);
-        
+
         // Stop the managers
         self.stop_topology().await?;
         self.stop_relay().await?;
         self.stop_mesh().await?;
-        
+
         info!("Libp2p overlay stopped");
         Ok(())
     }
-    
+
     /// Relay a stream chunk to subscribers
-    async fn relay_stream(&self, stream_id: &StreamId, target: &LocalPeerId) -> Result<(), OverlayError> {
+    async fn relay_stream(
+        &self,
+        stream_id: &StreamId,
+        target: &LocalPeerId,
+    ) -> Result<(), OverlayError> {
         debug!("Relaying stream data for {} to {}", stream_id, target);
-        
+
         // Convert local peer ID to libp2p peer ID for relay operations
         let target_libp2p = to_libp2p_peer_id(target)?;
-        
+
         // For now, this is a stub implementation
         // Actual implementation should relay from stream_id to target
-        
+
         Ok(())
     }
 
@@ -167,7 +191,7 @@ impl Overlay for Libp2pOverlay {
     async fn stats(&self) -> Result<OverlayStats, OverlayError> {
         let peers = self.peers.read().await;
         let streams = self.streams.read().await;
-        
+
         let mut stats = OverlayStats {
             connected_peers: peers.len(),
             discovered_peers: peers.len(),
@@ -177,38 +201,70 @@ impl Overlay for Libp2pOverlay {
             outgoing_bandwidth: 0,
             average_latency_ms: 0,
         };
-        
+
         // Count relay nodes
-        let relay_nodes = peers.iter()
-            .filter(|(_, peer)| peer.info.role == PeerRole::Relay || peer.info.role == PeerRole::HybridRelay)
+        let relay_nodes = peers
+            .iter()
+            .filter(|(_, peer)| {
+                peer.info.role == PeerRole::Relay || peer.info.role == PeerRole::HybridRelay
+            })
             .count();
         stats.relay_nodes = relay_nodes;
-        
+
         // Calculate average latency if available
         let mut total_latency = 0;
         let mut latency_count = 0;
-        
+
         for (_, peer) in peers.iter() {
             if let Some(latency) = peer.info.latency_ms {
                 total_latency += latency;
                 latency_count += 1;
             }
         }
-        
+
         if latency_count > 0 {
             stats.average_latency_ms = total_latency / latency_count;
         }
-        
+
         Ok(stats)
     }
 
     async fn rebalance_topology(&self) -> Result<(), OverlayError> {
         let streams = self.streams.read().await;
-        
+
         for stream_id in streams.iter() {
             self.topology.rebalance_stream(stream_id).await?;
         }
-        
+
+        Ok(())
+    }
+
+    async fn subscribe_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
+        debug!("Subscribing to stream {}", stream_id);
+        overlay_utils::subscribe_to_stream(&self.swarm, &self.streams, stream_id).await
+    }
+
+    async fn publish_stream_data(
+        &self,
+        stream_id: &StreamId,
+        data: Vec<u8>,
+    ) -> Result<(), OverlayError> {
+        debug!("Publishing {} bytes to stream {}", data.len(), stream_id);
+
+        let mut swarm_lock = self.swarm.lock().await;
+        let swarm = match &mut *swarm_lock {
+            Some(swarm) => swarm,
+            None => return Err(OverlayError::NotRunning),
+        };
+
+        let topic = libp2p::gossipsub::IdentTopic::new(topics::stream_data(stream_id));
+
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(topic, data)
+            .map_err(|e| OverlayError::RelayError(format!("Failed to publish: {:?}", e)))?;
+
         Ok(())
     }
 }

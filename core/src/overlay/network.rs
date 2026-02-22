@@ -2,22 +2,23 @@
 //!
 //! This module provides the networking foundation for the overlay using libp2p.
 
+use futures::StreamExt;
 use libp2p::{
     core::upgrade,
     gossipsub::{
-        self, Behaviour as Gossipsub, MessageAuthenticity, MessageId, TopicHash, ValidationMode,
-        Config as GossipsubConfig, ConfigBuilder as GossipsubConfigBuilder,
+        self, Behaviour as Gossipsub, ConfigBuilder as GossipsubConfigBuilder, MessageAuthenticity,
+        MessageId, TopicHash, ValidationMode,
     },
-    identity, noise, swarm::SwarmEvent, tcp, PeerId, Swarm, SwarmBuilder,
-    Transport,
+    identity, noise,
+    swarm::SwarmEvent,
+    tcp, PeerId, Swarm, SwarmBuilder, Transport,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::error::Error;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
-use futures::StreamExt;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Configuration for the libp2p network
 #[derive(Debug, Clone)]
@@ -40,7 +41,7 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-            
+
             enable_kademlia: false,
             bootstrap_nodes: Vec::new(),
             validation_mode: ValidationMode::Strict,
@@ -119,9 +120,7 @@ impl Network {
         // Create a GossipSub configuration
         let gossipsub_config = GossipsubConfigBuilder::default()
             .validation_mode(config.validation_mode.clone())
-            .message_id_fn(|message: &gossipsub::Message| {
-                MessageId::from(message.data.clone())
-            })
+            .message_id_fn(|message: &gossipsub::Message| MessageId::from(message.data.clone()))
             .heartbeat_interval(Duration::from_secs(config.heartbeat_interval))
             .history_length(config.history_size)
             .build()
@@ -138,12 +137,22 @@ impl Network {
             .with_tokio()
             .with_tcp(
                 tcp::Config::default(),
-                noise::Config::new, 
-                libp2p::yamux::Config::default
+                noise::Config::new,
+                libp2p::yamux::Config::default,
             )
-            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to build swarm: {}", e))))?
+            .map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to build swarm: {}", e),
+                ))
+            })?
             .with_behaviour(|_| gossipsub)
-            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to add behavior: {}", e))))?
+            .map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to add behavior: {}", e),
+                ))
+            })?
             .build();
 
         // Listen on the configured address
@@ -217,7 +226,9 @@ impl Network {
         match self.swarm.behaviour_mut().publish(topic.clone(), data) {
             Ok(message_id) => {
                 debug!("Published message to topic: {:?}", topic);
-                self.stats_counters.messages_sent.fetch_add(1, Ordering::Relaxed);
+                self.stats_counters
+                    .messages_sent
+                    .fetch_add(1, Ordering::Relaxed);
                 Ok(message_id)
             }
             Err(e) => {
@@ -233,7 +244,7 @@ impl Network {
     /// Start the network event loop
     pub async fn run(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.running = true;
-        
+
         while self.running {
             tokio::select! {
                 event = self.swarm.next() => {
@@ -249,7 +260,7 @@ impl Network {
                                 message_id,
                                 propagation_source
                             );
-                            
+
                             self.stats_counters.messages_received.fetch_add(1, Ordering::Relaxed);
                             if let Err(e) = self.event_sender.send(NetworkEvent::MessageReceived(
                                 message.topic,
@@ -294,7 +305,7 @@ impl Network {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -318,8 +329,11 @@ impl Network {
         let connected_peers_count = self.swarm.connected_peers().count();
         let subscribed_topics_count = self.subscribed_topics.len();
         let messages_sent = self.stats_counters.messages_sent.load(Ordering::Relaxed);
-        let messages_received = self.stats_counters.messages_received.load(Ordering::Relaxed);
-        
+        let messages_received = self
+            .stats_counters
+            .messages_received
+            .load(Ordering::Relaxed);
+
         Ok(NetworkStats {
             connected_peers_count,
             subscribed_topics_count,
@@ -327,4 +341,4 @@ impl Network {
             messages_received,
         })
     }
-} 
+}

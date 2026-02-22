@@ -1,8 +1,5 @@
 //! Relay node/subscriber logic for libp2p overlay
 
-#[cfg(feature = "libp2p")]
-use super::*;
-
 /// Re-export relay functionality from existing modules
 #[cfg(feature = "libp2p")]
 pub use crate::overlay::relay::*;
@@ -11,8 +8,10 @@ pub use crate::overlay::relay::*;
 #[cfg(not(feature = "libp2p"))]
 pub mod stub {
     use crate::overlay::interface::OverlayError;
-    
+
     pub fn create_relay_manager() -> Result<(), OverlayError> {
-        Err(OverlayError::ProtocolError("libp2p feature not enabled".to_string()))
+        Err(OverlayError::ProtocolError(
+            "libp2p feature not enabled".to_string(),
+        ))
     }
 }
