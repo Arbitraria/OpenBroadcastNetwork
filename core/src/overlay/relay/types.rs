@@ -2,11 +2,11 @@
 //!
 //! This module defines the fundamental data types used in the relay system.
 
-use libp2p::PeerId;
 use crate::overlay::interface::StreamId;
+use crate::overlay::libp2p::utils::{deserialize_optional_peer_id, serialize_optional_peer_id};
+use libp2p::PeerId;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use serde::{Serialize, Deserialize};
-use crate::overlay::libp2p::utils::{serialize_optional_peer_id, deserialize_optional_peer_id};
 
 /// Buffer for stream chunks
 pub type StreamBuffer = VecDeque<StreamChunk>;
@@ -30,7 +30,10 @@ pub struct StreamChunk {
     /// Whether this is a keyframe
     pub is_keyframe: bool,
     /// Source peer ID - using custom serialization helpers
-    #[serde(serialize_with = "serialize_optional_peer_id", deserialize_with = "deserialize_optional_peer_id")]
+    #[serde(
+        serialize_with = "serialize_optional_peer_id",
+        deserialize_with = "deserialize_optional_peer_id"
+    )]
     pub source: Option<PeerId>,
 }
 

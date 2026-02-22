@@ -16,43 +16,43 @@
 
 /// Core interfaces and types for the overlay network
 pub mod interface;
+/// Mesh-based overlay implementation for resilient connections
+pub mod mesh;
 /// Network configuration and utilities
 pub mod network;
 /// Peer management, roles, and connection handling
 pub mod peer;
 /// Tree-based overlay implementation for efficient distribution
 pub mod tree;
-/// Mesh-based overlay implementation for resilient connections
-pub mod mesh;
 // Import discovery module from crate root
 // The discovery module is defined at the crate level, not in the overlay
+/// Module for testing dynamic overlay features
+#[cfg(test)]
+pub mod dynamic_tests;
+/// Hybrid tree-mesh overlay implementation (modular version)
+pub mod hybrid;
+/// Implementation of the overlay network using libp2p (modular version)
+pub mod libp2p;
+/// libp2p implementation of the overlay network
+pub mod libp2p_impl;
 /// Performance metrics collection and analysis for overlay optimization
 pub mod metrics;
 /// Relay functionality for forwarding streams between peers
 pub mod relay;
-/// libp2p implementation of the overlay network
-pub mod libp2p_impl;
-/// Implementation of the overlay network using libp2p (modular version)
-pub mod libp2p;
-/// Hybrid tree-mesh overlay implementation (modular version)
-pub mod hybrid;
 /// Legacy relay exports for backward compatibility
 pub mod relay_redirector;
 /// Network topology management and organization (refactored into a modular structure)
 pub mod topology;
-/// Module for testing dynamic overlay features
-#[cfg(test)]
-pub mod dynamic_tests;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export main types
-pub use interface::{Overlay, OverlayEvent, OverlayError};
+pub use interface::{Overlay, OverlayError, OverlayEvent};
 pub use network::NetworkConfig;
 // Re-exporting topology types
-pub use topology::{TopologyManager, TopologyConfig};
-pub use peer::{Peer, PeerInfo, PeerRole, PeerConnection, LocalPeerId};
+pub use peer::{LocalPeerId, Peer, PeerConnection, PeerInfo, PeerRole};
+pub use topology::{TopologyConfig, TopologyManager};
 // Re-export PeerId from libp2p
 pub use ::libp2p::PeerId;
 // Re-export our overlay implementation
@@ -61,7 +61,7 @@ pub use crate::overlay::libp2p_impl::Libp2pOverlay;
 /// Default overlay implementation (libp2p-based)
 pub type DefaultOverlay = Libp2pOverlay;
 
-pub use relay::{RelayNode, RelayManager, RelayStats};
+pub use relay::{RelayManager, RelayNode, RelayStats};
 
 // Re-export hybrid overlay types (experimental)
 #[cfg(feature = "experimental-overlay")]

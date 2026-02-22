@@ -1,5 +1,5 @@
 //! Topic handling for the gossipsub protocol
-//! 
+//!
 //! This module contains functions for creating and parsing pub/sub topics
 
 use crate::overlay::interface::StreamId;

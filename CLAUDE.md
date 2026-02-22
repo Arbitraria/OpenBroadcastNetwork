@@ -107,20 +107,20 @@ cargo check && cargo test && cargo clippy
 
 ### CLI Usage
 ```bash
-# Run relay node
-cargo run -p OpenBroadcastNetwork-node
+# Run relay node with default settings
+cargo run -p OpenBroadcastNetwork-node -- run
 
-# Run with specific config
-cargo run -p OpenBroadcastNetwork-node -- --config path/to/config.toml
+# Run with geo-aware rebalancing and DHT discovery
+cargo run -p OpenBroadcastNetwork-node -- run --geo-aware --dht
 
-# Enable debug logging
-RUST_LOG=debug cargo run -p OpenBroadcastNetwork-node
+# Run with specific role and listen address
+cargo run -p OpenBroadcastNetwork-node -- run --role relay --listen 0.0.0.0:9000
 
-# Start web viewer with video file
-cargo run -p OpenBroadcastNetwork-node web-viewer --video sample_video.mp4
+# View network status
+cargo run -p OpenBroadcastNetwork-node -- status
 
-# Start web viewer with logging to file
-cargo run -p OpenBroadcastNetwork-node web-viewer --video sample_video.mp4 > logs/server_current.log 2>&1 &
+# Visualize the network topology
+cargo run -p OpenBroadcastNetwork-node -- visualize --format text
 ```
 
 ## Logging and Debugging
@@ -203,8 +203,8 @@ The project is in active refactoring on the `feature/libp2p-refactoring` branch,
 - [x] Basic peer discovery and connection
 - [x] Pub/sub topic creation (GossipSub)
 - [x] Tree-mesh hybrid relay logic
-- [ ] Geo-aware rebalancing
-- [ ] Relay node CLI with logging
+- [x] Geo-aware rebalancing
+- [x] Relay node CLI with logging
 
 ### Phase 2: Streaming Pipeline
 - [ ] Audio/video chunking and distribution

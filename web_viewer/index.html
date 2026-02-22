@@ -369,21 +369,31 @@
             
             function setupSourceBuffers() {
                 logMessage('MediaSource opened successfully');
-                
+
                 try {
-                    // Use detected video MIME type or fallback
-                    const videoMimeType = detectedVideoMimeType || 'video/mp4; codecs="avc1.42E01E"';
-                    
-                    if (MediaSource.isTypeSupported(videoMimeType)) {
-                        videoSourceBuffer = mediaSource.addSourceBuffer(videoMimeType);
-                        currentVideoMimeType = videoMimeType;
-                        logMessage(`Video source buffer created: ${videoMimeType}`);
-                        
+                    // Use a SINGLE combined SourceBuffer for both video and audio
+                    // This is required because media segments contain both tracks interleaved
+                    // Chrome MSE separate buffers would require separate media segments too
+                    const combinedMimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+                    const videoOnlyMimeType = 'video/mp4; codecs="avc1.42E01E"';
+
+                    // Try combined first, fall back to video-only
+                    let mimeTypeToUse = combinedMimeType;
+                    if (!MediaSource.isTypeSupported(combinedMimeType)) {
+                        logMessage(`Combined codec not supported, trying video-only`, 'warning');
+                        mimeTypeToUse = videoOnlyMimeType;
+                    }
+
+                    if (MediaSource.isTypeSupported(mimeTypeToUse)) {
+                        videoSourceBuffer = mediaSource.addSourceBuffer(mimeTypeToUse);
+                        currentVideoMimeType = mimeTypeToUse;
+                        logMessage(`✅ Combined source buffer created: ${mimeTypeToUse}`, 'success');
+
                         // Add event listener for buffer updates
                         videoSourceBuffer.addEventListener('updateend', () => {
                             const video = document.getElementById('video');
                             updateBufferInfo();
-                            
+
                             // Auto-start playback when we have enough buffered data
                             if (video.readyState >= 3 && video.paused && video.buffered.length > 0) {
                                 const bufferedLength = video.buffered.end(0) - video.buffered.start(0);
@@ -393,7 +403,7 @@
                                 }
                             }
                         });
-                        
+
                         // Wait a moment for source buffer to be fully ready, then connect WebSocket
                         setTimeout(() => {
                             if (mediaSource && mediaSource.readyState === 'open' && videoSourceBuffer) {
@@ -407,35 +417,14 @@
                             }
                         }, 100); // Small delay to ensure everything is ready
                     } else {
-                        logMessage(`Video codec not supported: ${videoMimeType}`, 'error');
+                        logMessage(`Codec not supported: ${mimeTypeToUse}`, 'error');
                         connecting = false;
                     }
 
-                    // WAIT for server codec info before creating audio buffer
-                    logMessage(`⏳ Waiting for server codec information before creating audio source buffer...`);
-                    
-                    // Create audio buffer only after we receive server codec info
-                    if (!serverCodecReceived) {
-                        logMessage(`📋 Server codec not received yet - will create audio buffer when stream_info arrives`);
-                        // Don't create audio buffer yet - wait for server codec
-                    } else {
-                        // Use exact server codec (no testing/fallbacks)
-                        const serverAudioCodec = detectedAudioMimeType || 'audio/mp4; codecs="mp4a.40.2"';
-                        logMessage(`🎯 Using server-detected audio codec: ${serverAudioCodec}`);
-                        
-                        if (MediaSource.isTypeSupported(serverAudioCodec)) {
-                            try {
-                                audioSourceBuffer = mediaSource.addSourceBuffer(serverAudioCodec);
-                                currentAudioMimeType = serverAudioCodec;
-                                logMessage(`✅ Audio source buffer created with server codec: ${serverAudioCodec}`, 'success');
-                            } catch (e) {
-                                logMessage(`❌ Failed to create audio buffer with server codec: ${e.message}`, 'error');
-                            }
-                        } else {
-                            logMessage(`❌ Server codec not supported by MediaSource: ${serverAudioCodec}`, 'error');
-                        }
-                    }
-                    
+                    // NOTE: Using single combined buffer - no separate audio buffer needed
+                    // All media segments (containing both video+audio) go to videoSourceBuffer
+                    logMessage(`📋 Using single combined buffer for video+audio`);
+
                     // MediaSource setup complete - wait for WebSocket connection
                     if (!serverCodecReceived) {
                         logMessage('MediaSource video buffer ready - waiting for server codec info via WebSocket', 'success');
@@ -709,8 +698,69 @@
                 }
                 
                 // Determine which buffer to use based on the chunk type
-                if (nextChunkType === 'audio' && audioSourceBuffer) {
-                    // Audio chunk
+                // Chrome MSE Buffer Separation: route init segments to correct SourceBuffer
+                if (nextChunkType === 'init_video') {
+                    // Video-only initialization segment - append to video buffer only
+                    if (!videoSourceBuffer.updating) {
+                        try {
+                            videoSourceBuffer.appendBuffer(arrayBuffer);
+                            logMessage(`🎬 Appended video-only init segment (${formatBytes(arrayBuffer.byteLength)}) to video buffer`, 'success');
+                            updateBufferInfo();
+                        } catch (error) {
+                            logMessage(`❌ Failed to append video init segment: ${error.message}`, 'error');
+                            logMessage(`MediaSource state: ${mediaSource.readyState}`, 'error');
+                        }
+                    } else {
+                        logMessage('⏳ Video buffer updating, queuing init segment...', 'warning');
+                        // Queue the append for when buffer is ready
+                        videoSourceBuffer.addEventListener('updateend', function onUpdateEnd() {
+                            videoSourceBuffer.removeEventListener('updateend', onUpdateEnd);
+                            try {
+                                videoSourceBuffer.appendBuffer(arrayBuffer);
+                                logMessage(`🎬 Appended queued video init segment`, 'success');
+                            } catch (e) {
+                                logMessage(`❌ Failed to append queued video init: ${e.message}`, 'error');
+                            }
+                        }, { once: true });
+                    }
+                } else if (nextChunkType === 'init_audio') {
+                    // Audio-only initialization segment - append to audio buffer only
+                    if (audioSourceBuffer) {
+                        if (!audioSourceBuffer.updating) {
+                            try {
+                                audioSourceBuffer.appendBuffer(arrayBuffer);
+                                logMessage(`🎵 Appended audio-only init segment (${formatBytes(arrayBuffer.byteLength)}) to audio buffer`, 'success');
+                            } catch (error) {
+                                logMessage(`❌ Failed to append audio init segment: ${error.message}`, 'error');
+                                logMessage(`MediaSource state: ${mediaSource.readyState}`, 'error');
+                            }
+                        } else {
+                            logMessage('⏳ Audio buffer updating, queuing init segment...', 'warning');
+                            audioSourceBuffer.addEventListener('updateend', function onUpdateEnd() {
+                                audioSourceBuffer.removeEventListener('updateend', onUpdateEnd);
+                                try {
+                                    audioSourceBuffer.appendBuffer(arrayBuffer);
+                                    logMessage(`🎵 Appended queued audio init segment`, 'success');
+                                } catch (e) {
+                                    logMessage(`❌ Failed to append queued audio init: ${e.message}`, 'error');
+                                }
+                            }, { once: true });
+                        }
+                    } else {
+                        logMessage(`⚠️ Audio init segment received but no audio buffer exists - creating now`, 'warning');
+                        // Try to create audio buffer first
+                        createAudioBufferWithServerCodec();
+                        if (audioSourceBuffer) {
+                            try {
+                                audioSourceBuffer.appendBuffer(arrayBuffer);
+                                logMessage(`🎵 Appended audio init segment after creating buffer`, 'success');
+                            } catch (e) {
+                                logMessage(`❌ Failed to append audio init: ${e.message}`, 'error');
+                            }
+                        }
+                    }
+                } else if (nextChunkType === 'audio' && audioSourceBuffer) {
+                    // Audio media chunk
                     if (!audioSourceBuffer.updating) {
                         try {
                             audioSourceBuffer.appendBuffer(arrayBuffer);
@@ -725,12 +775,12 @@
                     // Skip audio chunks in video-only mode (AC-3 or unsupported audio)
                     logMessage(`🚫 Skipping audio chunk (${formatBytes(arrayBuffer.byteLength)}) - video-only mode (AC-3 or unsupported audio)`, 'info');
                 } else {
-                    // Video chunk (or default to video for unknown types)
+                    // Video chunk, legacy init, or default to video for unknown types
                     try {
                         videoSourceBuffer.appendBuffer(arrayBuffer);
                         logMessage(`Appended ${formatBytes(arrayBuffer.byteLength)} to video buffer (type: ${nextChunkType || 'unknown'})`);
                         updateBufferInfo();
-                        
+
                         // Enable play button after first segment
                         if (chunksReceived === 1) {
                             document.getElementById('playBtn').disabled = false;
@@ -738,7 +788,7 @@
                         }
                     } catch (error) {
                         logMessage(`Failed to append video chunk: ${error.message}`, 'error');
-                        
+
                         // Provide more specific error information
                         if (error.name === 'TypeError') {
                             logMessage('TypeError: Data format not compatible with SourceBuffer', 'error');
@@ -747,7 +797,7 @@
                         } else if (error.message.includes('decode')) {
                             logMessage('Decode error: MP4 format may be incompatible with MSE', 'error');
                         }
-                        
+
                         // Check MediaSource state after error
                         logMessage(`MediaSource state after error: ${mediaSource.readyState}`, 'error');
                     }
@@ -877,13 +927,22 @@
                 case 'chunk_info':
                     nextChunkType = message.data.chunk_type;
                     logMessage(`📦 Chunk info: ${message.data.chunk_type} - ${formatBytes(message.data.size)}`);
-                    
-                    // Mark that initialization segment is expected next
-                    if (message.data.chunk_type === 'initialization') {
+
+                    // Handle different chunk types for Chrome MSE buffer separation
+                    if (message.data.chunk_type === 'init_video') {
+                        logMessage(`🎬 Video-only init segment expected next (${formatBytes(message.data.size)})`, 'success');
+                    } else if (message.data.chunk_type === 'init_audio') {
+                        logMessage(`🎵 Audio-only init segment expected next (${formatBytes(message.data.size)})`, 'success');
+                        // Ensure audio buffer is created before audio init arrives
+                        if (!audioSourceBuffer && serverCodecReceived) {
+                            createAudioBufferWithServerCodec();
+                        }
+                    } else if (message.data.chunk_type === 'initialization') {
+                        // Legacy combined init segment
                         initSegmentExpected = true;
                         expectedInitSize = message.data.size;
                         initSegmentChunks.length = 0; // Reset chunks array
-                        logMessage(`🔄 Initialization segment expected next (${formatBytes(message.data.size)})`);
+                        logMessage(`🔄 Legacy combined init segment expected next (${formatBytes(message.data.size)})`);
                     } else if (message.data.chunk_type === 'end_of_stream') {
                         logMessage('Received end_of_stream signal - finalizing MediaSource', 'info');
                         finalizeMediaSource();
@@ -896,16 +955,22 @@
         }
 
         function createAudioBufferWithServerCodec() {
+            // NOTE: Using combined video+audio buffer - no separate audio buffer needed
+            // All media segments contain both tracks interleaved, so we use a single SourceBuffer
+            logMessage('📋 Audio handled by combined buffer - no separate audio buffer needed');
+            return;
+
+            // --- Original separate buffer code (disabled) ---
             if (!mediaSource || mediaSource.readyState !== 'open') {
                 logMessage('⚠️ MediaSource not ready for audio buffer creation', 'warning');
                 return;
             }
-            
+
             if (audioSourceBuffer) {
                 logMessage('✅ Audio source buffer already created');
                 return;
             }
-            
+
             // Check if we're in video-only mode (AC-3 detected or no audio)
             if (!detectedAudioMimeType) {
                 logMessage('🎬 Video-only mode - skipping audio buffer creation', 'info');

@@ -87,12 +87,7 @@ impl MediaChunk {
     }
 
     /// Create a new audio chunk
-    pub fn new_audio(
-        stream_id: StreamId,
-        sequence: u64,
-        data: Vec<u8>,
-        duration_ms: u64,
-    ) -> Self {
+    pub fn new_audio(stream_id: StreamId, sequence: u64, data: Vec<u8>, duration_ms: u64) -> Self {
         Self {
             stream_id,
             sequence,
@@ -208,7 +203,12 @@ impl ChunkBuilder {
     }
 
     /// Create next video chunk
-    pub fn next_video_chunk(&mut self, data: Vec<u8>, duration_ms: u64, is_keyframe: bool) -> MediaChunk {
+    pub fn next_video_chunk(
+        &mut self,
+        data: Vec<u8>,
+        duration_ms: u64,
+        is_keyframe: bool,
+    ) -> MediaChunk {
         let chunk = MediaChunk::new_video(
             self.stream_id.clone(),
             self.video_sequence,
@@ -233,7 +233,10 @@ impl ChunkBuilder {
     }
 
     /// Create metadata chunk
-    pub fn metadata_chunk(&self, metadata: StreamMetadata) -> Result<MediaChunk, serde_json::Error> {
+    pub fn metadata_chunk(
+        &self,
+        metadata: StreamMetadata,
+    ) -> Result<MediaChunk, serde_json::Error> {
         MediaChunk::new_metadata(self.stream_id.clone(), 0, metadata)
     }
 }
@@ -254,10 +257,10 @@ mod tests {
     fn test_media_chunk_serialization() {
         let stream_id = StreamId::new("test_stream".to_string());
         let chunk = MediaChunk::new_video(stream_id, 1, vec![1, 2, 3, 4], 33, true);
-        
+
         let bytes = chunk.to_bytes().unwrap();
         let deserialized = MediaChunk::from_bytes(&bytes).unwrap();
-        
+
         assert_eq!(chunk.stream_id, deserialized.stream_id);
         assert_eq!(chunk.sequence, deserialized.sequence);
         assert_eq!(chunk.data, deserialized.data);
@@ -268,11 +271,11 @@ mod tests {
     fn test_chunk_builder() {
         let stream_id = StreamId::new("test".to_string());
         let mut builder = ChunkBuilder::new(stream_id);
-        
+
         let video1 = builder.next_video_chunk(vec![1, 2, 3], 33, true);
         let video2 = builder.next_video_chunk(vec![4, 5, 6], 33, false);
         let audio1 = builder.next_audio_chunk(vec![7, 8, 9], 20);
-        
+
         assert_eq!(video1.sequence, 0);
         assert_eq!(video2.sequence, 1);
         assert_eq!(audio1.sequence, 0);

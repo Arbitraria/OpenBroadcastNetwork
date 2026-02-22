@@ -4,13 +4,13 @@
 //! tree-mesh hybrid structure for stream relay.
 
 // Export our sub-modules
-mod geo;
 mod config;
+mod geo;
 mod health;
 mod manager;
 
 // Re-export public components
-pub use geo::{Region, GeoLocation};
-pub use config::{TopologyConfig, RelayScoreWeights};
+pub use config::{RelayScoreWeights, TopologyConfig};
+pub use geo::{GeoLocation, Region};
 pub use health::ConnectionHealth;
 pub use manager::TopologyManager;

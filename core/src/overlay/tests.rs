@@ -6,9 +6,9 @@
 mod tests {
     use super::*;
     use crate::overlay::interface::StreamId;
-    use std::collections::HashSet;
     use libp2p::PeerId;
-    
+    use std::collections::HashSet;
+
     // Helper to create a random PeerId
     fn random_peer_id() -> PeerId {
         PeerId::random()
@@ -30,10 +30,10 @@ mod tests {
     fn test_stream_id_creation() {
         let stream_id = StreamId::new_random();
         assert!(!stream_id.as_bytes().is_empty());
-        
+
         let stream_id2 = StreamId::from_string("test");
         assert_eq!(stream_id2.as_bytes(), b"test");
-        
+
         let stream_id3 = StreamId::from_bytes(vec![1, 2, 3, 4]);
         assert_eq!(stream_id3.as_bytes(), &[1, 2, 3, 4]);
     }

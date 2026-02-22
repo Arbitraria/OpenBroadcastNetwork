@@ -35,20 +35,23 @@
 //!   and converting them to the appropriate `OverlayBehaviorEvent` variant.
 
 // Standard library imports
-use std::task::{Context, Poll};
 use std::collections::VecDeque;
+use std::task::{Context, Poll};
 
 // Import libp2p core components
 // Import libp2p from the root like in libp2p_impl.rs
-use libp2p::{PeerId, Multiaddr, swarm::{NetworkBehaviour, ToSwarm, FromSwarm, THandlerInEvent, ConnectionId, ConnectionDenied}};
 use libp2p::core::Endpoint;
+use libp2p::{
+    swarm::{
+        ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandlerInEvent, ToSwarm,
+    },
+    Multiaddr, PeerId,
+};
 
 // Import protocol types using the same paths as libp2p_impl.rs
 use libp2p::gossipsub::{Behaviour as Gossipsub, Event as GossipsubEvent};
 use libp2p::identify::{Behaviour as Identify, Event as IdentifyEvent};
-use libp2p::kad::{Behaviour as Kademlia, Event as KademliaEvent, store::MemoryStore};
-
-
+use libp2p::kad::{store::MemoryStore, Behaviour as Kademlia, Event as KademliaEvent};
 
 /// Combined network behavior for the overlay
 pub struct OverlayBehavior {
@@ -65,11 +68,7 @@ pub struct OverlayBehavior {
 
 impl OverlayBehavior {
     /// Create a new OverlayBehavior with the provided sub-behaviors
-    pub fn new(
-        gossipsub: Gossipsub,
-        kademlia: Kademlia<MemoryStore>,
-        identify: Identify,
-    ) -> Self {
+    pub fn new(gossipsub: Gossipsub, kademlia: Kademlia<MemoryStore>, identify: Identify) -> Self {
         Self {
             gossipsub,
             kademlia,
@@ -77,12 +76,12 @@ impl OverlayBehavior {
             events: VecDeque::new(),
         }
     }
-    
+
     /// Add an event to the queue
     pub fn queue_event(&mut self, event: OverlayBehaviorEvent) {
         self.events.push_back(event);
     }
-    
+
     /// Process events from the Gossipsub sub-behavior
     fn handle_gossipsub_event(&mut self, event: GossipsubEvent) {
         self.queue_event(OverlayBehaviorEvent::Gossipsub(event));
@@ -126,26 +125,35 @@ impl NetworkBehaviour for OverlayBehavior {
         // Delegate to sub-behaviors
         // We'll ignore any errors from sub-behaviors and only propagate if all fail
         let mut all_denied = true;
-        
-        if self.gossipsub.handle_established_inbound_connection(
-            connection_id, peer, local_addr, remote_addr).is_ok() {
+
+        if self
+            .gossipsub
+            .handle_established_inbound_connection(connection_id, peer, local_addr, remote_addr)
+            .is_ok()
+        {
             all_denied = false;
         }
-        
-        if self.kademlia.handle_established_inbound_connection(
-            connection_id, peer, local_addr, remote_addr).is_ok() {
+
+        if self
+            .kademlia
+            .handle_established_inbound_connection(connection_id, peer, local_addr, remote_addr)
+            .is_ok()
+        {
             all_denied = false;
         }
-        
-        if self.identify.handle_established_inbound_connection(
-            connection_id, peer, local_addr, remote_addr).is_ok() {
+
+        if self
+            .identify
+            .handle_established_inbound_connection(connection_id, peer, local_addr, remote_addr)
+            .is_ok()
+        {
             all_denied = false;
         }
-        
+
         if all_denied {
             return Err(ConnectionDenied::new("denied"));
         }
-        
+
         Ok(libp2p::swarm::dummy::ConnectionHandler)
     }
 
@@ -159,26 +167,35 @@ impl NetworkBehaviour for OverlayBehavior {
         // Delegate to sub-behaviors
         // Similar to inbound, ignore individual errors unless all fail
         let mut all_denied = true;
-        
-        if self.gossipsub.handle_established_outbound_connection(
-            connection_id, peer, addr, role_override).is_ok() {
+
+        if self
+            .gossipsub
+            .handle_established_outbound_connection(connection_id, peer, addr, role_override)
+            .is_ok()
+        {
             all_denied = false;
         }
-        
-        if self.kademlia.handle_established_outbound_connection(
-            connection_id, peer, addr, role_override).is_ok() {
+
+        if self
+            .kademlia
+            .handle_established_outbound_connection(connection_id, peer, addr, role_override)
+            .is_ok()
+        {
             all_denied = false;
         }
-        
-        if self.identify.handle_established_outbound_connection(
-            connection_id, peer, addr, role_override).is_ok() {
+
+        if self
+            .identify
+            .handle_established_outbound_connection(connection_id, peer, addr, role_override)
+            .is_ok()
+        {
             all_denied = false;
         }
-        
+
         if all_denied {
             return Err(ConnectionDenied::new("denied"));
         }
-        
+
         Ok(libp2p::swarm::dummy::ConnectionHandler)
     }
 
@@ -186,12 +203,12 @@ impl NetworkBehaviour for OverlayBehavior {
         // Delegate swarm events to sub-behaviors
         self.gossipsub.on_swarm_event(event.clone());
         self.kademlia.on_swarm_event(event.clone());
-    
+
         self.identify.on_swarm_event(event);
     }
 
     fn on_connection_handler_event(
-        &mut self, 
+        &mut self,
         _peer_id: PeerId,
         _connection_id: ConnectionId,
         _event: THandlerInEvent<Self>,
@@ -208,28 +225,28 @@ impl NetworkBehaviour for OverlayBehavior {
         if let Some(event) = self.events.pop_front() {
             return Poll::Ready(ToSwarm::GenerateEvent(event));
         }
-        
+
         // Poll Gossipsub
         if let Poll::Ready(ToSwarm::GenerateEvent(event)) = self.gossipsub.poll(cx) {
             self.handle_gossipsub_event(event);
             return Poll::Ready(ToSwarm::GenerateEvent(self.events.pop_front().unwrap()));
         }
-        
+
         // Poll Kademlia
         if let Poll::Ready(ToSwarm::GenerateEvent(event)) = self.kademlia.poll(cx) {
             self.handle_kademlia_event(event);
             return Poll::Ready(ToSwarm::GenerateEvent(self.events.pop_front().unwrap()));
         }
-        
+
         // Poll Identify
         if let Poll::Ready(ToSwarm::GenerateEvent(event)) = self.identify.poll(cx) {
             self.handle_identify_event(event);
             return Poll::Ready(ToSwarm::GenerateEvent(self.events.pop_front().unwrap()));
         }
-        
+
         // Handle other ToSwarm variants from sub-behaviors (like ListenOn, etc.)
         // This is a simplified implementation - a more complete one would handle all variants
-        
+
         Poll::Pending
     }
 }
@@ -240,8 +257,6 @@ impl From<GossipsubEvent> for OverlayBehaviorEvent {
         OverlayBehaviorEvent::Gossipsub(event)
     }
 }
-
-
 
 impl From<KademliaEvent> for OverlayBehaviorEvent {
     fn from(event: KademliaEvent) -> Self {

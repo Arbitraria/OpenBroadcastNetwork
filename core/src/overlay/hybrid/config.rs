@@ -2,8 +2,8 @@
 //!
 //! This module defines the configuration options for the hybrid overlay.
 
-use crate::overlay::peer::PeerRole;
 use crate::overlay::network::NetworkConfig;
+use crate::overlay::peer::PeerRole;
 use crate::overlay::topology::TopologyConfig;
 
 /// Configuration for the hybrid overlay

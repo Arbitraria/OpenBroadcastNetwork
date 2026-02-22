@@ -120,7 +120,9 @@ impl StreamMesh {
         let mut connected = false;
 
         // Sort other nodes by bandwidth (descending) to prioritize high-capacity nodes
-        let mut candidates: Vec<(PeerId, u64)> = self.nodes.iter()
+        let mut candidates: Vec<(PeerId, u64)> = self
+            .nodes
+            .iter()
             .filter(|(id, node)| **id != peer_id && node.can_accept_connections())
             .map(|(id, node)| (*id, node.bandwidth))
             .collect();
@@ -133,7 +135,7 @@ impl StreamMesh {
                 if let Some(source_node) = self.nodes.get_mut(&source_id) {
                     if source_node.can_accept_connections() {
                         source_node.add_peer(peer_id);
-                        
+
                         if let Some(node) = self.nodes.get_mut(&peer_id) {
                             node.add_peer(source_id);
                             connected = true;
@@ -149,10 +151,10 @@ impl StreamMesh {
                 if !node.can_accept_connections() {
                     break;
                 }
-                
+
                 if !node.peers.contains(&candidate_id) {
                     node.add_peer(candidate_id);
-                    
+
                     if let Some(candidate_node) = self.nodes.get_mut(&candidate_id) {
                         candidate_node.add_peer(peer_id);
                         connected = true;
@@ -216,15 +218,15 @@ impl StreamMesh {
         }
 
         let source_id = self.source;
-        
+
         // Calculate statistics
         let mut total_connections = 0;
-        
+
         for (id, node) in &self.nodes {
             let conn_count = node.peers.len();
             total_connections += conn_count;
             stats.max_connections = stats.max_connections.max(conn_count);
-            
+
             // Count peers connected to source
             if let Some(source_id) = source_id {
                 if node.peers.contains(&source_id) && *id != source_id {
@@ -232,9 +234,9 @@ impl StreamMesh {
                 }
             }
         }
-        
+
         stats.avg_connections = total_connections as f64 / self.nodes.len() as f64;
-        
+
         stats
     }
 
@@ -251,18 +253,20 @@ impl StreamMesh {
     /// Rebalance the mesh to optimize connections
     pub fn rebalance(&mut self) -> bool {
         // Get all peers that need more connections
-        let peers_needing_connections: Vec<PeerId> = self.nodes.iter()
+        let peers_needing_connections: Vec<PeerId> = self
+            .nodes
+            .iter()
             .filter(|(_, node)| node.can_accept_connections())
             .map(|(id, _)| *id)
             .collect();
-            
+
         let mut changes = false;
-        
+
         // Try to connect under-connected peers
         for peer_id in peers_needing_connections {
             changes |= self.connect_peer_to_mesh(peer_id);
         }
-        
+
         changes
     }
 }
@@ -278,4 +282,4 @@ pub struct MeshStats {
     pub avg_connections: f64,
     /// Maximum connections on any peer
     pub max_connections: usize,
-} 
+}

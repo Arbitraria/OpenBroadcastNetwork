@@ -23,11 +23,11 @@ impl MediaSource for DummySource {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {
         Ok(Vec::new())
     }
-    
+
     async fn seek(&mut self, _position: Duration) -> Result<(), MediaError> {
         Ok(())
     }
-    
+
     fn stream_info(&self) -> &dyn std::fmt::Debug {
         static INFO: &str = "DummySource";
         &INFO as &dyn std::fmt::Debug
@@ -45,16 +45,16 @@ pub struct FileSource {
 
 impl FileSource {
     /// Create a new file source
-    pub async fn new<P: AsRef<Path>>(path: P, format: crate::media::interface::MediaFormat) -> Result<Self, MediaError> {
-        let file = File::open(path.as_ref()).await
+    pub async fn new<P: AsRef<Path>>(
+        path: P,
+        format: crate::media::interface::MediaFormat,
+    ) -> Result<Self, MediaError> {
+        let file = File::open(path.as_ref())
+            .await
             .map_err(|e| MediaError::from(format!("Failed to open file: {}", e)))?;
-            
-        let mut stream = MediaStreamImpl::new(
-            Box::new(DummySource),
-            None,
-            None,
-        );
-        
+
+        let mut stream = MediaStreamImpl::new(Box::new(DummySource), None, None);
+
         // Set the stream metadata
         stream.metadata = crate::media::interface::MediaStream {
             id: path.as_ref().to_string_lossy().to_string(),
@@ -63,7 +63,7 @@ impl FileSource {
             bitrate: None,
             codec: None,
         };
-        
+
         Ok(FileSource { file, stream })
     }
 }
@@ -72,21 +72,24 @@ impl FileSource {
 impl MediaSource for FileSource {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {
         let mut buffer = vec![0u8; 4096]; // 4KB chunks
-        let bytes_read = self.file.read(&mut buffer).await
+        let bytes_read = self
+            .file
+            .read(&mut buffer)
+            .await
             .map_err(|e| MediaError::from(format!("Failed to read from file: {}", e)))?;
-            
+
         if bytes_read == 0 {
             return Err(MediaError::from("End of file"));
         }
-        
+
         buffer.truncate(bytes_read);
         Ok(buffer)
     }
-    
+
     fn stream_info(&self) -> &dyn std::fmt::Debug {
         &self.stream as &dyn std::fmt::Debug
     }
-    
+
     async fn seek(&mut self, _position: Duration) -> Result<(), MediaError> {
         // Implementation would depend on the file format
         // For simplicity, we'll just return an error for now
@@ -108,12 +111,8 @@ pub struct NetworkSource {
 impl NetworkSource {
     /// Create a new network source
     pub fn new(url: &str, format: crate::media::interface::MediaFormat) -> Self {
-        let mut stream = MediaStreamImpl::new(
-            Box::new(DummySource),
-            None,
-            None,
-        );
-        
+        let mut stream = MediaStreamImpl::new(Box::new(DummySource), None, None);
+
         // Set the stream metadata
         stream.metadata = crate::media::interface::MediaStream {
             id: url.to_string(),
@@ -122,7 +121,7 @@ impl NetworkSource {
             bitrate: None,
             codec: None,
         };
-        
+
         NetworkSource {
             url: url.to_string(),
             stream,
@@ -134,26 +133,32 @@ impl NetworkSource {
 #[async_trait]
 impl MediaSource for NetworkSource {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {
-        let response = self.client.get(&self.url)
+        let response = self
+            .client
+            .get(&self.url)
             .send()
             .await
             .map_err(|e| MediaError::from(format!("Failed to send request: {}", e)))?;
-            
+
         if !response.status().is_success() {
-            return Err(MediaError::from(format!("Request failed with status: {}", response.status())));
+            return Err(MediaError::from(format!(
+                "Request failed with status: {}",
+                response.status()
+            )));
         }
-        
-        let bytes = response.bytes()
+
+        let bytes = response
+            .bytes()
             .await
             .map_err(|e| MediaError::from(format!("Failed to read response: {}", e)))?;
-            
+
         Ok(bytes.to_vec())
     }
-    
+
     fn stream_info(&self) -> &dyn std::fmt::Debug {
         &self.stream as &dyn std::fmt::Debug
     }
-    
+
     async fn seek(&mut self, _position: Duration) -> Result<(), MediaError> {
         // Implementation would depend on the protocol
         // For simplicity, we'll just return an error for now
@@ -175,12 +180,8 @@ pub struct MemorySource {
 impl MemorySource {
     /// Create a new memory source
     pub fn new(data: Vec<u8>, format: crate::media::interface::MediaFormat) -> Self {
-        let mut stream = MediaStreamImpl::new(
-            Box::new(DummySource),
-            None,
-            None,
-        );
-        
+        let mut stream = MediaStreamImpl::new(Box::new(DummySource), None, None);
+
         // Set the stream metadata
         stream.metadata = crate::media::interface::MediaStream {
             id: "memory".to_string(),
@@ -189,7 +190,7 @@ impl MemorySource {
             bitrate: None,
             codec: None,
         };
-        
+
         MemorySource {
             data: Arc::new(data),
             position: 0,
@@ -204,19 +205,19 @@ impl MediaSource for MemorySource {
         if self.position >= self.data.len() {
             return Err(MediaError::from("End of data"));
         }
-        
+
         // Read up to 4KB at a time
         let end = std::cmp::min(self.position + 4096, self.data.len());
         let chunk = self.data[self.position..end].to_vec();
         self.position = end;
-        
+
         Ok(chunk)
     }
-    
+
     fn stream_info(&self) -> &dyn std::fmt::Debug {
         &self.stream as &dyn std::fmt::Debug
     }
-    
+
     async fn seek(&mut self, position: Duration) -> Result<(), MediaError> {
         // For simplicity, we'll just convert the duration to bytes
         // In a real implementation, this would depend on the codec and format
@@ -224,7 +225,7 @@ impl MediaSource for MemorySource {
         if pos_bytes > self.data.len() {
             return Err(MediaError::from("Seek position out of range"));
         }
-        
+
         self.position = pos_bytes;
         Ok(())
     }

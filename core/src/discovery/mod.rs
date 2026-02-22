@@ -25,7 +25,7 @@ pub mod interface;
 mod tests;
 
 // Re-export the main interface types
-pub use interface::{Discovery, DiscoveryEvent, DiscoveryError, PeerInfo};
+pub use interface::{Discovery, DiscoveryError, DiscoveryEvent, PeerInfo};
 
 // Re-export the discovery implementations
 pub use bootstrap::{BootstrapDiscovery, BootstrapDiscoveryConfig};
@@ -33,10 +33,10 @@ pub use dht::{DhtDiscovery, DhtDiscoveryConfig};
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock, Mutex};
-use tokio::time;
 use std::time::Duration;
-use tracing::{debug, info, error};
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::time;
+use tracing::{debug, error, info};
 
 /// Configuration for the discovery manager
 #[derive(Debug, Clone)]
@@ -91,7 +91,7 @@ impl DiscoveryManager {
     /// Create a new discovery manager with the given configuration
     pub fn new(config: DiscoveryManagerConfig) -> Self {
         let (event_tx, event_rx) = mpsc::channel(100);
-        
+
         Self {
             config,
             dht: None,
@@ -104,15 +104,15 @@ impl DiscoveryManager {
             shutdown_tx: None,
         }
     }
-    
+
     /// Start the discovery manager
     pub async fn start(&mut self) -> Result<(), DiscoveryError> {
         let mut running = self.running.write().await;
-        
+
         if *running {
             return Ok(());
         }
-        
+
         // Initialize discovery mechanisms
         if self.config.enable_dht {
             let config = self.config.dht_config.clone().unwrap_or_default();
@@ -120,33 +120,33 @@ impl DiscoveryManager {
             dht.start().await?;
             self.dht = Some(Arc::new(Mutex::new(dht)));
         }
-        
+
         if self.config.enable_bootstrap {
             let config = self.config.bootstrap_config.clone().unwrap_or_default();
             let mut bootstrap = BootstrapDiscovery::with_config(config);
             bootstrap.start().await?;
             self.bootstrap = Some(Arc::new(Mutex::new(bootstrap)));
         }
-        
+
         // Start the worker task
-        
+
         let dht = self.dht.clone();
         let bootstrap = self.bootstrap.clone();
         let _peers = self.peers.clone(); // Kept for future implementation
         let event_tx = self.event_tx.clone();
         let running_flag = self.running.clone();
         let poll_interval = Duration::from_millis(self.config.poll_interval_ms);
-        
+
         // Create a shutdown channel
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
-        
+
         let worker = tokio::spawn(async move {
             let mut interval = time::interval(poll_interval);
-            
+
             while *running_flag.read().await {
                 interval.tick().await;
-                
+
                 // Check for discovery events with a 1-second timeout
                 tokio::select! {
                     // Handle bootstrap events
@@ -173,7 +173,7 @@ impl DiscoveryManager {
                             let _ = event_tx.send(event).await;
                         }
                     },
-                    
+
                     // Handle shutdown signal
                     _ = &mut shutdown_rx => {
                         break;
@@ -181,39 +181,39 @@ impl DiscoveryManager {
                 }
             }
         });
-        
+
         // Store worker task and mark as running
         *self.worker_task.lock().await = Some(worker);
         *running = true;
-        
+
         info!("Discovery manager started");
-        
+
         Ok(())
     }
-    
+
     /// Stop the discovery manager
     pub async fn stop(&mut self) -> Result<(), DiscoveryError> {
         // Stop DHT discovery
         if let Some(dht) = &mut self.dht {
             dht.lock().await.stop().await?;
         }
-        
+
         // Stop bootstrap discovery
         if let Some(bootstrap) = &mut self.bootstrap {
             bootstrap.lock().await.stop().await?;
         }
-        
+
         // Clear known peers
         self.peers.write().await.clear();
-        
+
         // Set running to false
         *self.running.write().await = false;
-        
+
         info!("Discovery manager stopped");
-        
+
         Ok(())
     }
-    
+
     /// Handle a discovery event
     async fn handle_discovery_event(
         &self,
@@ -227,7 +227,7 @@ impl DiscoveryManager {
                 let mut peers_lock = peers.write().await;
                 peers_lock.insert(info.id.clone(), info.clone());
                 debug!("Discovered peer: {:?}", info);
-            },
+            }
             DiscoveryEvent::PeerUpdated(info) => {
                 // Update existing peer info
                 let mut peers_lock = peers.write().await;
@@ -235,73 +235,83 @@ impl DiscoveryManager {
                     *existing = info.clone();
                     debug!("Updated peer: {:?}", info);
                 }
-            },
+            }
             DiscoveryEvent::PeerExpired(peer_id) => {
                 // Remove expired peer
                 let mut peers_lock = peers.write().await;
                 if peers_lock.remove(peer_id).is_some() {
                     debug!("Peer expired: {:?}", peer_id);
                 }
-            },
-            DiscoveryEvent::PeerConnectionStatusChanged { peer_id, status, error } => {
+            }
+            DiscoveryEvent::PeerConnectionStatusChanged {
+                peer_id,
+                status,
+                error,
+            } => {
                 // Update connection status for the peer
                 let mut peers_lock = peers.write().await;
                 if let Some(peer_info) = peers_lock.get_mut(peer_id) {
                     peer_info.connection_status = status.clone();
                     if let Some(err) = error {
-                        debug!("Peer connection status changed: {:?} -> {:?} (error: {})", peer_id, status, err);
+                        debug!(
+                            "Peer connection status changed: {:?} -> {:?} (error: {})",
+                            peer_id, status, err
+                        );
                     } else {
-                        debug!("Peer connection status changed: {:?} -> {:?}", peer_id, status);
+                        debug!(
+                            "Peer connection status changed: {:?} -> {:?}",
+                            peer_id, status
+                        );
                     }
                 }
-            },
+            }
             DiscoveryEvent::ServiceStarted => {
                 debug!("Discovery service started");
-            },
+            }
             DiscoveryEvent::ServiceStopped => {
                 debug!("Discovery service stopped");
-            },
+            }
             DiscoveryEvent::Error(e) => {
                 error!("Discovery error: {}", e);
             }
         }
-        
+
         // Forward the event
         let _ = event_tx.send(event).await;
     }
-    
+
     /// Get the next discovery event
     pub async fn next_event(&self) -> Option<DiscoveryEvent> {
         let mut rx = self.event_rx.lock().await;
         rx.recv().await
     }
-    
+
     /// Get a list of all known peers
     pub async fn get_peers(&self) -> Vec<PeerInfo> {
         let peers = self.peers.read().await;
         peers.values().cloned().collect()
     }
-    
+
     /// Lookup a specific peer
     pub async fn lookup_peer(&self, id: &[u8]) -> Option<PeerInfo> {
         let peers = self.peers.read().await;
         peers.get(id).cloned()
     }
-    
+
     /// Announce self to the network
     pub async fn announce(&self, info: PeerInfo) -> Result<(), DiscoveryError> {
         // Announce via all active discovery mechanisms
         if let Some(dht) = &self.dht {
             dht.lock().await.announce(info.clone()).await?;
         }
-        
+
         if let Some(bootstrap) = &self.bootstrap {
             bootstrap.lock().await.announce(info.clone()).await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if the discovery manager is running
     pub async fn is_running(&self) -> bool {
         *self.running.read().await

@@ -75,10 +75,10 @@ pub struct MediaStream {
 pub trait MediaSource: Send + Sync + std::fmt::Debug + 'static {
     /// Get the next chunk of media data
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError>;
-    
+
     /// Get information about the media stream
     fn stream_info(&self) -> &dyn std::fmt::Debug;
-    
+
     /// Seek to a specific position in the stream
     async fn seek(&mut self, position: Duration) -> Result<(), MediaError>;
 }
@@ -88,7 +88,7 @@ pub trait MediaSource: Send + Sync + std::fmt::Debug + 'static {
 pub trait MediaSink: Send + Sync + std::fmt::Debug + 'static {
     /// Write a chunk of media data to the sink
     async fn write_chunk(&mut self, data: &[u8]) -> Result<(), MediaError>;
-    
+
     /// Flush any buffered data
     async fn flush(&mut self) -> Result<(), MediaError>;
 }
@@ -112,25 +112,25 @@ impl MediaSourceBuilder {
             },
         }
     }
-    
+
     /// Set the duration of the media stream
     pub fn duration(mut self, duration: Duration) -> Self {
         self.stream.duration = Some(duration);
         self
     }
-    
+
     /// Set the bitrate of the media stream
     pub fn bitrate(mut self, bitrate: u64) -> Self {
         self.stream.bitrate = Some(bitrate);
         self
     }
-    
+
     /// Set the codec of the media stream
     pub fn codec(mut self, codec: impl Into<String>) -> Self {
         self.stream.codec = Some(codec.into());
         self
     }
-    
+
     /// Build the media source
     pub fn build(self) -> MediaStream {
         self.stream

@@ -5,10 +5,10 @@
 
 mod mesh;
 
-pub use mesh::{StreamMesh, MeshStats, MeshNode};
+pub use mesh::{MeshNode, MeshStats, StreamMesh};
 
-use crate::overlay::peer::{LocalPeerId, PeerRole};
 use crate::overlay::interface::StreamId;
+use crate::overlay::peer::{LocalPeerId, PeerRole};
 use libp2p::PeerId;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -18,7 +18,7 @@ use std::time::Duration;
 pub struct MeshConfig {
     /// Minimum number of connections per peer
     pub min_connections: usize,
-    /// Target number of connections per peer 
+    /// Target number of connections per peer
     pub target_connections: usize,
     /// Maximum number of connections per peer
     pub max_connections: usize,
@@ -28,7 +28,7 @@ pub struct MeshConfig {
     pub backoff_time: Duration,
     /// Maximum number of connection attempts before giving up
     pub max_connection_attempts: usize,
-    /// Target number of peers in the mesh 
+    /// Target number of peers in the mesh
     pub target_peers: usize,
     /// Minimum number of peers in the mesh
     pub min_peers: usize,
@@ -96,25 +96,30 @@ impl MeshNetwork {
             stream_meshes: HashMap::new(),
         }
     }
-    
+
     /// Add a stream to the mesh network
     pub fn add_stream(&mut self, stream_id: StreamId) -> bool {
         if self.stream_meshes.contains_key(&stream_id) {
             return false;
         }
-        
+
         let mesh = StreamMesh::new(stream_id.clone());
         self.stream_meshes.insert(stream_id, mesh);
         true
     }
-    
+
     /// Remove a stream from the mesh network
     pub fn remove_stream(&mut self, stream_id: &StreamId) -> bool {
         self.stream_meshes.remove(stream_id).is_some()
     }
-    
+
     /// Add a peer to a stream's mesh
-    pub fn add_peer_to_stream(&mut self, stream_id: &StreamId, peer_id: PeerId, role: PeerRole) -> bool {
+    pub fn add_peer_to_stream(
+        &mut self,
+        stream_id: &StreamId,
+        peer_id: PeerId,
+        role: PeerRole,
+    ) -> bool {
         if let Some(mesh) = self.stream_meshes.get_mut(stream_id) {
             // Default bandwidth is configurable but we'll use a reasonable value
             let default_bandwidth = 1_000_000; // 1 Mbps
@@ -123,7 +128,7 @@ impl MeshNetwork {
             false
         }
     }
-    
+
     /// Remove a peer from a stream's mesh
     pub fn remove_peer_from_stream(&mut self, stream_id: &StreamId, peer_id: &PeerId) -> bool {
         if let Some(mesh) = self.stream_meshes.get_mut(stream_id) {
@@ -132,22 +137,24 @@ impl MeshNetwork {
             false
         }
     }
-    
+
     /// Get statistics for a stream's mesh
     pub fn get_stream_stats(&self, stream_id: &StreamId) -> Option<MeshStats> {
-        self.stream_meshes.get(stream_id).map(|mesh| mesh.get_stats())
+        self.stream_meshes
+            .get(stream_id)
+            .map(|mesh| mesh.get_stats())
     }
-    
+
     /// Rebalance all stream meshes
     pub fn rebalance_all(&mut self) -> usize {
         let mut changes = 0;
-        
+
         for mesh in self.stream_meshes.values_mut() {
             if mesh.rebalance() {
                 changes += 1;
             }
         }
-        
+
         changes
     }
 }

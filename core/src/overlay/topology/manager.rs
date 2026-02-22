@@ -45,16 +45,16 @@
 //! - Internal `RwLock` guards for concurrent data structure access
 //! - Async-aware locking for all public methods
 
-use crate::overlay::interface::{StreamId, OverlayError};
-use crate::overlay::peer::{Peer, PeerRole};
+use super::config::TopologyConfig;
+use super::health::ConnectionHealth;
+use crate::overlay::interface::{OverlayError, StreamId};
 use crate::overlay::metrics::OverlayMetrics;
+use crate::overlay::peer::{Peer, PeerRole};
 use libp2p::PeerId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use super::config::TopologyConfig;
-use super::health::ConnectionHealth;
 
 /// Manager for multiple relay trees
 #[derive(Debug, Clone)]
@@ -86,7 +86,7 @@ impl TopologyManager {
         let trees = Arc::new(RwLock::new(HashMap::new()));
         let tasks = Arc::new(RwLock::new(Vec::new()));
         let connection_health = Arc::new(RwLock::new(HashMap::new()));
-        
+
         Self {
             local_peer_id,
             config,
@@ -97,11 +97,11 @@ impl TopologyManager {
             metrics,
         }
     }
-    
+
     /// Start the topology manager
     pub async fn start(&self) -> Result<(), OverlayError> {
         let mut tasks = self.tasks.write().await;
-        
+
         // Start the periodic rebalance task
         let trees_clone = self.trees.clone();
         let peers_clone = self.peers.clone();
@@ -110,51 +110,52 @@ impl TopologyManager {
             Self::periodic_rebalance(trees_clone, peers_clone, config_clone).await;
         });
         tasks.push(rebalance_task);
-        
+
         // Start the connection health monitoring task
         let connection_health_clone = self.connection_health.clone();
         let peers_clone = self.peers.clone();
         let config_clone = self.config.clone();
         let health_task = tokio::spawn(async move {
-            Self::monitor_connection_health(connection_health_clone, peers_clone, config_clone).await;
+            Self::monitor_connection_health(connection_health_clone, peers_clone, config_clone)
+                .await;
         });
         tasks.push(health_task);
-        
+
         Ok(())
     }
-    
+
     /// Stop the topology manager
     pub async fn stop(&self) -> Result<(), OverlayError> {
         let mut tasks = self.tasks.write().await;
-        
+
         for task in tasks.drain(..) {
             task.abort();
         }
-        
+
         Ok(())
     }
-    
+
     /// Periodically rebalance all streams
     async fn periodic_rebalance(
         trees: Arc<RwLock<HashMap<StreamId, crate::overlay::tree::StreamTree>>>,
         peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
-        config: TopologyConfig
+        config: TopologyConfig,
     ) {
         let mut interval = tokio::time::interval(config.rebalance_interval);
-        
+
         loop {
             interval.tick().await;
-            
+
             // Get a list of stream IDs to rebalance
             let stream_ids = {
                 let trees = trees.read().await;
                 trees.keys().cloned().collect::<Vec<_>>()
             };
-            
+
             // Rebalance each stream
             for stream_id in stream_ids {
                 let mut trees = trees.write().await;
-                
+
                 if let Some(tree) = trees.get_mut(&stream_id) {
                     // Just call rebalance as it doesn't need our parameters
                     tree.rebalance();
@@ -162,110 +163,110 @@ impl TopologyManager {
             }
         }
     }
-    
+
     /// Monitors connection health for all connected peers
     async fn monitor_connection_health(
         connection_health: Arc<RwLock<HashMap<PeerId, ConnectionHealth>>>,
         peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
-        config: TopologyConfig
+        config: TopologyConfig,
     ) {
         let mut interval = tokio::time::interval(config.health_check_interval);
-        
+
         loop {
             interval.tick().await;
-            
+
             // Get a list of peers to check
             let peer_ids = {
                 let peers = peers.read().await;
                 peers.keys().cloned().collect::<Vec<_>>()
             };
-            
+
             // Update health for each peer
             for peer_id in peer_ids {
                 let mut health_lock = connection_health.write().await;
-                
+
                 // Get or create health record
-                let health = health_lock.entry(peer_id).or_insert_with(|| {
-                    ConnectionHealth::default()
-                });
-                
+                let health = health_lock
+                    .entry(peer_id)
+                    .or_insert_with(|| ConnectionHealth::default());
+
                 // Update last checked time and degraded status
                 health.update_degraded_status(
                     config.min_relay_quality,
                     config.max_consecutive_failures,
-                    config.min_success_rate
+                    config.min_success_rate,
                 );
             }
-            
+
             // Clean up old health records
-            Self::cleanup_health_records(
-                connection_health.clone(),
-                config.health_record_expiry
-            ).await;
+            Self::cleanup_health_records(connection_health.clone(), config.health_record_expiry)
+                .await;
         }
     }
-    
+
     /// Clean up old health records
     async fn cleanup_health_records(
         connection_health: Arc<RwLock<HashMap<PeerId, ConnectionHealth>>>,
-        max_age: Duration
+        max_age: Duration,
     ) {
         let now = Instant::now();
         let mut health = connection_health.write().await;
-        
-        let expired: Vec<PeerId> = health.iter()
+
+        let expired: Vec<PeerId> = health
+            .iter()
             .filter(|(_, h)| now.duration_since(h.last_checked) > max_age)
             .map(|(id, _)| *id)
             .collect();
-            
+
         for id in expired {
             health.remove(&id);
         }
     }
-    
+
     /// Add a peer to a stream
     pub async fn add_peer_to_stream(
         &self,
         stream_id: &StreamId,
         peer_id: PeerId,
-        role: PeerRole
+        role: PeerRole,
     ) -> Result<(), OverlayError> {
         let mut trees = self.trees.write().await;
-        
-        // Get or create the tree for this stream
-        let tree = trees.entry(stream_id.clone()).or_insert_with(|| {
-            crate::overlay::tree::StreamTree::new(stream_id.clone())
-        });
-        
+
+        // Get or create the tree for this stream, passing the config
+        let config = self.config.clone();
+        let tree = trees
+            .entry(stream_id.clone())
+            .or_insert_with(|| crate::overlay::tree::StreamTree::new(stream_id.clone(), config));
+
         // If this is the publisher and no source exists yet, set it
         if role == PeerRole::Publisher && tree.source.is_none() {
             tree.source = Some(peer_id.clone());
         }
-        
+
         // Add the peer to the tree
         // We need to provide a default bandwidth capacity if not specified
         let bandwidth = self.config.default_bandwidth;
         tree.add_peer(peer_id, role, bandwidth);
-        
+
         // If we have accumulated enough peers, trigger a rebalance
         if tree.nodes.len() > self.config.rebalance_threshold {
             tree.rebalance();
         }
-        
+
         Ok(())
     }
-    
+
     /// Remove a peer from a stream
     pub async fn remove_peer_from_stream(
         &self,
         stream_id: &StreamId,
-        peer_id: &PeerId
+        peer_id: &PeerId,
     ) -> Result<(), OverlayError> {
         let mut trees = self.trees.write().await;
-        
+
         if let Some(tree) = trees.get_mut(stream_id) {
             tree.remove_peer(peer_id);
-            
+
             // If the tree is now empty, remove it
             if tree.nodes.is_empty() {
                 trees.remove(stream_id);
@@ -273,47 +274,52 @@ impl TopologyManager {
                 // Otherwise rebalance
                 tree.rebalance();
             }
-            
+
             Ok(())
         } else {
-            Err(OverlayError::TopologyError(
-                format!("Stream not found: {:?}", stream_id)
-            ))
+            Err(OverlayError::TopologyError(format!(
+                "Stream not found: {:?}",
+                stream_id
+            )))
         }
     }
-    
+
     /// Record a connection success for a peer
     pub async fn record_connection_success(&self, peer_id: &PeerId) {
         let mut health_lock = self.connection_health.write().await;
-        
+
         // Get or create health record
-        let health = health_lock.entry(*peer_id).or_insert_with(ConnectionHealth::default);
-        
+        let health = health_lock
+            .entry(*peer_id)
+            .or_insert_with(ConnectionHealth::default);
+
         // Update metrics
         health.record_success();
-        
+
         // Clear degraded flag if quality is good enough
         if health.quality >= self.config.min_relay_quality {
             health.is_degraded = false;
         }
     }
-    
+
     /// Record a connection failure for a peer
     pub async fn record_connection_failure(&self, peer_id: &PeerId) {
         let mut health_lock = self.connection_health.write().await;
-        
+
         // Get or create health record
-        let health = health_lock.entry(*peer_id).or_insert_with(ConnectionHealth::default);
-        
+        let health = health_lock
+            .entry(*peer_id)
+            .or_insert_with(ConnectionHealth::default);
+
         // Update metrics
         health.record_failure();
-        
+
         // Mark as degraded if failures exceed threshold
         if health.consecutive_failures >= self.config.max_consecutive_failures {
             health.is_degraded = true;
         }
     }
-    
+
     /// Update peer information
     pub async fn update_peer(&self, peer: Peer) -> Result<(), OverlayError> {
         let mut peers = self.peers.write().await;
@@ -323,15 +329,18 @@ impl TopologyManager {
                 peers.insert(peer_id, peer);
                 Ok(())
             }
-            Err(e) => Err(OverlayError::InvalidPeerId(format!("Failed to convert peer ID: {}", e)))
+            Err(e) => Err(OverlayError::InvalidPeerId(format!(
+                "Failed to convert peer ID: {}",
+                e
+            ))),
         }
     }
-    
+
     /// Remove a peer
     pub async fn remove_peer(&self, peer_id: &PeerId) -> Result<(), OverlayError> {
         let mut peers = self.peers.write().await;
         peers.remove(peer_id);
-        
+
         // Remove from all trees
         let mut trees = self.trees.write().await;
         for (_, tree) in trees.iter_mut() {
@@ -339,78 +348,89 @@ impl TopologyManager {
                 let _ = tree.remove_peer(peer_id);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the relay path for a stream from source to target
     pub async fn get_relay_path(
-        &self, 
-        stream_id: &StreamId, 
-        target_id: &PeerId
+        &self,
+        stream_id: &StreamId,
+        target_id: &PeerId,
     ) -> Result<Vec<PeerId>, OverlayError> {
         let trees = self.trees.read().await;
-        
+
         if let Some(tree) = trees.get(stream_id) {
             if let Some(path) = tree.get_path_to_peer(target_id) {
                 Ok(path)
             } else {
-                Err(OverlayError::TopologyError(
-                    format!("Peer not in stream: {}", target_id)
-                ))
+                Err(OverlayError::TopologyError(format!(
+                    "Peer not in stream: {}",
+                    target_id
+                )))
             }
         } else {
-            Err(OverlayError::TopologyError(
-                format!("Stream not found: {:?}", stream_id)
-            ))
+            Err(OverlayError::TopologyError(format!(
+                "Stream not found: {:?}",
+                stream_id
+            )))
         }
     }
-    
+
     /// Get all peers in a stream
-    pub async fn get_stream_peers(&self, stream_id: &StreamId) -> Result<Vec<PeerId>, OverlayError> {
+    pub async fn get_stream_peers(
+        &self,
+        stream_id: &StreamId,
+    ) -> Result<Vec<PeerId>, OverlayError> {
         let trees = self.trees.read().await;
-        
+
         if let Some(tree) = trees.get(stream_id) {
             Ok(tree.nodes.keys().cloned().collect())
         } else {
-            Err(OverlayError::TopologyError(
-                format!("Stream not found: {:?}", stream_id)
-            ))
+            Err(OverlayError::TopologyError(format!(
+                "Stream not found: {:?}",
+                stream_id
+            )))
         }
     }
-    
+
     /// Get the publisher for a stream
     pub async fn get_stream_publisher(&self, stream_id: &StreamId) -> Result<PeerId, OverlayError> {
         let trees = self.trees.read().await;
-        
+
         if let Some(tree) = trees.get(stream_id) {
             if let Some(source) = &tree.source {
                 Ok(source.clone())
             } else {
-                Err(OverlayError::TopologyError(
-                    format!("No source found for stream: {:?}", stream_id)
-                ))
+                Err(OverlayError::TopologyError(format!(
+                    "No source found for stream: {:?}",
+                    stream_id
+                )))
             }
         } else {
-            Err(OverlayError::TopologyError(
-                format!("Stream not found: {:?}", stream_id)
-            ))
+            Err(OverlayError::TopologyError(format!(
+                "Stream not found: {:?}",
+                stream_id
+            )))
         }
     }
-    
+
     /// Rebalance a stream's topology with geo-awareness
     pub async fn rebalance_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         let mut trees = self.trees.write().await;
         let peers = self.peers.read().await;
-        
+
         if let Some(tree) = trees.get_mut(stream_id) {
             tree.rebalance();
             Ok(())
         } else {
-            Err(OverlayError::TopologyError(format!("Stream not found: {:?}", stream_id)))
+            Err(OverlayError::TopologyError(format!(
+                "Stream not found: {:?}",
+                stream_id
+            )))
         }
     }
-    
+
     /// Update the TopologyConfig
     pub fn update_config(&mut self, config: TopologyConfig) {
         self.config = config;

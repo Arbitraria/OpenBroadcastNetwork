@@ -48,19 +48,19 @@ impl RelayStats {
             ..Default::default()
         }
     }
-    
+
     /// Reset the measurement period
     pub fn reset_period(&mut self) {
         self.period_start = Instant::now();
         self.incoming_bandwidth = 0;
         self.outgoing_bandwidth = 0;
     }
-    
+
     /// Record a relayed chunk
     pub fn record_chunk(&mut self, chunk_size: usize) {
         self.chunks_relayed += 1;
         self.bytes_relayed += chunk_size as u64;
-        
+
         // Update average chunk size
         if self.chunks_relayed > 0 {
             self.avg_chunk_size = self.bytes_relayed / self.chunks_relayed;

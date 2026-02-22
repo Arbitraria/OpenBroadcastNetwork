@@ -3,20 +3,20 @@
 // This module implements topic-based publish-subscribe functionality
 // using libp2p GossipSub for efficient message propagation.
 
-pub mod interface;
 pub mod gossipsub;
-pub mod topic;
+pub mod interface;
 pub mod message;
-pub mod validation;
 pub mod metrics;
+pub mod topic;
+pub mod validation;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export main types
-pub use interface::{PubSub, PubSubEvent, PubSubError};
 pub use gossipsub::{GossipSubConfig, GossipSubService};
-pub use topic::{Topic, TopicId, StreamTopic};
-pub use message::{Message, MessageId, MessageType, MessagePayload};
+pub use interface::{PubSub, PubSubError, PubSubEvent};
+pub use message::{Message, MessageId, MessagePayload, MessageType};
+pub use metrics::{PubSubMetrics, PubSubStats};
+pub use topic::{StreamTopic, Topic, TopicId};
 pub use validation::{MessageValidator, ValidationResult};
-pub use metrics::{PubSubMetrics, PubSubStats}; 

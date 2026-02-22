@@ -1,11 +1,4 @@
-// Simplified version for relay node
-
 use clap::{Parser, Subcommand};
-use OpenBroadcastNetwork_core::prelude::*;
-use OpenBroadcastNetwork_core::overlay::interface::{Overlay, OverlayConfig};
-use OpenBroadcastNetwork_core::overlay::peer::{PeerRole, LocalPeerId};
-use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
-use OpenBroadcastNetwork_core::media::StreamId;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,9 +6,14 @@ use std::time::{Duration, SystemTime};
 use tokio::signal;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
-// use tokio_stream::{self as stream, StreamExt}; // Not needed for current timing implementation
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::fmt;
+use OpenBroadcastNetwork_core::media::publisher::StreamPublisher;
+use OpenBroadcastNetwork_core::media::StreamId;
+use OpenBroadcastNetwork_core::overlay::interface::{Overlay, OverlayConfig};
+use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
+use OpenBroadcastNetwork_core::overlay::peer::{LocalPeerId, PeerRole};
+use OpenBroadcastNetwork_core::prelude::*;
 use OpenBroadcastNetwork_node::visualization::*;
 use OpenBroadcastNetwork_node::{StreamingDemo, StreamingDemoConfig};
 
@@ -98,7 +96,7 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Run streaming demo with synthetic content
+    /// Run streaming demo with synthetic content or stream a real video file
     Stream {
         /// Bootstrap nodes to connect to
         #[clap(short, long, value_delimiter = ',')]
@@ -112,19 +110,23 @@ enum Commands {
         #[clap(short, long, default_value = "Demo Stream")]
         title: String,
 
-        /// Video width
+        /// Path to MP4 video file to stream (if provided, streams real video instead of synthetic)
+        #[clap(long)]
+        video: Option<String>,
+
+        /// Video width (synthetic mode only)
         #[clap(long, default_value = "640")]
         width: u32,
 
-        /// Video height
+        /// Video height (synthetic mode only)
         #[clap(long, default_value = "480")]
         height: u32,
 
-        /// Video FPS
+        /// Video FPS (synthetic mode only)
         #[clap(long, default_value = "30")]
         fps: u32,
 
-        /// Duration in seconds
+        /// Duration in seconds (synthetic mode only)
         #[clap(short, long, default_value = "60")]
         duration: u64,
 
@@ -180,7 +182,12 @@ struct RunningNode {
 }
 
 impl RunningNode {
-    async fn new(role: PeerRole, enable_dht: bool, bootstrap_peers: Vec<String>) -> Result<Self, anyhow::Error> {
+    async fn new(
+        role: PeerRole,
+        enable_dht: bool,
+        enable_geo_aware: bool,
+        bootstrap_peers: Vec<String>,
+    ) -> Result<Self, anyhow::Error> {
         let enable_bootstrap = !bootstrap_peers.is_empty();
         let config = OverlayConfig {
             local_peer_id: LocalPeerId::new_random(),
@@ -190,11 +197,12 @@ impl RunningNode {
             enable_dht_discovery: enable_dht,
             max_connections: 50,
             connection_timeout: Duration::from_secs(30),
+            enable_geo_aware,
             ..Default::default()
         };
-        
+
         let overlay = Libp2pOverlay::new(config).await?;
-        
+
         Ok(Self {
             start_time: SystemTime::now(),
             overlay: Arc::new(overlay),
@@ -210,10 +218,10 @@ async fn run_relay_node(
     role: String,
     _enable_mdns: bool,
     enable_dht: bool,
-    _geo_aware: bool,
+    geo_aware: bool,
 ) -> Result<(), anyhow::Error> {
     info!("Starting relay node on {}", listen_addr);
-    
+
     // Map role string to PeerRole
     let peer_role = match role.to_lowercase().as_str() {
         "relay" => PeerRole::Relay,
@@ -226,22 +234,22 @@ async fn run_relay_node(
             PeerRole::Relay
         }
     };
-    
+
     info!("Node role: {:?}", peer_role);
-    
+
     // Create the running node with overlay
-    let node = RunningNode::new(peer_role, enable_dht, bootstrap_nodes).await?;
+    let node = RunningNode::new(peer_role, enable_dht, geo_aware, bootstrap_nodes).await?;
     let peer_id = node.overlay.local_peer_id();
     info!("Peer ID: {}", peer_id);
-    
+
     // Start the overlay
     node.overlay.start().await?;
     info!("Overlay network started");
-    
+
     // Register shutdown signal handler
     let running = Arc::new(Mutex::new(true));
     let r = running.clone();
-    
+
     tokio::spawn(async move {
         match signal::ctrl_c().await {
             Ok(()) => {
@@ -254,25 +262,29 @@ async fn run_relay_node(
             }
         }
     });
-    
+
     // Main event loop
     let interval = Duration::from_secs(5); // Update stats every 5 seconds
     let mut interval_timer = time::interval(interval);
-    
+
     info!("Relay node started successfully");
-    
+
     while *running.lock().await {
         interval_timer.tick().await;
-        
+
         // Get and log stats
         if let Ok(stats) = node.overlay.stats().await {
             if let Ok(uptime) = SystemTime::now().duration_since(node.start_time) {
-                debug!("Node uptime: {}, Connected peers: {}, Active streams: {}", 
-                      format_duration(uptime), stats.connected_peers, stats.active_streams);
+                debug!(
+                    "Node uptime: {}, Connected peers: {}, Active streams: {}",
+                    format_duration(uptime),
+                    stats.connected_peers,
+                    stats.active_streams
+                );
             }
         }
     }
-    
+
     info!("Shutting down relay node...");
     node.overlay.stop().await?;
     info!("Node stopped successfully");
@@ -291,17 +303,20 @@ async fn run_streaming_demo(
     enable_dht: bool,
 ) -> Result<(), anyhow::Error> {
     info!("Starting streaming demo on {}", listen_addr);
-    info!("Stream: '{}' ({}x{} @ {}fps for {}s)", title, width, height, fps, duration);
-    
+    info!(
+        "Stream: '{}' ({}x{} @ {}fps for {}s)",
+        title, width, height, fps, duration
+    );
+
     // Create the overlay network first
-    let node = RunningNode::new(PeerRole::Publisher, enable_dht, bootstrap_nodes).await?;
+    let node = RunningNode::new(PeerRole::Publisher, enable_dht, false, bootstrap_nodes).await?;
     let peer_id = node.overlay.local_peer_id();
     info!("Publisher Peer ID: {}", peer_id);
-    
+
     // Start the overlay
     node.overlay.start().await?;
     info!("Overlay network started");
-    
+
     // Create demo configuration
     let demo_config = StreamingDemoConfig {
         title,
@@ -312,23 +327,80 @@ async fn run_streaming_demo(
         audio_channels: 2,
         duration_seconds: duration,
     };
-    
+
     // Create and start streaming demo
     let mut demo = StreamingDemo::new(demo_config, node.overlay.clone()).await?;
     info!("Streaming demo created successfully");
-    
+
     info!("Starting media generation and streaming...");
     demo.start().await?;
-    
+
     info!("Streaming demo completed successfully");
-    
-    // Clean shutdown
+
     node.overlay.stop().await?;
     info!("Node stopped successfully");
     Ok(())
 }
 
-/// Run web viewer server for codec testing and demo
+async fn run_video_stream(
+    bootstrap_nodes: Vec<String>,
+    listen_addr: String,
+    title: String,
+    video_path: String,
+    enable_dht: bool,
+) -> Result<(), anyhow::Error> {
+    info!(
+        "Starting video stream from {} on {}",
+        video_path, listen_addr
+    );
+
+    let video_file = PathBuf::from(&video_path);
+    if !video_file.exists() {
+        return Err(anyhow::anyhow!("Video file not found: {}", video_path));
+    }
+
+    let node = RunningNode::new(PeerRole::Publisher, enable_dht, false, bootstrap_nodes).await?;
+    let peer_id = node.overlay.local_peer_id();
+    info!("Publisher Peer ID: {}", peer_id);
+
+    node.overlay.start().await?;
+    info!("Overlay network started");
+
+    let mut publisher = StreamPublisher::new(node.overlay.clone(), title);
+    let stream_id = publisher.stream_id().clone();
+    info!("Stream ID: {}", stream_id);
+
+    let running = Arc::new(Mutex::new(true));
+    let r = running.clone();
+
+    tokio::spawn(async move {
+        match signal::ctrl_c().await {
+            Ok(()) => {
+                info!("Shutdown signal received");
+                let mut lock = r.lock().await;
+                *lock = false;
+            }
+            Err(err) => {
+                error!("Unable to listen for shutdown signal: {}", err);
+            }
+        }
+    });
+
+    info!("Starting video stream...");
+    match publisher.publish_from_file(&video_file).await {
+        Ok(()) => {
+            info!("Video stream completed successfully");
+        }
+        Err(e) => {
+            error!("Video stream failed: {}", e);
+        }
+    }
+
+    node.overlay.stop().await?;
+    info!("Node stopped successfully");
+    Ok(())
+}
+
 async fn run_web_viewer(
     host: String,
     port: u16,
@@ -340,7 +412,7 @@ async fn run_web_viewer(
     enable_dht: bool,
 ) -> Result<(), anyhow::Error> {
     info!("Starting web viewer server on {}:{}", host, port);
-    
+
     // Create web server configuration
     let config = WebServerConfig {
         host: host.clone(),
@@ -353,24 +425,30 @@ async fn run_web_viewer(
     // Create server with P2P support if stream_id is provided
     let (server, stream_manager, p2p_node) = if let Some(sid) = stream_id {
         info!("P2P streaming mode enabled for stream: {}", sid);
-        
+
         // Create P2P overlay for receiving streams
-        let node = RunningNode::new(PeerRole::Consumer, enable_dht, bootstrap_nodes.clone()).await?;
+        let node = RunningNode::new(
+            PeerRole::Consumer,
+            enable_dht,
+            false,
+            bootstrap_nodes.clone(),
+        )
+        .await?;
         node.overlay.start().await?;
-        
+
         let stream_id_obj = StreamId::new(sid);
         let stream_manager = Arc::new(web_server::StreamManager::with_p2p(
-            node.overlay.clone(), 
-            stream_id_obj
+            node.overlay.clone(),
+            stream_id_obj,
         ));
-        
+
         let config_clone = config.clone();
         let app_state = web_server::AppState {
             config: config_clone,
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
         };
-        
+
         let server = web_server::WebServer::new_with_state(config, app_state);
         (server, stream_manager, Some(node))
     } else {
@@ -381,7 +459,10 @@ async fn run_web_viewer(
     };
 
     info!("Web viewer available at http://{}:{}/", host, port);
-    info!("WebSocket streaming endpoint: ws://{}:{}/stream", host, port);
+    info!(
+        "WebSocket streaming endpoint: ws://{}:{}/stream",
+        host, port
+    );
 
     // If bootstrap nodes are provided, we can optionally create an overlay network
     // for real P2P streaming (for future enhancement)
@@ -393,13 +474,19 @@ async fn run_web_viewer(
     // Load video file if provided (with fallback to synthetic streaming)
     let video_loaded = if let Some(video_path) = &video_file {
         info!("Loading video file: {}", video_path);
-        match stream_manager.load_video_file(&PathBuf::from(video_path)).await {
+        match stream_manager
+            .load_video_file(&PathBuf::from(video_path))
+            .await
+        {
             Ok(_) => {
                 info!("Successfully loaded video file for streaming");
                 true
             }
             Err(e) => {
-                warn!("Failed to load video file: {}. Falling back to synthetic streaming.", e);
+                warn!(
+                    "Failed to load video file: {}. Falling back to synthetic streaming.",
+                    e
+                );
                 false
             }
         }
@@ -412,7 +499,7 @@ async fn run_web_viewer(
     tokio::spawn(async move {
         // Wait a bit for the server to start
         tokio::time::sleep(Duration::from_secs(2)).await;
-        
+
         // Start the streaming session
         if let Err(e) = stream_manager_clone.start_streaming().await {
             error!("Failed to start streaming: {}", e);
@@ -422,88 +509,107 @@ async fn run_web_viewer(
         if video_loaded {
             // Stream real video from loaded samples
             info!("Starting real video streaming");
-            
+
             let samples = {
                 let samples_guard = stream_manager_clone.video_samples.lock().await;
                 samples_guard.clone()
             };
-            
+
             if let Some(samples) = samples {
-                info!("Streaming {} samples from real video (will loop continuously)", samples.len());
-                
+                info!(
+                    "Streaming {} samples from real video (will loop continuously)",
+                    samples.len()
+                );
+
                 let start_time = std::time::Instant::now();
                 let mut loop_count = 0;
-                
-                // Loop the video content continuously  
+
+                // Loop the video content continuously
                 loop {
                     // If no clients are connected, wait before starting the loop
                     while stream_manager_clone.chunk_sender.receiver_count() == 0 {
                         debug!("No clients connected, waiting...");
                         tokio::time::sleep(Duration::from_millis(500)).await;
                     }
-                    
-                    info!("Client(s) connected, starting video loop #{}", loop_count + 1);
-                    
+
+                    info!(
+                        "Client(s) connected, starting video loop #{}",
+                        loop_count + 1
+                    );
+
                     for (index, sample) in samples.iter().enumerate() {
                         // Check if clients are still connected
                         if stream_manager_clone.chunk_sender.receiver_count() == 0 {
                             warn!("All clients disconnected during streaming");
                             break; // Break inner loop to wait for new clients
                         }
-                        
+
                         // Calculate adjusted timestamp for looping
                         let loop_duration = Duration::from_secs_f64(samples.len() as f64 / 30.0); // Assume 30fps
                         let adjusted_timestamp = sample.timestamp + (loop_duration * loop_count);
-                        
+
                         // Use precise timing with a deadline
                         let target_time = start_time + adjusted_timestamp;
                         tokio::time::sleep_until(tokio::time::Instant::from_std(target_time)).await;
-                        
+
                         // Send the sample based on its track type
                         // Skip initialization segment in the loop since it's sent once per client connection
-                        if sample.track_id == 99 { 
+                        if sample.track_id == 99 {
                             // Skip initialization segments during streaming loop
                             // These are already sent when clients first connect
                             continue;
-                        } else if sample.track_id == 0 { // Video track
-                            if let Err(e) = stream_manager_clone.send_video_chunk(
-                                sample.data.clone(), 
-                                sample.is_sync
-                            ).await {
+                        } else if sample.track_id == 0 {
+                            // Video track
+                            if let Err(e) = stream_manager_clone
+                                .send_video_chunk(sample.data.clone(), sample.is_sync)
+                                .await
+                            {
                                 warn!("Failed to send video sample: {}", e);
                                 break;
                             }
-                            
-                            if index % 10 == 0 { // Log every 10th sample
-                                debug!("Sent video segment {} at {:?} ({} bytes, keyframe: {})", 
-                                       index, adjusted_timestamp, sample.data.len(), sample.is_sync);
+
+                            if index % 10 == 0 {
+                                // Log every 10th sample
+                                debug!(
+                                    "Sent video segment {} at {:?} ({} bytes, keyframe: {})",
+                                    index,
+                                    adjusted_timestamp,
+                                    sample.data.len(),
+                                    sample.is_sync
+                                );
                             }
-                        } else { // Audio track
-                            if let Err(e) = stream_manager_clone.send_audio_chunk(
-                                sample.data.clone()
-                            ).await {
+                        } else {
+                            // Audio track
+                            if let Err(e) = stream_manager_clone
+                                .send_audio_chunk(sample.data.clone())
+                                .await
+                            {
                                 warn!("Failed to send audio sample: {}", e);
                                 break;
                             }
                         }
                     }
-                    
+
                     loop_count += 1;
                     info!("Completed video loop #{}", loop_count);
-                    
-                    if loop_count >= 10 { // Limit to 10 loops to prevent infinite streaming
+
+                    if loop_count >= 10 {
+                        // Limit to 10 loops to prevent infinite streaming
                         break;
                     }
                 }
-                
-                info!("Finished streaming real video (completed {} loops)", loop_count);
+
+                info!(
+                    "Finished streaming real video (completed {} loops)",
+                    loop_count
+                );
             } else {
                 warn!("No video samples loaded, falling back to demo mode");
             }
         } else {
             info!("No video file provided. Please provide a video file with --video option.");
             info!("Example: cargo run -p OpenBroadcastNetwork-node web-viewer --video sample_video.mp4");
-            
+
             // For now, just wait without generating demo content
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -537,47 +643,52 @@ async fn run_web_viewer(
             info!("Shutdown signal received, stopping server...");
         }
     }
-    
+
     // Clean up P2P node if it was created
     if let Some(node) = p2p_node {
         info!("Stopping P2P overlay...");
         node.overlay.stop().await?;
     }
-    
+
     info!("Web viewer server stopped successfully");
     Ok(())
 }
 
 /// Generate a demo H.264 frame (placeholder data)
-fn generate_demo_h264_frame(width: u32, height: u32, frame_number: u64, is_keyframe: bool) -> Vec<u8> {
+fn generate_demo_h264_frame(
+    width: u32,
+    height: u32,
+    frame_number: u64,
+    is_keyframe: bool,
+) -> Vec<u8> {
     // This would normally come from the OpenH264 encoder
     // For now, generate some placeholder data that resembles H.264 NAL units
-    
+
     let mut frame_data = Vec::new();
-    
+
     if is_keyframe {
         // SPS (Sequence Parameter Set) NAL unit
         frame_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x67]); // SPS start code
         frame_data.extend_from_slice(&[0x42, 0x80, 0x20]); // Profile/level
-        
-        // PPS (Picture Parameter Set) NAL unit  
+
+        // PPS (Picture Parameter Set) NAL unit
         frame_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x68]); // PPS start code
         frame_data.extend_from_slice(&[0xce, 0x3c, 0x80]); // PPS data
     }
-    
+
     // IDR/P frame NAL unit
     frame_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]); // Start code
     if is_keyframe {
         frame_data.push(0x65); // IDR frame
     } else {
-        frame_data.push(0x41); // P frame  
+        frame_data.push(0x41); // P frame
     }
-    
+
     // Add some dummy frame data based on resolution and frame number
     let frame_size = (width * height / 100) as usize; // Simulated compression
     let pattern = ((frame_number % 256) as u8);
     frame_data.extend(std::iter::repeat(pattern).take(frame_size));
-    
+
     frame_data
 }
 
@@ -585,39 +696,52 @@ fn generate_demo_h264_frame(width: u32, height: u32, frame_number: u64, is_keyfr
 fn generate_demo_opus_frame(sample_rate: u32, channels: u16, frame_number: u64) -> Vec<u8> {
     // This would normally come from the Opus encoder
     // Generate some placeholder Opus packet data
-    
+
     let mut audio_data = Vec::new();
-    
+
     // Opus packet header (simplified)
     audio_data.push(0x78); // Opus packet type
-    
+
     // Generate some dummy audio data
     let frame_size = (sample_rate / 50) as usize; // 20ms frame
     let total_samples = frame_size * channels as usize;
     let pattern = ((frame_number % 256) as u8);
-    
+
     // Opus compressed data (placeholder)
     audio_data.extend(std::iter::repeat(pattern).take(total_samples / 10)); // Simulated compression
-    
+
     audio_data
 }
-
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Parse command line arguments
     let cli = Cli::parse();
-    
+
     // Setup logging with simplified configuration
     fmt()
-        .with_max_level(if cli.debug { tracing::Level::DEBUG } else { tracing::Level::INFO })
+        .with_max_level(if cli.debug {
+            tracing::Level::DEBUG
+        } else {
+            tracing::Level::INFO
+        })
         .with_target(true)
         .init();
-    
-    info!("Decentralized Streaming Relay Node v{}", env!("CARGO_PKG_VERSION"));
-    
+
+    info!(
+        "Decentralized Streaming Relay Node v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+
     match &cli.command {
-        Commands::Run { bootstrap, listen, role, mdns, dht, geo_aware } => {
+        Commands::Run {
+            bootstrap,
+            listen,
+            role,
+            mdns,
+            dht,
+            geo_aware,
+        } => {
             let bootstrap_nodes = bootstrap.clone().unwrap_or_else(Vec::new);
             run_relay_node(
                 bootstrap_nodes,
@@ -626,49 +750,58 @@ async fn main() -> Result<(), anyhow::Error> {
                 *mdns,
                 *dht,
                 *geo_aware,
-            ).await?;
-        },
+            )
+            .await?;
+        }
         Commands::Status { node } => {
             info!("Connecting to node at {}", node);
-            
+
             // For demonstration, create a temporary overlay to show stats
-            let demo_node = RunningNode::new(PeerRole::Relay, false, vec![]).await?;
+            let demo_node = RunningNode::new(PeerRole::Relay, false, false, vec![]).await?;
             demo_node.overlay.start().await?;
-            
+
             // Get stats and display
             if let Ok(stats) = demo_node.overlay.stats().await {
                 if let Ok(uptime) = SystemTime::now().duration_since(demo_node.start_time) {
                     println!("{}", create_network_status(&stats, uptime));
                 }
             }
-            
+
             demo_node.overlay.stop().await?;
-        },
+        }
         Commands::ListStreams { node } => {
             info!("Connecting to node at {}", node);
-            
+
             // For demonstration, create a temporary overlay and show stream info
-            let demo_node = RunningNode::new(PeerRole::Relay, false, vec![]).await?;
+            let demo_node = RunningNode::new(PeerRole::Relay, false, false, vec![]).await?;
             demo_node.overlay.start().await?;
-            
+
             // Get active streams and display
             if let Ok(streams) = demo_node.overlay.active_streams().await {
                 println!("{}", create_stream_table(&streams));
             } else {
                 println!("No active streams found");
             }
-            
+
             demo_node.overlay.stop().await?;
-        },
-        Commands::Visualize { node, format, output } => {
+        }
+        Commands::Visualize {
+            node,
+            format,
+            output,
+        } => {
             info!("Connecting to node at {}", node);
-            
+
             // For demonstration, create a temporary overlay and show topology
-            let demo_node = RunningNode::new(PeerRole::Relay, false, vec![]).await?;
+            let demo_node = RunningNode::new(PeerRole::Relay, false, false, vec![]).await?;
             demo_node.overlay.start().await?;
-            
+
             // Get connected peers and convert to HashMap
-            let connected_peers = demo_node.overlay.connected_peers().await.unwrap_or_default();
+            let connected_peers = demo_node
+                .overlay
+                .connected_peers()
+                .await
+                .unwrap_or_default();
             let mut peers = HashMap::new();
             for peer in connected_peers {
                 // Convert LocalPeerId to PeerId for the map
@@ -676,18 +809,23 @@ async fn main() -> Result<(), anyhow::Error> {
                     peers.insert(pid, peer);
                 }
             }
-            
+
             let viz = match format.as_str() {
                 "text" => {
                     let mut output_text = String::new();
                     output_text.push_str("== NETWORK TOPOLOGY ==\n\n");
                     if let Ok(stats) = demo_node.overlay.stats().await {
-                        output_text.push_str(&create_network_status(&stats, SystemTime::now().duration_since(demo_node.start_time).unwrap_or_default()));
+                        output_text.push_str(&create_network_status(
+                            &stats,
+                            SystemTime::now()
+                                .duration_since(demo_node.start_time)
+                                .unwrap_or_default(),
+                        ));
                     }
                     output_text.push_str("\n");
                     output_text.push_str(&create_peer_table(&peers, true));
                     output_text
-                },
+                }
                 "dot" => generate_dot_graph(&peers, None),
                 "json" => {
                     let json_data = serde_json::json!({
@@ -698,14 +836,14 @@ async fn main() -> Result<(), anyhow::Error> {
                         }
                     });
                     serde_json::to_string_pretty(&json_data).unwrap()
-                },
+                }
                 _ => {
                     return Err(anyhow::anyhow!("Unsupported format: {}", format));
                 }
             };
-            
+
             demo_node.overlay.stop().await?;
-            
+
             // Output visualization
             if let Some(path) = output {
                 std::fs::write(path, viz)?;
@@ -713,21 +851,52 @@ async fn main() -> Result<(), anyhow::Error> {
             } else {
                 println!("{}", viz);
             }
-        },
-        Commands::Stream { bootstrap, listen, title, width, height, fps, duration, dht } => {
+        }
+        Commands::Stream {
+            bootstrap,
+            listen,
+            title,
+            video,
+            width,
+            height,
+            fps,
+            duration,
+            dht,
+        } => {
             let bootstrap_nodes = bootstrap.clone().unwrap_or_else(Vec::new);
-            run_streaming_demo(
-                bootstrap_nodes,
-                listen.clone(),
-                title.clone(),
-                *width,
-                *height,
-                *fps,
-                *duration,
-                *dht,
-            ).await?;
-        },
-        Commands::WebViewer { host, port, web_root, bootstrap, cors, video, stream_id, dht } => {
+            if let Some(video_path) = video {
+                run_video_stream(
+                    bootstrap_nodes,
+                    listen.clone(),
+                    title.clone(),
+                    video_path.clone(),
+                    *dht,
+                )
+                .await?;
+            } else {
+                run_streaming_demo(
+                    bootstrap_nodes,
+                    listen.clone(),
+                    title.clone(),
+                    *width,
+                    *height,
+                    *fps,
+                    *duration,
+                    *dht,
+                )
+                .await?;
+            }
+        }
+        Commands::WebViewer {
+            host,
+            port,
+            web_root,
+            bootstrap,
+            cors,
+            video,
+            stream_id,
+            dht,
+        } => {
             let bootstrap_nodes = bootstrap.clone().unwrap_or_else(Vec::new);
             run_web_viewer(
                 host.clone(),
@@ -738,9 +907,10 @@ async fn main() -> Result<(), anyhow::Error> {
                 video.clone(),
                 stream_id.clone(),
                 *dht,
-            ).await?;
+            )
+            .await?;
         }
     }
-    
+
     Ok(())
 }

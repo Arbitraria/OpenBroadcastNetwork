@@ -71,7 +71,7 @@ mod tests {
     fn test_random_bytes() {
         let bytes = random_bytes(32);
         assert_eq!(bytes.len(), 32);
-        
+
         // Very basic test to ensure we're getting different values
         let bytes2 = random_bytes(32);
         assert_ne!(bytes, bytes2);
@@ -82,7 +82,7 @@ mod tests {
         let data = b"hello, world";
         let hash = sha256(data);
         assert_eq!(hash.len(), 32);
-        
+
         // Test that different inputs produce different hashes
         let hash2 = sha256(b"hello, world!");
         assert_ne!(hash, hash2);

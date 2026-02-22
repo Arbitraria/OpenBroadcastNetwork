@@ -43,32 +43,32 @@ impl ConnectionHealth {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Record a successful connection
     pub fn record_success(&mut self) {
         self.last_success = Instant::now();
         self.consecutive_failures = 0;
         self.success_rate = (self.success_rate * 0.9) + 0.1; // Weighted average
-        
+
         // Add to history
         self.add_to_history(1.0);
-        
+
         // Recalculate quality
         self.recalculate_quality();
     }
-    
+
     /// Record a failed connection
     pub fn record_failure(&mut self) {
         self.consecutive_failures += 1;
         self.success_rate = self.success_rate * 0.9; // Weighted average, no success contribution
-        
+
         // Add to history
         self.add_to_history(0.0);
-        
+
         // Recalculate quality
         self.recalculate_quality();
     }
-    
+
     /// Add a quality measurement to history
     fn add_to_history(&mut self, quality: f32) {
         self.history.push_back((Instant::now(), quality));
@@ -76,28 +76,31 @@ impl ConnectionHealth {
             self.history.pop_front();
         }
     }
-    
+
     /// Recalculate the overall quality based on history
     fn recalculate_quality(&mut self) {
         if self.history.is_empty() {
             self.quality = self.success_rate;
             return;
         }
-        
-        self.quality = self.history.iter()
-            .map(|(_, q)| q)
-            .sum::<f32>() / self.history.len() as f32;
+
+        self.quality = self.history.iter().map(|(_, q)| q).sum::<f32>() / self.history.len() as f32;
     }
-    
+
     /// Update the degraded status based on thresholds
-    pub fn update_degraded_status(&mut self, quality_threshold: f32, max_failures: usize, min_success_rate: f32) {
+    pub fn update_degraded_status(
+        &mut self,
+        quality_threshold: f32,
+        max_failures: usize,
+        min_success_rate: f32,
+    ) {
         self.last_checked = Instant::now();
-        
-        self.is_degraded = self.consecutive_failures > max_failures ||
-                           self.quality < quality_threshold ||
-                           self.success_rate < min_success_rate;
+
+        self.is_degraded = self.consecutive_failures > max_failures
+            || self.quality < quality_threshold
+            || self.success_rate < min_success_rate;
     }
-    
+
     /// Check if this health record is expired
     pub fn is_expired(&self, max_age: std::time::Duration) -> bool {
         Instant::now().duration_since(self.last_checked) > max_age

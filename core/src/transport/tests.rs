@@ -2,9 +2,11 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::interface::{Transport, TransportEvent, TransportError, Connection, ConnectionId};
+    use super::super::interface::{
+        Connection, ConnectionId, Transport, TransportError, TransportEvent,
+    };
     // use super::super::webrtc::{WebRtcTransport, WebRtcConfig, IceTransportPolicy}; // WebRTC disabled
-    use super::super::quic::{QuicTransport, QuicConfig};
+    use super::super::quic::{QuicConfig, QuicTransport};
     use std::net::SocketAddr;
     use std::str::FromStr;
 
@@ -24,13 +26,18 @@ mod tests {
             self.running = true;
             Ok(())
         }
-        
+
         fn stop(&mut self) -> Result<(), TransportError> {
             self.running = false;
             Ok(())
         }
-        
-        fn connect(&mut self, addr: SocketAddr) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Connection, TransportError>> + Send>> {
+
+        fn connect(
+            &mut self,
+            addr: SocketAddr,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Connection, TransportError>> + Send>,
+        > {
             // Return a successful connection
             Box::pin(async move {
                 let conn_id = ConnectionId(vec![1, 2, 3, 4]);
@@ -41,21 +48,29 @@ mod tests {
                 })
             })
         }
-        
-        fn send(&mut self, _conn_id: &ConnectionId, _data: Vec<u8>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send>> {
+
+        fn send(
+            &mut self,
+            _conn_id: &ConnectionId,
+            _data: Vec<u8>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send>>
+        {
             // Simulate successful send
             Box::pin(async { Ok(()) })
         }
-        
+
         fn close_connection(&mut self, _conn_id: &ConnectionId) -> Result<(), TransportError> {
             Ok(())
         }
-        
+
         fn is_running(&self) -> bool {
             self.running
         }
-        
-        fn next_event(&mut self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<TransportEvent>> + Send>> {
+
+        fn next_event(
+            &mut self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<TransportEvent>> + Send>>
+        {
             // No events for test
             Box::pin(async { None })
         }
@@ -64,37 +79,37 @@ mod tests {
     #[tokio::test]
     async fn test_mock_transport_lifecycle() {
         let mut transport = MockTransport::new();
-        
+
         // Test initial state
         assert!(!transport.is_running());
-        
+
         // Test start
         transport.start().expect("Failed to start transport");
         assert!(transport.is_running());
-        
+
         // Test stop
         transport.stop().expect("Failed to stop transport");
         assert!(!transport.is_running());
     }
-    
+
     #[tokio::test]
     async fn test_mock_transport_connect() {
         let mut transport = MockTransport::new();
         transport.start().expect("Failed to start transport");
-        
+
         // Test connect
         let addr = SocketAddr::from_str("127.0.0.1:8080").unwrap();
         let conn_result = transport.connect(addr).await;
-        
+
         assert!(conn_result.is_ok());
         let conn = conn_result.unwrap();
         assert_eq!(conn.remote_addr, Some(addr));
-        
+
         // Test send
         let data = vec![1, 2, 3, 4];
         let send_result = transport.send(&conn.id, data).await;
         assert!(send_result.is_ok());
-        
+
         // Test close
         let close_result = transport.close_connection(&conn.id);
         assert!(close_result.is_ok());
@@ -147,4 +162,4 @@ mod tests {
         report.add_result(result);
         let _ = report.save_to_file("test_report.json");
     }
-} 
+}

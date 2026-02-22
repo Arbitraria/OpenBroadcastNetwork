@@ -9,9 +9,9 @@ use tokio::time::{interval, sleep};
 use tracing::{debug, error, info};
 
 use OpenBroadcastNetwork_core::media::{
-    ChunkBuilder, MediaChunk, OpenH264Codec, OpusCodec, StreamMetadata, StreamId,
+    ChunkBuilder, MediaChunk, OpenH264Codec, OpusCodec, StreamId, StreamMetadata,
 };
-use OpenBroadcastNetwork_core::overlay::interface::{OverlayError};
+use OpenBroadcastNetwork_core::overlay::interface::OverlayError;
 use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
 use OpenBroadcastNetwork_core::pubsub::Topic;
 
@@ -60,25 +60,32 @@ pub struct StreamingDemo {
 
 impl StreamingDemo {
     /// Create a new streaming demo
-    pub async fn new(config: StreamingDemoConfig, overlay: Arc<Libp2pOverlay>) -> Result<Self, OverlayError> {
+    pub async fn new(
+        config: StreamingDemoConfig,
+        overlay: Arc<Libp2pOverlay>,
+    ) -> Result<Self, OverlayError> {
         let stream_id = StreamId::generate();
-        
+
         // Create codecs with demo configuration
         let video_codec = Arc::new(OpenH264Codec::with_dimensions(
             config.video_width,
             config.video_height,
         ));
-        
+
         let audio_codec = Arc::new(OpusCodec::with_params(
             config.audio_sample_rate,
             config.audio_channels,
         ));
 
         // Initialize codecs
-        video_codec.init_encoder().await
+        video_codec
+            .init_encoder()
+            .await
             .map_err(|e| OverlayError::General(format!("Video codec init failed: {}", e)))?;
-        
-        audio_codec.init_encoder().await
+
+        audio_codec
+            .init_encoder()
+            .await
             .map_err(|e| OverlayError::General(format!("Audio codec init failed: {}", e)))?;
 
         let chunk_builder = ChunkBuilder::new(stream_id.clone());
@@ -98,7 +105,7 @@ impl StreamingDemo {
     /// Start the streaming demo
     pub async fn start(&mut self) -> Result<(), OverlayError> {
         info!("Starting streaming demo: '{}'", self.config.title);
-        
+
         // Create stream metadata and send it first
         let metadata = StreamMetadata::new_h264_opus(
             self.config.title.clone(),
@@ -109,14 +116,15 @@ impl StreamingDemo {
             self.config.audio_channels,
         );
 
-        let metadata_chunk = self.chunk_builder.metadata_chunk(metadata)
-            .map_err(|e| OverlayError::General(format!("Failed to create metadata chunk: {}", e)))?;
+        let metadata_chunk = self.chunk_builder.metadata_chunk(metadata).map_err(|e| {
+            OverlayError::General(format!("Failed to create metadata chunk: {}", e))
+        })?;
 
         self.send_chunk(metadata_chunk).await?;
 
         // Create streaming topic
         let stream_topic = Topic::stream_topic(&self.stream_id.as_str());
-        
+
         // Start video and audio generation loops
         let _video_handle = self.start_video_generation(stream_topic.clone());
         let _audio_handle = self.start_audio_generation(stream_topic.clone());
@@ -140,17 +148,17 @@ impl StreamingDemo {
 
         tokio::spawn(async move {
             let mut frame_count = 0u64;
-            
+
             loop {
                 frame_interval.tick().await;
-                
+
                 // Generate a synthetic video frame (colored pattern)
                 let frame_data = generate_test_video_frame(width, height, frame_count);
-                
+
                 // Encode the frame (this is a placeholder - real encoding would need proper setup)
                 // For now, we'll create a dummy encoded frame
                 let encoded_frame = format!("h264_frame_{}", frame_count).into_bytes();
-                
+
                 // Create video chunk
                 let chunk = MediaChunk::new_video(
                     stream_id.clone(),
@@ -167,13 +175,14 @@ impl StreamingDemo {
                 }
 
                 frame_count += 1;
-                
+
                 // Stop after demo duration
-                if frame_count >= 30 * 60 { // 1 minute at 30fps
+                if frame_count >= 30 * 60 {
+                    // 1 minute at 30fps
                     break;
                 }
             }
-            
+
             info!("Video generation completed");
         })
     }
@@ -192,13 +201,18 @@ impl StreamingDemo {
 
         tokio::spawn(async move {
             let mut audio_sequence = 0u64;
-            
+
             loop {
                 audio_interval.tick().await;
 
                 // Generate synthetic audio (sine wave)
-                let audio_data = generate_test_audio_frame(sample_rate, channels, frame_duration_ms, audio_sequence);
-                
+                let audio_data = generate_test_audio_frame(
+                    sample_rate,
+                    channels,
+                    frame_duration_ms,
+                    audio_sequence,
+                );
+
                 // Encode the audio (placeholder - real encoding would need proper setup)
                 let encoded_audio = format!("opus_frame_{}", audio_sequence).into_bytes();
 
@@ -223,7 +237,7 @@ impl StreamingDemo {
                     break;
                 }
             }
-            
+
             info!("Audio generation completed");
         })
     }
@@ -242,28 +256,34 @@ async fn send_chunk_to_network(
     chunk: MediaChunk,
 ) -> Result<(), OverlayError> {
     // Serialize chunk for transmission
-    let chunk_data = chunk.to_bytes()
+    let chunk_data = chunk
+        .to_bytes()
         .map_err(|e| OverlayError::General(format!("Failed to serialize chunk: {}", e)))?;
-    
-    debug!("Sending {} chunk {} ({} bytes)", 
-           match chunk.chunk_type {
-               OpenBroadcastNetwork_core::media::ChunkType::Video => "video",
-               OpenBroadcastNetwork_core::media::ChunkType::Audio => "audio", 
-               OpenBroadcastNetwork_core::media::ChunkType::Metadata => "metadata",
-           },
-           chunk.sequence,
-           chunk_data.len()
+
+    debug!(
+        "Sending {} chunk {} ({} bytes)",
+        match chunk.chunk_type {
+            OpenBroadcastNetwork_core::media::ChunkType::Video => "video",
+            OpenBroadcastNetwork_core::media::ChunkType::Audio => "audio",
+            OpenBroadcastNetwork_core::media::ChunkType::Metadata => "metadata",
+        },
+        chunk.sequence,
+        chunk_data.len()
     );
 
     // For now, just simulate publishing to the topic
     // TODO: Implement proper GossipSub integration when the overlay API is complete
-    info!("Would publish {} bytes to topic: {}", chunk_data.len(), topic.id());
-    
+    info!(
+        "Would publish {} bytes to topic: {}",
+        chunk_data.len(),
+        topic.id()
+    );
+
     // In a real implementation, this would:
     // 1. Subscribe to the topic if not already subscribed
     // 2. Publish the chunk data to all subscribers
     // 3. Handle any network errors
-    
+
     Ok(())
 }
 
@@ -273,12 +293,12 @@ fn generate_test_video_frame(width: u32, height: u32, frame_number: u64) -> Vec<
     let y_size = (width * height) as usize;
     let uv_size = y_size / 4;
     let total_size = y_size + uv_size * 2;
-    
+
     let mut frame = vec![0u8; total_size];
-    
+
     // Create a simple animated pattern
     let phase = (frame_number % 255) as u8;
-    
+
     // Y plane (luminance) - create moving diagonal stripes
     for y in 0..height {
         for x in 0..width {
@@ -286,17 +306,17 @@ fn generate_test_video_frame(width: u32, height: u32, frame_number: u64) -> Vec<
             frame[idx] = ((x + y + frame_number as u32) % 255) as u8;
         }
     }
-    
+
     // U plane (blue chroma) - static pattern
     for i in 0..uv_size {
         frame[y_size + i] = 128 + (phase / 2);
     }
-    
-    // V plane (red chroma) - static pattern  
+
+    // V plane (red chroma) - static pattern
     for i in 0..uv_size {
         frame[y_size + uv_size + i] = 128 - (phase / 2);
     }
-    
+
     frame
 }
 
@@ -309,23 +329,26 @@ fn generate_test_audio_frame(
 ) -> Vec<u8> {
     let samples_per_frame = (sample_rate as u64 * duration_ms / 1000) as usize;
     let total_samples = samples_per_frame * channels as usize;
-    
+
     let mut audio_data = Vec::with_capacity(total_samples * 2); // 16-bit samples
-    
+
     // Generate sine wave at 440 Hz (A note)
     let frequency = 440.0;
-    let phase_offset = (sequence as f64 * duration_ms as f64 / 1000.0) * frequency * 2.0 * std::f64::consts::PI;
-    
+    let phase_offset =
+        (sequence as f64 * duration_ms as f64 / 1000.0) * frequency * 2.0 * std::f64::consts::PI;
+
     for i in 0..samples_per_frame {
         let t = i as f64 / sample_rate as f64;
-        let sample_value = (0.3 * ((t * frequency * 2.0 * std::f64::consts::PI) + phase_offset).sin() * i16::MAX as f64) as i16;
-        
+        let sample_value = (0.3
+            * ((t * frequency * 2.0 * std::f64::consts::PI) + phase_offset).sin()
+            * i16::MAX as f64) as i16;
+
         // Add sample for each channel
         for _ in 0..channels {
             audio_data.extend_from_slice(&sample_value.to_le_bytes());
         }
     }
-    
+
     audio_data
 }
 

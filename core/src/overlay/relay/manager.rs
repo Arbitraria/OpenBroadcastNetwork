@@ -44,9 +44,9 @@
 //! - Delegation to thread-safe `RelayNode` instances
 //! - Async-aware methods for all public operations
 
-use libp2p::PeerId;
 use crate::overlay::interface::OverlayError;
 use crate::overlay::topology::TopologyManager;
+use libp2p::PeerId;
 use std::sync::Arc;
 
 use super::config::RelayConfig;
@@ -66,17 +66,13 @@ pub struct RelayManager {
 
 impl RelayManager {
     /// Create a new relay manager
-    pub fn new(
-        local_peer_id: PeerId,
-        config: RelayConfig,
-        topology: Arc<TopologyManager>,
-    ) -> Self {
+    pub fn new(local_peer_id: PeerId, config: RelayConfig, topology: Arc<TopologyManager>) -> Self {
         let relay_node = Arc::new(RelayNode::new(
             local_peer_id.clone(),
             config.clone(),
             topology.clone(),
         ));
-        
+
         Self {
             local_peer_id,
             config,
@@ -84,25 +80,25 @@ impl RelayManager {
             relay_node,
         }
     }
-    
+
     /// Get the relay node
     pub fn relay_node(&self) -> Arc<RelayNode> {
         self.relay_node.clone()
     }
-    
+
     /// Start the relay manager
     pub async fn start(&self) -> Result<(), OverlayError> {
         // Start the relay node
         self.relay_node.start().await?;
-        
+
         Ok(())
     }
-    
+
     /// Stop the relay manager
     pub async fn stop(&self) -> Result<(), OverlayError> {
         // Stop the relay node
         self.relay_node.stop().await?;
-        
+
         Ok(())
     }
 }

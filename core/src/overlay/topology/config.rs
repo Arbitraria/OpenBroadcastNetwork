@@ -2,8 +2,8 @@
 //!
 //! This module provides configuration structures for the overlay network topology.
 
-use std::time::Duration;
 use super::geo::GeoIP;
+use std::time::Duration;
 
 /// Weights for relay selection scoring
 #[derive(Debug, Clone)]

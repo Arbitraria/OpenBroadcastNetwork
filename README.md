@@ -43,14 +43,14 @@ Try the interactive demo to see the network visualization in action:
 # Build the project
 cargo build --release
 
-# Start a relay node
-cargo run --package OpenBroadcastNetwork-node --bin relay-node -- run --role relay --listen 127.0.0.1:9000
+# Start a relay node with DHT discovery and geo-aware rebalancing
+cargo run -p OpenBroadcastNetwork-node -- run --role relay --listen 127.0.0.1:9000 --dht --geo-aware
 
 # In another terminal, check network status
-cargo run --package OpenBroadcastNetwork-node --bin relay-node -- status --node 127.0.0.1:9000
+cargo run -p OpenBroadcastNetwork-node -- status --node 127.0.0.1:9000
 
 # Visualize the network topology
-cargo run --package OpenBroadcastNetwork-node --bin relay-node -- visualize --node 127.0.0.1:9000 --format text
+cargo run -p OpenBroadcastNetwork-node -- visualize --node 127.0.0.1:9000 --format text
 ```
 
 ### CLI Commands

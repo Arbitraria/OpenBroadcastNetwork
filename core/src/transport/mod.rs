@@ -11,19 +11,19 @@
 //! - **Security**: Provides encrypted and authenticated connections
 //! - **NAT Traversal**: Support for connecting peers behind NATs and firewalls
 
+/// Core interfaces and types for transport implementations
+pub mod interface;
 /// WebRTC-based transport implementation for browser compatibility
 // pub mod webrtc;  // Temporarily disabled due to compilation issues
 /// QUIC protocol transport for high-performance connections
 pub mod quic;
-/// Core interfaces and types for transport implementations
-pub mod interface;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export the main interface types
-pub use interface::{Transport, TransportEvent, TransportError, Connection, ConnectionId};
+pub use interface::{Connection, ConnectionId, Transport, TransportError, TransportEvent};
 
 // Re-export concrete implementations
 // pub use webrtc::WebRtcTransport;
-// pub use quic::QuicTransport; 
+// pub use quic::QuicTransport;

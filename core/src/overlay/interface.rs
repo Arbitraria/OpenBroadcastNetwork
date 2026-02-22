@@ -49,9 +49,9 @@
 //! - **Configurability** - Extensive configuration options for different deployment scenarios
 
 use crate::overlay::peer::{LocalPeerId, PeerInfo};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;
-use serde::{Serialize, Deserialize};
 
 /// Overlay network errors
 #[derive(Debug, thiserror::Error)]
@@ -59,67 +59,67 @@ pub enum OverlayError {
     /// Peer connection error
     #[error("Peer connection error: {0}")]
     ConnectionError(String),
-    
+
     /// Peer discovery error
     #[error("Peer discovery error: {0}")]
     DiscoveryError(String),
-    
+
     /// Stream relay error
     #[error("Stream relay error: {0}")]
     RelayError(String),
-    
+
     /// Topology error
     #[error("Topology error: {0}")]
     TopologyError(String),
-    
+
     /// Invalid peer ID
     #[error("Invalid peer ID: {0}")]
     InvalidPeerId(String),
-    
+
     /// Operation not possible when not running
     #[error("Operation not possible: not running")]
     NotRunning,
-    
+
     /// Stream not found error
     #[error("Stream not found: {0:?}")]
     StreamNotFound(StreamId),
-    
+
     /// Stream already exists error
     #[error("Stream already exists: {0:?}")]
     StreamAlreadyExists(StreamId),
-    
+
     /// No chunk handler available
     #[error("No chunk handler available")]
     NoChunkHandler,
-    
+
     /// Peer not found error
     #[error("Peer not found: {0}")]
     PeerNotFound(libp2p::PeerId),
-    
+
     /// Already running error
     #[error("Operation not possible: already running")]
     AlreadyRunning,
-    
+
     /// Operation timeout
     #[error("Operation timed out after {0:?}")]
     Timeout(Duration),
-    
+
     /// Protocol error
     #[error("Protocol error: {0}")]
     ProtocolError(String),
-    
+
     /// System is stopping
     #[error("System is stopping")]
     Stopping,
-    
+
     /// General error
     #[error("General error: {0}")]
     General(String),
-    
+
     /// I/O error
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
-    
+
     /// Other error
     #[error("Error: {0}")]
     Other(String),
@@ -138,17 +138,17 @@ impl StreamId {
         rng.fill(&mut bytes[..]);
         Self(bytes)
     }
-    
+
     /// Create a stream ID from a byte vector
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
-    
+
     /// Create a stream ID from a string
     pub fn from_string(s: &str) -> Self {
         Self(s.as_bytes().to_vec())
     }
-    
+
     /// Get the inner bytes
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
@@ -175,7 +175,7 @@ pub enum OverlayEvent {
         /// Peer information
         info: PeerInfo,
     },
-    
+
     /// A peer has connected
     PeerConnected {
         /// Peer ID
@@ -183,7 +183,7 @@ pub enum OverlayEvent {
         /// Peer information
         info: PeerInfo,
     },
-    
+
     /// A peer has disconnected
     PeerDisconnected {
         /// Peer ID
@@ -191,7 +191,7 @@ pub enum OverlayEvent {
         /// Reason for disconnection
         reason: String,
     },
-    
+
     /// A stream has been published
     StreamPublished {
         /// Stream ID
@@ -199,7 +199,7 @@ pub enum OverlayEvent {
         /// Publisher peer ID
         publisher: LocalPeerId,
     },
-    
+
     /// A stream has been relayed
     StreamRelayed {
         /// Stream ID
@@ -209,7 +209,7 @@ pub enum OverlayEvent {
         /// Target peer ID
         target: LocalPeerId,
     },
-    
+
     /// A stream has been stopped
     StreamStopped {
         /// Stream ID
@@ -217,7 +217,7 @@ pub enum OverlayEvent {
         /// Reason for stopping
         reason: String,
     },
-    
+
     /// Stream data received
     StreamData {
         /// Stream ID
@@ -227,7 +227,7 @@ pub enum OverlayEvent {
         /// Data payload
         data: Vec<u8>,
     },
-    
+
     /// The topology has changed
     TopologyChanged {
         /// Number of peers
@@ -260,6 +260,8 @@ pub struct OverlayConfig {
     pub heartbeat_interval: Duration,
     /// Topology rebalance interval
     pub rebalance_interval: Duration,
+    /// Whether to enable geo-aware topology rebalancing
+    pub enable_geo_aware: bool,
 }
 
 impl Default for OverlayConfig {
@@ -275,6 +277,7 @@ impl Default for OverlayConfig {
             peer_ttl: Duration::from_secs(300), // 5 minutes
             heartbeat_interval: Duration::from_secs(15),
             rebalance_interval: Duration::from_secs(60),
+            enable_geo_aware: true,
         }
     }
 }
@@ -316,7 +319,11 @@ pub trait Overlay {
     /// Publish a stream
     async fn publish_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError>;
     /// Relay a stream to a peer
-    async fn relay_stream(&self, stream_id: &StreamId, target: &LocalPeerId) -> Result<(), OverlayError>;
+    async fn relay_stream(
+        &self,
+        stream_id: &StreamId,
+        target: &LocalPeerId,
+    ) -> Result<(), OverlayError>;
     /// Stop a stream
     async fn stop_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError>;
     /// Get the next overlay event
@@ -329,4 +336,12 @@ pub trait Overlay {
     async fn stats(&self) -> Result<OverlayStats, OverlayError>;
     /// Force a topology rebalance
     async fn rebalance_topology(&self) -> Result<(), OverlayError>;
+    /// Subscribe to a stream (receive data from publishers)
+    async fn subscribe_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError>;
+    /// Publish stream data to all subscribers
+    async fn publish_stream_data(
+        &self,
+        stream_id: &StreamId,
+        data: Vec<u8>,
+    ) -> Result<(), OverlayError>;
 }

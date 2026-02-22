@@ -5,10 +5,10 @@
 
 // Module definitions
 mod config;
-mod types;
 mod overlay;
+mod types;
 
 // Re-exports for public API
 pub use config::HybridOverlayConfig;
-pub use types::{StreamMetadata, StreamQuality};
 pub use overlay::HybridOverlay;
+pub use types::{StreamMetadata, StreamQuality};

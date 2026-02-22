@@ -4,17 +4,17 @@
 //! It provides mechanisms for efficient data distribution in the overlay network.
 
 // Export our sub-modules
-mod types;
 mod config;
+mod manager;
+mod node;
 mod stats;
 mod stream;
-mod node;
-mod manager;
+mod types;
 
 // Re-export public components
-pub use types::StreamChunk;
 pub use config::RelayConfig;
+pub use manager::RelayManager;
+pub use node::RelayNode;
 pub use stats::RelayStats;
 pub use stream::StreamRelay;
-pub use node::RelayNode;
-pub use manager::RelayManager;
+pub use types::StreamChunk;

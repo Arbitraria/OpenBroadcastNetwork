@@ -22,9 +22,10 @@ pub struct FileSink {
 impl FileSink {
     /// Create a new file sink
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, MediaError> {
-        let file = File::create(path.as_ref()).await
+        let file = File::create(path.as_ref())
+            .await
             .map_err(|e| MediaError::from(format!("Failed to create file: {}", e)))?;
-            
+
         Ok(FileSink { file })
     }
 }
@@ -32,13 +33,17 @@ impl FileSink {
 #[async_trait]
 impl MediaSink for FileSink {
     async fn write_chunk(&mut self, data: &[u8]) -> Result<(), MediaError> {
-        self.file.write_all(data).await
+        self.file
+            .write_all(data)
+            .await
             .map_err(|e| MediaError::from(format!("Failed to write to file: {}", e)))?;
         Ok(())
     }
-    
+
     async fn flush(&mut self) -> Result<(), MediaError> {
-        self.file.flush().await
+        self.file
+            .flush()
+            .await
             .map_err(|e| MediaError::from(format!("Failed to flush file: {}", e)))
     }
 }
@@ -57,7 +62,7 @@ impl MemorySink {
             data: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
-    
+
     /// Get the data that was written to the sink
     pub async fn into_inner(self) -> Vec<u8> {
         Arc::try_unwrap(self.data)
@@ -73,7 +78,7 @@ impl MediaSink for MemorySink {
         buffer.extend_from_slice(data);
         Ok(())
     }
-    
+
     async fn flush(&mut self) -> Result<(), MediaError> {
         // No-op for memory sink
         Ok(())
@@ -96,7 +101,7 @@ impl MediaSink for NullSink {
         // Discard the data
         Ok(())
     }
-    
+
     async fn flush(&mut self) -> Result<(), MediaError> {
         // No-op
         Ok(())

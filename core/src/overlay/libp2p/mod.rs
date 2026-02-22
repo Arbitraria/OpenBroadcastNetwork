@@ -4,18 +4,18 @@
 
 // Module definitions
 pub mod behavior;
-pub mod impl_core;
-pub mod swarm;
 pub mod event_handlers;
+pub mod impl_core;
+pub mod mesh_manager;
 pub mod overlay_trait;
+pub mod overlay_utils;
+pub mod peer_manager;
+pub mod relay_manager;
+pub mod swarm;
 pub mod topics;
 pub mod types;
 pub mod utils;
-pub mod overlay_utils;
-pub mod peer_manager;
-pub mod mesh_manager;
-pub mod relay_manager;
 
 // Re-exports
 pub use impl_core::Libp2pOverlay;
-pub use types::{to_libp2p_peer_id, from_libp2p_peer_id};
+pub use types::{from_libp2p_peer_id, to_libp2p_peer_id};

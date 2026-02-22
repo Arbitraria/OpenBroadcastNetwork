@@ -12,7 +12,7 @@ import sys
 from datetime import datetime
 
 class ChromeCodecTester:
-    def __init__(self, server_url="ws://127.0.0.1:8080/stream"):
+    def __init__(self, server_url="ws://127.0.0.1:8081/stream"):
         self.server_url = server_url
         self.results = {}
         
@@ -72,59 +72,103 @@ class ChromeCodecTester:
         """Analyze MP4 initialization segment for ESDS modifications"""
         print(f"\n🔍 Analyzing Initialization Segment ({len(data)} bytes)")
         print("-" * 40)
-        
+
         if len(data) < 8:
             print("❌ Data too small to be valid MP4")
             return False
-            
+
         # Parse first MP4 box
         size = struct.unpack('>I', data[0:4])[0]
         box_type = data[4:8].decode('ascii', errors='ignore')
-        
+
         print(f"📦 First box: '{box_type}' ({size} bytes)")
-        
+
         if box_type != 'ftyp':
             print("⚠️ Expected ftyp box as first box")
             return False
-            
-        # Look for ESDS pattern and object type
-        object_types_found = []
-        esds_positions = []
-        
-        # Search for ESDS boxes
+
+        # Look for ESDS pattern and analyze
+        esds_found = False
+        object_type_indication = None
+        audio_object_type = None
+
+        # Search for ESDS boxes (search for the 4-byte type)
         i = 0
-        while i < len(data) - 20:
+        while i < len(data) - 30:
             if data[i:i+4] == b'esds':
-                esds_positions.append(i)
-                print(f"🎯 Found ESDS box at offset {i}")
-                
-                # Look for object type pattern
-                for j in range(i, min(i + 50, len(data) - 2)):
-                    if data[j] == 0x04 and j + 2 < len(data):  # DecoderConfigDescriptor
-                        obj_type = data[j + 2]
-                        object_types_found.append((j, obj_type))
-                        print(f"   📍 Object type: 0x{obj_type:02X} at offset {j + 2}")
+                esds_found = True
+                esds_offset = i - 4  # Box starts 4 bytes earlier (size field)
+                print(f"🎯 Found ESDS box at offset {esds_offset}")
+
+                # ESDS structure after box header (8 bytes) and version/flags (4 bytes):
+                # - ES_Descriptor (tag 0x03)
+                # - DecoderConfigDescriptor (tag 0x04) contains objectTypeIndication
+                # - DecSpecificInfoDescriptor (tag 0x05) contains AudioSpecificConfig
+
+                # Find DecoderConfigDescriptor (tag 0x04)
+                for j in range(i + 4, min(i + 60, len(data) - 15)):
+                    if data[j] == 0x04:  # DecoderConfigDescriptor tag
+                        # Skip tag and length bytes to get to objectTypeIndication
+                        k = j + 1
+                        while k < len(data) and (data[k] & 0x80) != 0:
+                            k += 1
+                        k += 1  # Skip last length byte
+
+                        if k < len(data):
+                            object_type_indication = data[k]
+                            print(f"   📍 objectTypeIndication: 0x{object_type_indication:02X} at offset {k}")
+
+                            # Now find DecSpecificInfoDescriptor (tag 0x05) for AudioSpecificConfig
+                            for m in range(k + 13, min(k + 30, len(data) - 5)):
+                                if data[m] == 0x05:  # DecSpecificInfoDescriptor tag
+                                    # Skip tag and length bytes
+                                    n = m + 1
+                                    while n < len(data) and (data[n] & 0x80) != 0:
+                                        n += 1
+                                    n += 1  # Skip last length byte
+
+                                    if n < len(data):
+                                        asc_byte = data[n]
+                                        audio_object_type = (asc_byte >> 3) & 0x1F
+                                        freq_index_upper = asc_byte & 0x07
+                                        freq_index_lower = (data[n + 1] >> 7) & 0x01 if n + 1 < len(data) else 0
+                                        freq_index = (freq_index_upper << 1) | freq_index_lower
+
+                                        print(f"   📍 AudioSpecificConfig at offset {n}:")
+                                        print(f"      - audioObjectType: {audio_object_type}")
+                                        print(f"      - frequencyIndex: {freq_index}")
+                                        print(f"      - raw bytes: 0x{asc_byte:02X} 0x{data[n+1]:02X}" if n + 1 < len(data) else f"      - raw byte: 0x{asc_byte:02X}")
+                                    break
+                        break
+                break
             i += 1
-            
+
         # Analyze results
-        if not object_types_found:
-            print("⚠️ No object types found in ESDS")
-            return False
-            
-        # Check if modification was applied (0x40 -> 0x02)
-        has_0x02 = any(obj_type == 0x02 for _, obj_type in object_types_found)
-        has_0x40 = any(obj_type == 0x40 for _, obj_type in object_types_found)
-        
-        if has_0x02 and not has_0x40:
-            print("✅ ESDS modification detected: Object type 0x40 → 0x02")
-            self.results['esds_modified'] = True
-        elif has_0x40:
-            print("⚠️ Original object type 0x40 still present")
-            self.results['esds_modified'] = False
+        if not esds_found:
+            print("ℹ️ No ESDS box found (may be video-only stream)")
+            self.results['esds_found'] = False
+            return True  # Not an error, just no audio
+
+        self.results['esds_found'] = True
+        self.results['object_type_indication'] = object_type_indication
+        self.results['audio_object_type'] = audio_object_type
+
+        # Chrome requires: objectTypeIndication=0x40 AND audioObjectType=2
+        if object_type_indication == 0x40 and audio_object_type == 2:
+            print("✅ ESDS is Chrome-compatible!")
+            print("   - objectTypeIndication=0x40 (MPEG-4 Audio) ✓")
+            print("   - audioObjectType=2 (AAC-LC) ✓")
+            self.results['esds_chrome_compatible'] = True
+        elif object_type_indication == 0x40 and audio_object_type != 2:
+            print(f"⚠️ ESDS needs audioObjectType fix: {audio_object_type} → 2")
+            self.results['esds_chrome_compatible'] = False
+        elif object_type_indication != 0x40:
+            print(f"⚠️ Unexpected objectTypeIndication: 0x{object_type_indication:02X} (expected 0x40)")
+            self.results['esds_chrome_compatible'] = False
         else:
-            print("❓ Unexpected object type configuration")
-            self.results['esds_modified'] = False
-            
+            print("❓ Could not determine ESDS compatibility")
+            self.results['esds_chrome_compatible'] = False
+
         return True
         
     def analyze_stream_info(self, data):
@@ -218,39 +262,57 @@ class ChromeCodecTester:
         """Generate final test report"""
         print(f"\n📄 Test Report Summary")
         print("=" * 50)
-        
+
         print(f"🕐 Test completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print()
-        
+
         # Server connectivity
         server_audio = self.results.get('server_audio_codec', 'Not detected')
         server_video = self.results.get('server_video_codec', 'Not detected')
         print(f"📡 Server audio codec: {server_audio}")
         print(f"📡 Server video codec: {server_video}")
-        
-        # ESDS modification
-        esds_modified = self.results.get('esds_modified', False)
-        esds_status = "✅ Applied" if esds_modified else "❌ Not applied"
-        print(f"🔧 ESDS modification: {esds_status}")
-        
+
+        # ESDS analysis
+        esds_found = self.results.get('esds_found', False)
+        if esds_found:
+            obj_type = self.results.get('object_type_indication')
+            audio_obj = self.results.get('audio_object_type')
+            chrome_compat = self.results.get('esds_chrome_compatible', False)
+
+            print(f"🔧 ESDS objectTypeIndication: 0x{obj_type:02X}" if obj_type else "🔧 ESDS objectTypeIndication: Unknown")
+            print(f"🔧 ESDS audioObjectType: {audio_obj}" if audio_obj else "🔧 ESDS audioObjectType: Unknown")
+            print(f"🔧 Chrome compatible: {'✅ Yes' if chrome_compat else '❌ No'}")
+        else:
+            print("ℹ️ No ESDS box (video-only or non-AAC audio)")
+            chrome_compat = True  # Video-only is fine
+
         # Chrome compatibility
         recommended = self.results.get('recommended_codec')
         if recommended:
-            print(f"🎯 Chrome-compatible codec: {recommended}")
-        
+            print(f"🎯 Recommended codec: {recommended}")
+
         # Final assessment
         print()
-        if esds_modified and recommended:
+        if chrome_compat and recommended:
             print("🎉 SUCCESS: Server configured for Chrome compatibility")
-            print("   → ESDS modified to object type 0x02")
+            if esds_found:
+                print("   → objectTypeIndication=0x40 (MPEG-4 Audio)")
+                print("   → audioObjectType=2 (AAC-LC)")
+            else:
+                print("   → Video-only mode active")
             print("   → Chrome-supported codec format available")
             return True
-        elif not esds_modified:
-            print("⚠️ ISSUE: ESDS modification not detected")
-            print("   → May cause 'object type 0x40 does not match' errors")
+        elif not chrome_compat:
+            obj_type = self.results.get('object_type_indication')
+            audio_obj = self.results.get('audio_object_type')
+            print("⚠️ ISSUE: ESDS not Chrome-compatible")
+            if obj_type != 0x40:
+                print(f"   → objectTypeIndication should be 0x40, got 0x{obj_type:02X}")
+            if audio_obj != 2:
+                print(f"   → audioObjectType should be 2, got {audio_obj}")
             return False
         else:
-            print("❓ PARTIAL: ESDS modified but codec compatibility unclear")
+            print("❓ PARTIAL: Need more testing")
             return False
 
 async def main():
@@ -258,15 +320,21 @@ async def main():
     print("🧪 OpenBroadcastNetwork Chrome Codec Tester")
     print("=" * 60)
     print()
-    
-    # Check server is running
-    import urllib.request
+
+    # Check server is running by testing WebSocket endpoint
+    import socket
     try:
-        response = urllib.request.urlopen('http://127.0.0.1:8080/', timeout=3)
-        print("✅ Server is running on http://127.0.0.1:8080/")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        result = sock.connect_ex(('127.0.0.1', 8081))
+        sock.close()
+        if result == 0:
+            print("✅ Server is running on port 8081")
+        else:
+            raise Exception("Port 8081 not open")
     except Exception as e:
         print(f"❌ Server not accessible: {e}")
-        print("   Start server with: cargo run -p OpenBroadcastNetwork-node web-viewer --video sample_video.mp4")
+        print("   Start server with: cargo run -p OpenBroadcastNetwork-node -- web-viewer --video sample_video.mp4 --port 8081")
         sys.exit(1)
     
     print()

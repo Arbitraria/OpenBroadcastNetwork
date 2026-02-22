@@ -4,12 +4,12 @@
 //! native clients with UDP capabilities.
 
 use crate::transport::interface::{
-    Transport, TransportEvent, TransportError, Connection, ConnectionId
+    Connection, ConnectionId, Transport, TransportError, TransportEvent,
 };
-use std::future::Future;
-use std::pin::Pin;
-use std::net::SocketAddr;
 use std::collections::HashMap;
+use std::future::Future;
+use std::net::SocketAddr;
+use std::pin::Pin;
 
 /// Configuration for QUIC transport
 #[derive(Debug, Clone)]
@@ -51,38 +51,51 @@ impl Transport for QuicTransport {
         self._running = true;
         Ok(())
     }
-    
+
     fn stop(&mut self) -> Result<(), TransportError> {
         // Placeholder implementation
         self._running = false;
         Ok(())
     }
-    
-    fn connect(&mut self, _addr: SocketAddr) -> Pin<Box<dyn Future<Output = Result<Connection, TransportError>> + Send>> {
+
+    fn connect(
+        &mut self,
+        _addr: SocketAddr,
+    ) -> Pin<Box<dyn Future<Output = Result<Connection, TransportError>> + Send>> {
         // Placeholder implementation
         Box::pin(async {
-            Err(TransportError::ConnectionFailed("QUIC transport not implemented yet".to_string()))
+            Err(TransportError::ConnectionFailed(
+                "QUIC transport not implemented yet".to_string(),
+            ))
         })
     }
-    
-    fn send(&mut self, _conn_id: &ConnectionId, _data: Vec<u8>) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>> {
+
+    fn send(
+        &mut self,
+        _conn_id: &ConnectionId,
+        _data: Vec<u8>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>> {
         // Placeholder implementation
         Box::pin(async {
-            Err(TransportError::SendError("QUIC transport not implemented yet".to_string()))
+            Err(TransportError::SendError(
+                "QUIC transport not implemented yet".to_string(),
+            ))
         })
     }
-    
+
     fn close_connection(&mut self, _conn_id: &ConnectionId) -> Result<(), TransportError> {
         // Placeholder implementation
-        Err(TransportError::ConnectionFailed("QUIC transport not implemented yet".to_string()))
+        Err(TransportError::ConnectionFailed(
+            "QUIC transport not implemented yet".to_string(),
+        ))
     }
-    
+
     fn is_running(&self) -> bool {
         self._running
     }
-    
+
     fn next_event(&mut self) -> Pin<Box<dyn Future<Output = Option<TransportEvent>> + Send>> {
         // Placeholder implementation
         Box::pin(async { None })
     }
-} 
+}
