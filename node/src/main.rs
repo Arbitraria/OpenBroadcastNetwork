@@ -420,6 +420,8 @@ async fn run_web_viewer(
         web_root: PathBuf::from(web_root),
         enable_cors,
         video_file: video_file.as_ref().map(|v| PathBuf::from(v)),
+        enable_p2p: stream_id.is_some(), // Enable P2P if stream_id is provided
+        p2p_fallback: true,
     };
 
     // Create server with P2P support if stream_id is provided
@@ -527,7 +529,7 @@ async fn run_web_viewer(
                 // Loop the video content continuously
                 loop {
                     // If no clients are connected, wait before starting the loop
-                    while stream_manager_clone.chunk_sender.receiver_count() == 0 {
+                    while stream_manager_clone.segment_sender.receiver_count() == 0 {
                         debug!("No clients connected, waiting...");
                         tokio::time::sleep(Duration::from_millis(500)).await;
                     }
@@ -539,7 +541,7 @@ async fn run_web_viewer(
 
                     for (index, sample) in samples.iter().enumerate() {
                         // Check if clients are still connected
-                        if stream_manager_clone.chunk_sender.receiver_count() == 0 {
+                        if stream_manager_clone.segment_sender.receiver_count() == 0 {
                             warn!("All clients disconnected during streaming");
                             break; // Break inner loop to wait for new clients
                         }
@@ -561,7 +563,7 @@ async fn run_web_viewer(
                         } else if sample.track_id == 0 {
                             // Video track
                             if let Err(e) = stream_manager_clone
-                                .send_video_chunk(sample.data.clone(), sample.is_sync)
+                                .send_video_segment(sample.data.clone(), sample.is_sync)
                                 .await
                             {
                                 warn!("Failed to send video sample: {}", e);
@@ -581,7 +583,7 @@ async fn run_web_viewer(
                         } else {
                             // Audio track
                             if let Err(e) = stream_manager_clone
-                                .send_audio_chunk(sample.data.clone())
+                                .send_audio_segment(sample.data.clone())
                                 .await
                             {
                                 warn!("Failed to send audio sample: {}", e);
@@ -613,7 +615,7 @@ async fn run_web_viewer(
             // For now, just wait without generating demo content
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                if stream_manager_clone.chunk_sender.receiver_count() > 0 {
+                if stream_manager_clone.segment_sender.receiver_count() > 0 {
                     info!("Clients connected but no video file provided. Use --video option to stream a file.");
                 }
             }

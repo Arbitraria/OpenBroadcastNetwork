@@ -23,9 +23,9 @@ impl Overlay for Libp2pOverlay {
         self.running.try_read().map_or(false, |r| *r)
     }
 
-    /// Get the local peer ID
+    /// Get the local peer ID (zero-cost conversion from peer_id)
     fn local_peer_id(&self) -> LocalPeerId {
-        self.local_peer_id.clone()
+        LocalPeerId::from(self.peer_id)
     }
 
     /// Connect to a peer
@@ -47,7 +47,7 @@ impl Overlay for Libp2pOverlay {
         // Add the stream to the relay manager's node
         let relay_node = self.relay.relay_node();
         relay_node
-            .add_stream(stream_id.clone(), self.libp2p_peer_id.clone())
+            .add_stream(stream_id.clone(), self.peer_id.clone())
             .await?;
 
         // Add to local streams set
@@ -116,7 +116,7 @@ impl Overlay for Libp2pOverlay {
                 if !*overlay.running.read().await {
                     break;
                 }
-                
+
                 if let Err(e) = overlay.process_swarm_events().await {
                     error!("Error processing swarm events: {}", e);
                     // Sleep to avoid busy loop on error
@@ -124,7 +124,7 @@ impl Overlay for Libp2pOverlay {
                 }
             }
         });
-        
+
         *self.worker_task.lock().await = Some(handle);
 
         info!("Libp2p overlay started successfully");
@@ -167,8 +167,8 @@ impl Overlay for Libp2pOverlay {
     ) -> Result<(), OverlayError> {
         debug!("Relaying stream data for {} to {}", stream_id, target);
 
-        // Convert local peer ID to libp2p peer ID for relay operations
-        let target_libp2p = to_libp2p_peer_id(target)?;
+        // Convert local peer ID to libp2p peer ID for relay operations (zero-cost)
+        let _target_libp2p = to_libp2p_peer_id(target);
 
         // For now, this is a stub implementation
         // Actual implementation should relay from stream_id to target

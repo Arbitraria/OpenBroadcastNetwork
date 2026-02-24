@@ -1,17 +1,17 @@
 //! Type aliases, conversions, and helpers for libp2p overlay
 
-use crate::overlay::interface::OverlayError;
 use crate::overlay::peer::LocalPeerId;
 use libp2p::PeerId as Libp2pPeerId;
-use std::convert::TryFrom;
 
-/// Convert our LocalPeerId to libp2p's PeerId
-pub fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<Libp2pPeerId, OverlayError> {
-    Libp2pPeerId::try_from(peer_id)
-        .map_err(|e| OverlayError::Other(format!("Invalid peer ID: {}", e)))
+/// Convert our LocalPeerId to libp2p's PeerId (zero-cost, infallible)
+///
+/// Since LocalPeerId now wraps libp2p::PeerId directly, this conversion
+/// is always valid and never fails.
+pub fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Libp2pPeerId {
+    libp2p::PeerId::from(peer_id)
 }
 
-/// Convert libp2p's PeerId to our LocalPeerId
+/// Convert libp2p's PeerId to our LocalPeerId (zero-cost)
 pub fn from_libp2p_peer_id(peer_id: &Libp2pPeerId) -> LocalPeerId {
     LocalPeerId::from(peer_id)
 }

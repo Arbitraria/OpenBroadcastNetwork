@@ -62,10 +62,11 @@ use crate::overlay::libp2p::topics;
 pub struct Libp2pOverlay {
     /// Configuration
     pub config: OverlayConfig,
-    /// Local peer ID
-    pub local_peer_id: LocalPeerId,
-    /// libp2p peer ID
-    pub libp2p_peer_id: Libp2pPeerId,
+    /// The libp2p peer ID for this node
+    ///
+    /// Since LocalPeerId now wraps libp2p::PeerId directly, we only need
+    /// to store one copy. Use `local_peer_id()` to get the LocalPeerId wrapper.
+    pub peer_id: Libp2pPeerId,
     /// Swarm
     pub swarm: Arc<Mutex<Option<Swarm<OverlayBehavior>>>>,
     /// Topology manager
@@ -94,8 +95,7 @@ impl Clone for Libp2pOverlay {
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-            local_peer_id: self.local_peer_id.clone(),
-            libp2p_peer_id: self.libp2p_peer_id.clone(),
+            peer_id: self.peer_id,
             swarm: self.swarm.clone(),
             topology: self.topology.clone(),
             relay: self.relay.clone(),
@@ -116,8 +116,7 @@ impl Libp2pOverlay {
     pub async fn new(config: OverlayConfig) -> Result<Self, OverlayError> {
         // Create the libp2p identity
         let local_key = identity::Keypair::generate_ed25519();
-        let libp2p_peer_id = local_key.public().to_peer_id();
-        let local_peer_id = LocalPeerId::from(libp2p_peer_id);
+        let peer_id = local_key.public().to_peer_id();
 
         // Create channel for events
         let (event_tx, event_rx) = mpsc::channel(100);
@@ -127,7 +126,7 @@ impl Libp2pOverlay {
         topology_config.enable_geo_aware = config.enable_geo_aware;
 
         let topology = Arc::new(TopologyManager::new(
-            libp2p_peer_id,
+            peer_id,
             topology_config,
             None, // No metrics for now
         ));
@@ -136,7 +135,7 @@ impl Libp2pOverlay {
         let relay_config = RelayConfig::default();
 
         let relay = Arc::new(RelayManager::new(
-            libp2p_peer_id,
+            peer_id,
             relay_config,
             topology.clone(),
         ));
@@ -144,40 +143,39 @@ impl Libp2pOverlay {
         // Mesh configuration
         let mesh_config = MeshConfig::default();
 
-        let mesh = Arc::new(MeshNetwork::new(config.local_peer_id.clone(), mesh_config));
+        let mesh = Arc::new(MeshNetwork::new(peer_id, mesh_config));
 
         // Create discovery manager configuration
         let mut discovery_config = DiscoveryManagerConfig::default();
         discovery_config.enable_bootstrap = config.enable_bootstrap_discovery;
         discovery_config.enable_dht = config.enable_dht_discovery;
 
+        // Parse bootstrap peers once upfront
+        let parsed_bootstrap: Vec<Multiaddr> = config
+            .bootstrap_peers
+            .iter()
+            .filter_map(|peer_str| {
+                peer_str.parse::<Multiaddr>().map_or_else(
+                    |_| {
+                        warn!("Invalid bootstrap peer address: {}", peer_str);
+                        None
+                    },
+                    Some,
+                )
+            })
+            .collect();
+
         // Configure bootstrap discovery if enabled
         if config.enable_bootstrap_discovery {
             let mut bootstrap_config = BootstrapDiscoveryConfig::default();
-            if !config.bootstrap_peers.is_empty() {
-                for peer_str in &config.bootstrap_peers {
-                    if let Ok(addr) = peer_str.parse::<Multiaddr>() {
-                        bootstrap_config.bootstrap_nodes.push(addr);
-                    } else {
-                        warn!("Invalid bootstrap peer address: {}", peer_str);
-                    }
-                }
-            }
+            bootstrap_config.bootstrap_nodes = parsed_bootstrap.clone();
             discovery_config.bootstrap_config = Some(bootstrap_config);
         }
 
         // Configure DHT discovery if enabled
         if config.enable_dht_discovery {
             let mut dht_config = DhtDiscoveryConfig::default();
-            // In a real implementation, we'd configure DHT bootstrap nodes here
-            // For now, reuse the bootstrap peers if any
-            if !config.bootstrap_peers.is_empty() {
-                for peer_str in &config.bootstrap_peers {
-                    if let Ok(addr) = peer_str.parse::<Multiaddr>() {
-                        dht_config.bootstrap_peers.push(addr);
-                    }
-                }
-            }
+            dht_config.bootstrap_peers = parsed_bootstrap;
             discovery_config.dht_config = Some(dht_config);
         }
 
@@ -188,8 +186,7 @@ impl Libp2pOverlay {
 
         Ok(Self {
             config,
-            local_peer_id,
-            libp2p_peer_id,
+            peer_id,
             swarm,
             topology,
             relay,
@@ -204,15 +201,23 @@ impl Libp2pOverlay {
         })
     }
 
+    /// Get the local peer ID as a LocalPeerId wrapper (zero-cost)
+    pub fn local_peer_id(&self) -> LocalPeerId {
+        LocalPeerId::from(self.peer_id)
+    }
+
     /// Initialize the swarm with behaviors
     pub async fn init_swarm(&self) -> Result<Swarm<OverlayBehavior>, OverlayError> {
         // Create keypair from local identity (in a real app we'd load this)
         let local_key = identity::Keypair::generate_ed25519();
-        
+
         // Create transport
         let transport = libp2p::tcp::tokio::Transport::new(GenTcpConfig::default().nodelay(true))
             .upgrade(upgrade::Version::V1)
-            .authenticate(noise::Config::new(&local_key).map_err(|e| OverlayError::Other(format!("Noise init failed: {}", e)))?)
+            .authenticate(
+                noise::Config::new(&local_key)
+                    .map_err(|e| OverlayError::Other(format!("Noise init failed: {}", e)))?,
+            )
             .multiplex(libp2p::yamux::Config::default())
             .boxed();
 
@@ -226,12 +231,13 @@ impl Libp2pOverlay {
         let gossipsub = Gossipsub::new(
             MessageAuthenticity::Signed(local_key.clone()),
             gossipsub_config,
-        ).map_err(|e| OverlayError::Other(format!("Failed to create gossipsub: {}", e)))?;
+        )
+        .map_err(|e| OverlayError::Other(format!("Failed to create gossipsub: {}", e)))?;
 
         // Create Kademlia behavior
-        let store = MemoryStore::new(self.libp2p_peer_id);
+        let store = MemoryStore::new(self.peer_id);
         let kademlia_config = KademliaConfig::default();
-        let kademlia = Kademlia::with_config(self.libp2p_peer_id, store, kademlia_config);
+        let kademlia = Kademlia::with_config(self.peer_id, store, kademlia_config);
 
         // Create Identify behavior
         let identify_config = IdentifyConfig::new(
@@ -241,11 +247,7 @@ impl Libp2pOverlay {
         let identify = Identify::new(identify_config);
 
         // Combine behaviors
-        let behavior = OverlayBehavior::new(
-            gossipsub,
-            kademlia,
-            identify,
-        );
+        let behavior = OverlayBehavior::new(gossipsub, kademlia, identify);
 
         // Create Swarm
         let swarm = SwarmBuilder::with_existing_identity(local_key)
@@ -253,7 +255,9 @@ impl Libp2pOverlay {
             .with_other_transport(|_key| transport)
             .unwrap()
             .with_behaviour(|_| behavior)
-            .map_err(|e| OverlayError::Other(format!("Failed to build swarm with behavior: {}", e)))?
+            .map_err(|e| {
+                OverlayError::Other(format!("Failed to build swarm with behavior: {}", e))
+            })?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
 

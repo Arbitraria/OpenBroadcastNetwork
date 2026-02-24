@@ -53,10 +53,14 @@ use tracing::{debug, error, info, warn};
 
 use std::time::Duration;
 use OpenBroadcastNetwork_core::media::codec::{OpenH264Codec, OpusCodec};
+#[cfg(feature = "ffmpeg")]
 use OpenBroadcastNetwork_core::media::ffmpeg_reader::FFmpegVideoReader;
 use OpenBroadcastNetwork_core::media::mp4_parser::{Mp4Parser, MseSegment};
+// Unified segment types - StreamSegment is the internal type, WireSegment for P2P
+use OpenBroadcastNetwork_core::media::segment::{MediaType, StreamId as SegmentStreamId, StreamSegment};
 use OpenBroadcastNetwork_core::media::video_reader::{MediaSample, VideoReader};
-use OpenBroadcastNetwork_core::media::{ChunkType, MediaChunk, StreamId};
+use OpenBroadcastNetwork_core::media::wire_format::{ToWireFormat, WireSegment};
+use OpenBroadcastNetwork_core::media::{ChunkType, MediaChunk, StreamId, StreamPublisher};
 use OpenBroadcastNetwork_core::overlay::interface::{
     Overlay, OverlayEvent, StreamId as OverlayStreamId,
 };
@@ -71,6 +75,10 @@ pub struct WebServerConfig {
     pub web_root: PathBuf,
     pub enable_cors: bool,
     pub video_file: Option<PathBuf>,
+    /// Enable P2P streaming via overlay network
+    pub enable_p2p: bool,
+    /// Fall back to direct WebSocket when P2P is unavailable
+    pub p2p_fallback: bool,
 }
 
 impl Default for WebServerConfig {
@@ -81,6 +89,8 @@ impl Default for WebServerConfig {
             web_root: PathBuf::from("web_viewer"),
             enable_cors: true,
             video_file: None,
+            enable_p2p: true,
+            p2p_fallback: true,
         }
     }
 }
@@ -97,11 +107,14 @@ pub struct AppState {
 pub struct StreamManager {
     pub h264_codec: Arc<Mutex<OpenH264Codec>>,
     pub opus_codec: Arc<Mutex<OpusCodec>>,
-    pub chunk_sender: broadcast::Sender<StreamChunk>,
+    /// Unified segment broadcast channel - StreamSegment is the internal type
+    pub segment_sender: broadcast::Sender<StreamSegment>,
     pub is_streaming: Arc<Mutex<bool>>,
     pub video_samples: Arc<Mutex<Option<Vec<MediaSample>>>>,
     pub overlay: Option<Arc<Libp2pOverlay>>,
     pub stream_id: Option<StreamId>,
+    /// Unified stream ID for segments
+    pub segment_stream_id: SegmentStreamId,
     /// Legacy combined initialization segment (kept for backward compatibility)
     pub initialization_segment: Arc<Mutex<Option<Vec<u8>>>>,
     /// Video-only initialization segment for Chrome MSE buffer separation
@@ -110,6 +123,12 @@ pub struct StreamManager {
     pub audio_init_segment: Arc<Mutex<Option<Vec<u8>>>>,
     pub video_codec_info: Arc<Mutex<Option<(String, String)>>>,
     pub audio_codec_info: Arc<Mutex<Option<(String, String)>>>,
+    /// P2P publisher for overlay network distribution
+    pub p2p_publisher: Option<Arc<StreamPublisher<Libp2pOverlay>>>,
+    /// Whether P2P is enabled
+    pub enable_p2p: bool,
+    /// Sequence counter for segments
+    pub segment_sequence: Arc<Mutex<u64>>,
 }
 
 /// Represents a client WebSocket connection
@@ -118,27 +137,6 @@ pub struct ClientConnection {
     pub id: String,
     pub addr: SocketAddr,
     pub connected_at: chrono::DateTime<chrono::Utc>,
-}
-
-/// Different types of stream chunks
-#[derive(Debug, Clone)]
-pub enum StreamChunk {
-    Video {
-        data: Vec<u8>,
-        timestamp: u64,
-        is_keyframe: bool,
-    },
-    Audio {
-        data: Vec<u8>,
-        timestamp: u64,
-    },
-    Metadata {
-        video_width: u32,
-        video_height: u32,
-        video_fps: f32,
-        audio_sample_rate: u32,
-        audio_channels: u16,
-    },
 }
 
 /// WebSocket message types for client communication
@@ -185,40 +183,54 @@ pub struct ChunkInfo {
 
 impl StreamManager {
     pub fn new() -> Self {
-        let (chunk_sender, _) = broadcast::channel(1000);
+        let (segment_sender, _) = broadcast::channel(1000);
+        let segment_stream_id = SegmentStreamId::generate();
 
         Self {
             h264_codec: Arc::new(Mutex::new(OpenH264Codec::with_dimensions(640, 480))),
             opus_codec: Arc::new(Mutex::new(OpusCodec::with_params(48000, 2))),
-            chunk_sender,
+            segment_sender,
             is_streaming: Arc::new(Mutex::new(false)),
             video_samples: Arc::new(Mutex::new(None)),
             overlay: None,
             stream_id: None,
+            segment_stream_id,
             initialization_segment: Arc::new(Mutex::new(None)),
             video_init_segment: Arc::new(Mutex::new(None)),
             audio_init_segment: Arc::new(Mutex::new(None)),
             video_codec_info: Arc::new(Mutex::new(None)),
             audio_codec_info: Arc::new(Mutex::new(None)),
+            p2p_publisher: None,
+            enable_p2p: false,
+            segment_sequence: Arc::new(Mutex::new(0)),
         }
     }
 
     pub fn with_p2p(overlay: Arc<Libp2pOverlay>, stream_id: StreamId) -> Self {
-        let (chunk_sender, _) = broadcast::channel(1000);
+        let (segment_sender, _) = broadcast::channel(1000);
+        let segment_stream_id = SegmentStreamId::new(stream_id.as_str());
+
+        // Create P2P publisher
+        let publisher =
+            StreamPublisher::new(overlay.clone(), format!("Stream {}", stream_id.as_str()));
 
         Self {
             h264_codec: Arc::new(Mutex::new(OpenH264Codec::with_dimensions(640, 480))),
             opus_codec: Arc::new(Mutex::new(OpusCodec::with_params(48000, 2))),
-            chunk_sender,
+            segment_sender,
             is_streaming: Arc::new(Mutex::new(false)),
             video_samples: Arc::new(Mutex::new(None)),
             overlay: Some(overlay),
             stream_id: Some(stream_id),
+            segment_stream_id,
             initialization_segment: Arc::new(Mutex::new(None)),
             video_init_segment: Arc::new(Mutex::new(None)),
             audio_init_segment: Arc::new(Mutex::new(None)),
             video_codec_info: Arc::new(Mutex::new(None)),
             audio_codec_info: Arc::new(Mutex::new(None)),
+            p2p_publisher: Some(Arc::new(publisher)),
+            enable_p2p: true,
+            segment_sequence: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -238,37 +250,72 @@ impl StreamManager {
             opus_codec.init_decoder().await.map_err(|e| e.to_string())?;
         }
 
-        // Send initial metadata only if there are receivers
-        if self.chunk_sender.receiver_count() > 0 {
-            let metadata = StreamChunk::Metadata {
-                video_width: 640,
-                video_height: 480,
-                video_fps: 30.0,
-                audio_sample_rate: 48000,
-                audio_channels: 2,
-            };
-
-            let _ = self.chunk_sender.send(metadata);
+        // Send initial metadata as a StreamSegment
+        if self.segment_sender.receiver_count() > 0 {
+            let metadata_json = serde_json::json!({
+                "video_width": 640,
+                "video_height": 480,
+                "video_fps": 30.0,
+                "audio_sample_rate": 48000,
+                "audio_channels": 2,
+            });
+            let metadata_segment = StreamSegment::metadata(
+                self.segment_stream_id.clone(),
+                0,
+                metadata_json.to_string().into_bytes(),
+            );
+            let _ = self.segment_sender.send(metadata_segment);
         }
 
         *self.is_streaming.lock().await = true;
 
-        // If P2P overlay is available, start listening for chunks
+        // If P2P overlay is available, start listening for segments
         if let Some(overlay) = &self.overlay {
             if let Some(stream_id) = &self.stream_id {
-                self.start_p2p_chunk_listener(overlay.clone(), stream_id.clone())
+                self.start_p2p_segment_listener(overlay.clone(), stream_id.clone())
                     .await?;
             }
         }
 
         // Start streaming loaded video segments if available
         let video_samples = Arc::clone(&self.video_samples);
-        let chunk_sender = self.chunk_sender.clone();
+        let segment_sender = self.segment_sender.clone();
         let is_streaming = Arc::clone(&self.is_streaming);
+
+        // Clone fields for the streaming task
+        let enable_p2p = self.enable_p2p;
+        let overlay = self.overlay.clone();
+        let stream_id = self.stream_id.clone();
+        let segment_sequence = Arc::clone(&self.segment_sequence);
+        let init_segment = Arc::clone(&self.initialization_segment);
+        let segment_stream_id = self.segment_stream_id.clone();
 
         tokio::spawn(async move {
             // Wait a bit for clients to connect
             tokio::time::sleep(Duration::from_millis(1000)).await;
+
+            // If P2P enabled, publish init segment first
+            if enable_p2p {
+                if let (Some(overlay), Some(stream_id)) = (&overlay, &stream_id) {
+                    if let Some(init_data) = &*init_segment.lock().await {
+                        let init_stream_id = SegmentStreamId::new(stream_id.as_str());
+                        let segment =
+                            StreamSegment::initialization(init_stream_id, init_data.clone());
+                        if let Ok(wire_bytes) = segment.to_wire_bytes() {
+                            let overlay_stream_id =
+                                OverlayStreamId::from_bytes(stream_id.as_str().as_bytes().to_vec());
+                            if let Err(e) = overlay
+                                .publish_stream_data(&overlay_stream_id, wire_bytes)
+                                .await
+                            {
+                                warn!("Failed to publish init segment to P2P: {}", e);
+                            } else {
+                                info!("Published init segment to P2P ({} bytes)", init_data.len());
+                            }
+                        }
+                    }
+                }
+            }
 
             let samples = video_samples.lock().await;
             if let Some(ref video_samples) = *samples {
@@ -280,37 +327,72 @@ impl StreamManager {
                         continue;
                     }
 
-                    // Only send if there are active receivers
-                    if chunk_sender.receiver_count() == 0 {
-                        info!("No clients connected, stopping segment streaming");
+                    // Only send if there are active receivers OR P2P is enabled
+                    if segment_sender.receiver_count() == 0 && !enable_p2p {
+                        info!("No clients connected and P2P disabled, stopping segment streaming");
                         break;
                     }
 
-                    let timestamp = sample.timestamp.as_millis() as u64;
-                    let chunk = StreamChunk::Video {
-                        data: sample.data.clone(),
-                        timestamp,
-                        is_keyframe: sample.is_sync,
+                    // Get next sequence number
+                    let sequence = {
+                        let mut seq = segment_sequence.lock().await;
+                        let current = *seq;
+                        *seq += 1;
+                        current
                     };
 
-                    match chunk_sender.send(chunk) {
-                        Ok(_) => {
-                            info!(
-                                "Sent video segment {} ({} bytes, ts={}ms, keyframe={})",
-                                index,
-                                sample.data.len(),
-                                timestamp,
-                                sample.is_sync
-                            );
+                    // Create StreamSegment directly from MediaSample
+                    let segment = StreamSegment::video(
+                        segment_stream_id.clone(),
+                        sequence,
+                        sample.timestamp.as_micros() as u64, // us precision
+                        sample.duration.as_micros() as u64,
+                        sample.data.clone(),
+                        sample.is_sync,
+                    );
 
-                            // Add delay between segments to simulate streaming
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-                        Err(_) => {
-                            info!("All receivers dropped, stopping segment streaming");
-                            break;
+                    // Send to local WebSocket clients
+                    if segment_sender.receiver_count() > 0 {
+                        if segment_sender.send(segment.clone()).is_err() {
+                            info!("All receivers dropped");
                         }
                     }
+
+                    // Publish to P2P overlay network
+                    if enable_p2p {
+                        if let (Some(overlay), Some(stream_id)) = (&overlay, &stream_id) {
+                            // Serialize and publish
+                            if let Ok(wire_bytes) = segment.to_wire_bytes() {
+                                let overlay_stream_id = OverlayStreamId::from_bytes(
+                                    stream_id.as_str().as_bytes().to_vec(),
+                                );
+                                if let Err(e) = overlay
+                                    .publish_stream_data(&overlay_stream_id, wire_bytes)
+                                    .await
+                                {
+                                    warn!("Failed to publish segment {} to P2P: {}", index, e);
+                                } else {
+                                    debug!(
+                                        "Published segment {} to P2P ({} bytes, keyframe={})",
+                                        index,
+                                        sample.data.len(),
+                                        sample.is_sync
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    info!(
+                        "Sent video segment {} ({} bytes, ts={}us, keyframe={})",
+                        index,
+                        sample.data.len(),
+                        segment.pts_us,
+                        sample.is_sync
+                    );
+
+                    // Add delay between segments to simulate streaming
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
 
                 info!("Finished streaming all segments");
@@ -323,12 +405,13 @@ impl StreamManager {
         Ok(())
     }
 
-    async fn start_p2p_chunk_listener(
+    /// Start listening for P2P segments and forward them to local WebSocket clients
+    async fn start_p2p_segment_listener(
         &self,
         overlay: Arc<Libp2pOverlay>,
         stream_id: StreamId,
     ) -> Result<(), String> {
-        info!("Starting P2P chunk listener for stream: {}", stream_id);
+        info!("Starting P2P segment listener for stream: {}", stream_id);
 
         let overlay_stream_id = OverlayStreamId::from_bytes(stream_id.as_str().as_bytes().to_vec());
 
@@ -339,13 +422,13 @@ impl StreamManager {
 
         info!("Successfully subscribed to P2P stream: {}", stream_id);
 
-        let chunk_sender = self.chunk_sender.clone();
+        let segment_sender = self.segment_sender.clone();
         let is_streaming = Arc::clone(&self.is_streaming);
         let init_segment = Arc::clone(&self.initialization_segment);
         let target_stream_id = stream_id.clone();
 
         tokio::spawn(async move {
-            info!("P2P chunk listener task started");
+            info!("P2P segment listener task started");
 
             while *is_streaming.lock().await {
                 if let Some(event) = overlay.next_event().await {
@@ -358,42 +441,57 @@ impl StreamManager {
                             let recv_id_str =
                                 String::from_utf8_lossy(recv_stream_id.as_bytes()).to_string();
                             if recv_id_str == target_stream_id.as_str() {
-                                match MediaChunk::from_bytes(&data) {
-                                    Ok(media_chunk) => {
-                                        let stream_chunk = match media_chunk.chunk_type {
-                                            ChunkType::Video => {
-                                                if media_chunk.sequence == 0
-                                                    && media_chunk.is_keyframe
-                                                {
-                                                    let mut init = init_segment.lock().await;
-                                                    *init = Some(media_chunk.data.clone());
-                                                    info!(
-                                                        "Received P2P init segment ({} bytes)",
-                                                        media_chunk.data.len()
-                                                    );
-                                                }
-                                                StreamChunk::Video {
-                                                    data: media_chunk.data,
-                                                    timestamp: media_chunk.timestamp,
-                                                    is_keyframe: media_chunk.is_keyframe,
-                                                }
-                                            }
-                                            ChunkType::Audio => StreamChunk::Audio {
-                                                data: media_chunk.data,
-                                                timestamp: media_chunk.timestamp,
-                                            },
-                                            ChunkType::Metadata => {
-                                                debug!("Received metadata chunk, ignoring for now");
-                                                continue;
-                                            }
-                                        };
+                                // Try to deserialize as WireSegment (new format)
+                                match WireSegment::from_bytes(&data) {
+                                    Ok(wire_segment) => {
+                                        // Convert WireSegment → StreamSegment
+                                        let segment: StreamSegment = wire_segment.into();
 
-                                        if chunk_sender.receiver_count() > 0 {
-                                            let _ = chunk_sender.send(stream_chunk);
+                                        // Handle initialization segments
+                                        if segment.media_type == MediaType::Initialization {
+                                            let mut init = init_segment.lock().await;
+                                            *init = Some(segment.data.to_vec());
+                                            info!(
+                                                "Received P2P init segment ({} bytes)",
+                                                segment.data.len()
+                                            );
+                                        }
+
+                                        // Forward to local WebSocket clients
+                                        if segment_sender.receiver_count() > 0 {
+                                            let _ = segment_sender.send(segment);
                                         }
                                     }
                                     Err(e) => {
-                                        warn!("Failed to parse MediaChunk from P2P data: {}", e);
+                                        // Fall back to legacy MediaChunk format
+                                        match MediaChunk::from_bytes(&data) {
+                                            Ok(media_chunk) => {
+                                                // Convert legacy MediaChunk → StreamSegment
+                                                let segment: StreamSegment = media_chunk.into();
+
+                                                if segment.media_type == MediaType::Initialization
+                                                    || (segment.sequence == 0
+                                                        && segment.is_keyframe)
+                                                {
+                                                    let mut init = init_segment.lock().await;
+                                                    *init = Some(segment.data.to_vec());
+                                                    info!(
+                                                        "Received P2P init segment ({} bytes)",
+                                                        segment.data.len()
+                                                    );
+                                                }
+
+                                                if segment_sender.receiver_count() > 0 {
+                                                    let _ = segment_sender.send(segment);
+                                                }
+                                            }
+                                            Err(_) => {
+                                                warn!(
+                                                    "Failed to parse P2P data as WireSegment or MediaChunk: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -405,7 +503,7 @@ impl StreamManager {
                 }
             }
 
-            info!("P2P chunk listener task stopped");
+            info!("P2P segment listener task stopped");
         });
 
         Ok(())
@@ -414,6 +512,65 @@ impl StreamManager {
     pub async fn stop_streaming(&self) {
         info!("Stopping streaming session");
         *self.is_streaming.lock().await = false;
+    }
+
+    /// Publish a segment to the P2P overlay network
+    ///
+    /// Serializes the StreamSegment to WireFormat for efficient P2P distribution.
+    pub async fn publish_segment_to_p2p(&self, segment: &StreamSegment) -> Result<(), String> {
+        if !self.enable_p2p {
+            return Ok(()); // P2P disabled, skip silently
+        }
+
+        let overlay = match &self.overlay {
+            Some(o) => o,
+            None => return Ok(()), // No overlay available
+        };
+
+        let stream_id = match &self.stream_id {
+            Some(id) => id,
+            None => return Err("No stream ID configured".to_string()),
+        };
+
+        // Serialize to wire format (bincode, ~30-40% smaller than JSON)
+        let wire_bytes = segment
+            .to_wire_bytes()
+            .map_err(|e| format!("Failed to serialize segment to wire format: {:?}", e))?;
+
+        // Convert to overlay stream ID
+        let overlay_stream_id = OverlayStreamId::from_bytes(stream_id.as_str().as_bytes().to_vec());
+
+        // Publish to overlay network
+        overlay
+            .publish_stream_data(&overlay_stream_id, wire_bytes)
+            .await
+            .map_err(|e| format!("Failed to publish to P2P: {}", e))?;
+
+        debug!(
+            "Published {} segment {} to P2P ({} bytes)",
+            segment.media_type,
+            segment.sequence,
+            segment.data.len()
+        );
+
+        Ok(())
+    }
+
+    /// Publish initialization segment to P2P network
+    pub async fn publish_init_to_p2p(&self, init_data: &[u8]) -> Result<(), String> {
+        if !self.enable_p2p {
+            return Ok(());
+        }
+
+        // Create initialization segment using the stored segment_stream_id
+        let segment = StreamSegment::initialization(self.segment_stream_id.clone(), init_data.to_vec());
+        self.publish_segment_to_p2p(&segment).await?;
+
+        info!(
+            "Published initialization segment to P2P ({} bytes)",
+            init_data.len()
+        );
+        Ok(())
     }
 
     pub async fn load_video_file(&self, video_path: &std::path::Path) -> Result<(), String> {
@@ -485,7 +642,10 @@ impl StreamManager {
                 *self.audio_init_segment.lock().await = audio_init;
             }
             Err(e) => {
-                warn!("Failed to generate separate init segments: {}. Will use combined init.", e);
+                warn!(
+                    "Failed to generate separate init segments: {}. Will use combined init.",
+                    e
+                );
             }
         }
 
@@ -562,28 +722,32 @@ impl StreamManager {
         Err("FFmpeg support temporarily disabled".to_string())
     }
 
-    #[cfg(not(feature = "ffmpeg"))]
-    async fn _load_video_with_ffmpeg(
-        &self,
-        _ffmpeg_reader: FFmpegVideoReader,
-    ) -> Result<(), String> {
-        Err("FFmpeg feature disabled at compile time".to_string())
-    }
-
-    pub async fn send_video_chunk(&self, data: Vec<u8>, is_keyframe: bool) -> Result<(), String> {
+    /// Send a video segment to connected WebSocket clients
+    pub async fn send_video_segment(&self, data: Vec<u8>, is_keyframe: bool) -> Result<(), String> {
         // Only send if there are active receivers
-        if self.chunk_sender.receiver_count() == 0 {
+        if self.segment_sender.receiver_count() == 0 {
             return Ok(()); // No clients connected, skip silently
         }
 
-        let timestamp = chrono::Utc::now().timestamp_millis() as u64;
-        let chunk = StreamChunk::Video {
-            data,
-            timestamp,
-            is_keyframe,
+        // Get next sequence number
+        let sequence = {
+            let mut seq = self.segment_sequence.lock().await;
+            let current = *seq;
+            *seq += 1;
+            current
         };
 
-        match self.chunk_sender.send(chunk) {
+        let timestamp_us = chrono::Utc::now().timestamp_micros() as u64;
+        let segment = StreamSegment::video(
+            self.segment_stream_id.clone(),
+            sequence,
+            timestamp_us,
+            0, // duration unknown for live segments
+            data,
+            is_keyframe,
+        );
+
+        match self.segment_sender.send(segment) {
             Ok(_) => Ok(()),
             Err(broadcast::error::SendError(_)) => {
                 // All receivers dropped, which is fine
@@ -592,16 +756,31 @@ impl StreamManager {
         }
     }
 
-    pub async fn send_audio_chunk(&self, data: Vec<u8>) -> Result<(), String> {
+    /// Send an audio segment to connected WebSocket clients
+    pub async fn send_audio_segment(&self, data: Vec<u8>) -> Result<(), String> {
         // Only send if there are active receivers
-        if self.chunk_sender.receiver_count() == 0 {
+        if self.segment_sender.receiver_count() == 0 {
             return Ok(()); // No clients connected, skip silently
         }
 
-        let timestamp = chrono::Utc::now().timestamp_millis() as u64;
-        let chunk = StreamChunk::Audio { data, timestamp };
+        // Get next sequence number
+        let sequence = {
+            let mut seq = self.segment_sequence.lock().await;
+            let current = *seq;
+            *seq += 1;
+            current
+        };
 
-        match self.chunk_sender.send(chunk) {
+        let timestamp_us = chrono::Utc::now().timestamp_micros() as u64;
+        let segment = StreamSegment::audio(
+            self.segment_stream_id.clone(),
+            sequence,
+            timestamp_us,
+            0, // duration unknown for live segments
+            data,
+        );
+
+        match self.segment_sender.send(segment) {
             Ok(_) => Ok(()),
             Err(broadcast::error::SendError(_)) => {
                 // All receivers dropped, which is fine
@@ -654,7 +833,8 @@ impl StreamManager {
                                         );
 
                                         // Final Chrome compatibility check
-                                        if object_type_indication == 0x40 && audio_object_type == 2 {
+                                        if object_type_indication == 0x40 && audio_object_type == 2
+                                        {
                                             info!("✅ ESDS Verification: Chrome-compatible (objectTypeIndication=0x40, audioObjectType=2)");
                                         } else {
                                             warn!(
@@ -725,6 +905,7 @@ impl WebServer {
             .route("/api/stream/start", post(start_stream_handler))
             .route("/api/stream/stop", post(stop_stream_handler))
             .route("/api/stream/status", get(stream_status_handler))
+            .route("/api/streams", get(list_streams_handler))
             .with_state(self.app_state.clone());
 
         // Add CORS if enabled
@@ -781,8 +962,8 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
     // Split the socket into sender and receiver
     let (mut sender, mut receiver) = socket.split();
 
-    // Subscribe to stream chunks
-    let mut chunk_receiver = state.stream_manager.chunk_sender.subscribe();
+    // Subscribe to stream segments
+    let mut segment_receiver = state.stream_manager.segment_sender.subscribe();
 
     // Send initial stream info with detected codec information
     let (video_codec, video_mime) =
@@ -935,9 +1116,15 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
                 }
             }
 
-            info!("Successfully sent legacy init segment to client {}", client_id);
+            info!(
+                "Successfully sent legacy init segment to client {}",
+                client_id
+            );
         } else {
-            warn!("No initialization segment available for client {}", client_id);
+            warn!(
+                "No initialization segment available for client {}",
+                client_id
+            );
         }
     }
 
@@ -967,25 +1154,35 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
         }
     });
 
-    // Handle outgoing stream chunks to client
+    // Handle outgoing stream segments to client
+    // Convert StreamSegment → JSON at the WebSocket boundary
     loop {
         tokio::select! {
-            chunk_result = chunk_receiver.recv() => {
-                match chunk_result {
-                    Ok(chunk) => {
-                        let message = match chunk {
-                            StreamChunk::Video { data, timestamp, is_keyframe } => {
+            segment_result = segment_receiver.recv() => {
+                match segment_result {
+                    Ok(segment) => {
+                        let message = match segment.media_type {
+                            MediaType::Video | MediaType::Initialization => {
+                                // Determine chunk type for JSON message
+                                let chunk_type = if segment.media_type == MediaType::Initialization {
+                                    "initialization".to_string()
+                                } else if segment.is_keyframe {
+                                    "video-keyframe".to_string()
+                                } else {
+                                    "video".to_string()
+                                };
+
                                 // Send chunk info first
                                 let chunk_info = ClientMessage::ChunkInfo {
                                     data: ChunkInfo {
-                                        chunk_type: if is_keyframe { "video-keyframe" } else { "video" }.to_string(),
-                                        size: data.len(),
-                                        timestamp,
+                                        chunk_type,
+                                        size: segment.data.len(),
+                                        timestamp: segment.pts_ms(), // Convert us → ms
                                     },
                                 };
 
                                 if let Ok(info_message) = serde_json::to_string(&chunk_info) {
-                                    if let Err(_) = sender.send(Message::Text(info_message)).await {
+                                    if sender.send(Message::Text(info_message)).await.is_err() {
                                         // Client disconnected, exit gracefully
                                         break;
                                     }
@@ -996,54 +1193,63 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
                                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                                 // Then send the actual data
-                                Message::Binary(data)
+                                Message::Binary(segment.data.to_vec())
                             }
-                            StreamChunk::Audio { data, timestamp } => {
+                            MediaType::Audio => {
                                 let chunk_info = ClientMessage::ChunkInfo {
                                     data: ChunkInfo {
                                         chunk_type: "audio".to_string(),
-                                        size: data.len(),
-                                        timestamp,
+                                        size: segment.data.len(),
+                                        timestamp: segment.pts_ms(),
                                     },
                                 };
 
                                 if let Ok(info_message) = serde_json::to_string(&chunk_info) {
-                                    if let Err(_) = sender.send(Message::Text(info_message)).await {
+                                    if sender.send(Message::Text(info_message)).await.is_err() {
                                         // Client disconnected, exit gracefully
                                         break;
                                     }
                                 }
 
-                                Message::Binary(data)
+                                Message::Binary(segment.data.to_vec())
                             }
-                            StreamChunk::Metadata { video_width, video_height, video_fps, audio_sample_rate, audio_channels } => {
-                                let stream_info = ClientMessage::StreamInfo {
-                                    data: StreamInfo {
-                                        video: Some(VideoInfo {
-                                            width: video_width,
-                                            height: video_height,
-                                            fps: video_fps,
-                                            codec: "H.264".to_string(),
-                                            mime_type: Some("video/mp4; codecs=\"avc1.42E01E\"".to_string()),
-                                        }),
-                                        audio: Some(AudioInfo {
-                                            sample_rate: audio_sample_rate,
-                                            channels: audio_channels,
-                                            codec: "AAC".to_string(),
-                                            mime_type: Some("audio/mp4; codecs=\"mp4a.02.2\"".to_string()),
-                                        }),
-                                    },
-                                };
+                            MediaType::Metadata => {
+                                // Parse metadata JSON from segment data
+                                if let Ok(meta_str) = std::str::from_utf8(&segment.data) {
+                                    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(meta_str) {
+                                        let stream_info = ClientMessage::StreamInfo {
+                                            data: StreamInfo {
+                                                video: Some(VideoInfo {
+                                                    width: meta.get("video_width").and_then(|v| v.as_u64()).unwrap_or(640) as u32,
+                                                    height: meta.get("video_height").and_then(|v| v.as_u64()).unwrap_or(480) as u32,
+                                                    fps: meta.get("video_fps").and_then(|v| v.as_f64()).unwrap_or(30.0) as f32,
+                                                    codec: "H.264".to_string(),
+                                                    mime_type: Some("video/mp4; codecs=\"avc1.42E01E\"".to_string()),
+                                                }),
+                                                audio: Some(AudioInfo {
+                                                    sample_rate: meta.get("audio_sample_rate").and_then(|v| v.as_u64()).unwrap_or(48000) as u32,
+                                                    channels: meta.get("audio_channels").and_then(|v| v.as_u64()).unwrap_or(2) as u16,
+                                                    codec: "AAC".to_string(),
+                                                    mime_type: Some("audio/mp4; codecs=\"mp4a.02.2\"".to_string()),
+                                                }),
+                                            },
+                                        };
 
-                                if let Ok(message) = serde_json::to_string(&stream_info) {
-                                    Message::Text(message)
+                                        if let Ok(message) = serde_json::to_string(&stream_info) {
+                                            Message::Text(message)
+                                        } else {
+                                            continue;
+                                        }
+                                    } else {
+                                        continue;
+                                    }
                                 } else {
                                     continue;
                                 }
                             }
                         };
 
-                        if let Err(_) = sender.send(message).await {
+                        if sender.send(message).await.is_err() {
                             // Client disconnected, exit gracefully
                             break;
                         }
@@ -1118,6 +1324,41 @@ async fn stream_status_handler(State(state): State<AppState>) -> impl IntoRespon
     }))
 }
 
+/// API endpoint to list available streams in the network
+///
+/// Returns a list of streams known to this node, including:
+/// - Locally published streams
+/// - Streams discovered via P2P network
+async fn list_streams_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let mut streams = Vec::new();
+
+    // Add local stream if streaming
+    let is_streaming = *state.stream_manager.is_streaming.lock().await;
+    if is_streaming {
+        if let Some(stream_id) = &state.stream_manager.stream_id {
+            let video_info = state.stream_manager.video_codec_info.lock().await;
+            let audio_info = state.stream_manager.audio_codec_info.lock().await;
+
+            streams.push(serde_json::json!({
+                "stream_id": stream_id.as_str(),
+                "title": format!("Local Stream - {}", stream_id.as_str()),
+                "is_local": true,
+                "video_codec": video_info.as_ref().map(|(c, _)| c.clone()),
+                "audio_codec": audio_info.as_ref().map(|(c, _)| c.clone()),
+                "status": "streaming"
+            }));
+        }
+    }
+
+    // In future: Add streams discovered from P2P network via StreamDiscovery
+
+    Json(serde_json::json!({
+        "streams": streams,
+        "count": streams.len(),
+        "p2p_enabled": state.stream_manager.enable_p2p
+    }))
+}
+
 /// Default HTML page when web_root is not available
 const DEFAULT_HTML: &str = r#"
 <!DOCTYPE html>
@@ -1145,6 +1386,7 @@ const DEFAULT_HTML: &str = r#"
             <h3>API Endpoints</h3>
             <ul style="text-align: left; max-width: 400px; margin: 0 auto;">
                 <li><strong>GET /api/stream/status</strong> - Get streaming status</li>
+                <li><strong>GET /api/streams</strong> - List available P2P streams</li>
                 <li><strong>POST /api/stream/start</strong> - Start streaming</li>
                 <li><strong>POST /api/stream/stop</strong> - Stop streaming</li>
                 <li><strong>WS /stream</strong> - WebSocket for chunk streaming</li>

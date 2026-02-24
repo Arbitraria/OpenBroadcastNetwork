@@ -110,6 +110,10 @@ pub struct Mp4Track {
 }
 
 /// MSE-compatible segment that can be sent to browsers
+///
+/// **DEPRECATED**: Use [`crate::media::segment::StreamSegment`] instead.
+/// Convert using `StreamSegment::from_mse_segment()`.
+#[deprecated(since = "0.2.0", note = "Use media::segment::StreamSegment instead")]
 #[derive(Debug, Clone)]
 pub struct MseSegment {
     /// Segment type - either "initialization" or "media"
@@ -744,17 +748,15 @@ impl Mp4Parser {
                         // Use mp4a.40.2 for AAC-LC (audioObjectType=2 in AudioSpecificConfig)
                         // Note: For Chrome compatibility, preprocess video with FFmpeg:
                         // ffmpeg -i input.mp4 -c:v copy -c:a aac -profile:a aac_low -movflags frag_keyframe+empty_moov output.mp4
-                        info!(
-                            "Object type 0x40 (MPEG-4 Audio) - using mp4a.40.2 for AAC-LC"
-                        );
+                        info!("Object type 0x40 (MPEG-4 Audio) - using mp4a.40.2 for AAC-LC");
                         "mp4a.40.2".to_string() // Full codec string with audioObjectType
                     }
                     0x02 => {
                         info!("Object type 0x02 (AAC-LC) detected - using mp4a.40.2");
                         "mp4a.40.2".to_string()
                     }
-                    0x05 => "mp4a.40.5".to_string(),   // HE-AAC
-                    0x1d => "mp4a.40.29".to_string(),  // HE-AAC v2
+                    0x05 => "mp4a.40.5".to_string(),  // HE-AAC
+                    0x1d => "mp4a.40.29".to_string(), // HE-AAC v2
                     _ => {
                         warn!(
                             "Unknown AAC object type 0x{:02x}, defaulting to mp4a.40.2",
@@ -1160,14 +1162,39 @@ impl Mp4Parser {
         }
     }
 
+    /// Generate unified StreamSegments from the parsed MP4
+    ///
+    /// This is the new unified API that returns `StreamSegment` types
+    /// for use throughout the system. Internally calls `generate_mse_segments`
+    /// and converts the results.
+    pub fn generate_stream_segments(
+        &mut self,
+        stream_id: crate::media::segment::StreamId,
+    ) -> Result<Vec<crate::media::segment::StreamSegment>, io::Error> {
+        let mse_segments = self.generate_mse_segments()?;
+        let mut result = Vec::with_capacity(mse_segments.len());
+
+        for (i, mse) in mse_segments.into_iter().enumerate() {
+            let segment = crate::media::segment::StreamSegment::from_mse_segment(
+                &mse,
+                stream_id.clone(),
+                i as u64,
+            );
+            result.push(segment);
+        }
+
+        Ok(result)
+    }
+
     /// Extract segments from an already fragmented MP4 file
     fn extract_fragmented_segments(&self) -> Result<Vec<MseSegment>, io::Error> {
         let mut segments = Vec::new();
 
         // Check for AC-3 audio which needs video-only mode (Chrome MSE doesn't support AC-3)
-        let has_ac3_audio = self.tracks.iter().any(|track| {
-            track.media_type == "soun" && track.codec == "AC-3"
-        });
+        let has_ac3_audio = self
+            .tracks
+            .iter()
+            .any(|track| track.media_type == "soun" && track.codec == "AC-3");
 
         // Use video-only mode for Chrome MSE compatibility when AC-3 audio is present
         if has_ac3_audio {
@@ -2521,10 +2548,7 @@ impl Mp4Parser {
             ]) as usize;
 
             if box_size < 8 || cursor + box_size > moov_content.len() {
-                warn!(
-                    "Invalid box size {} at offset {} in moov",
-                    box_size, cursor
-                );
+                warn!("Invalid box size {} at offset {} in moov", box_size, cursor);
                 break;
             }
 
@@ -2561,8 +2585,10 @@ impl Mp4Parser {
 
         // Second pass: filter mvex box to only include trex for kept tracks
         if let Some((mvex_start, mvex_size)) = mvex_data {
-            let filtered_mvex =
-                self.filter_mvex_for_tracks(&moov_content[mvex_start..mvex_start + mvex_size], &kept_track_ids);
+            let filtered_mvex = self.filter_mvex_for_tracks(
+                &moov_content[mvex_start..mvex_start + mvex_size],
+                &kept_track_ids,
+            );
             output.extend_from_slice(&filtered_mvex);
         }
 

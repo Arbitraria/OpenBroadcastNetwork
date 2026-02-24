@@ -324,6 +324,10 @@ impl FragmentedMp4Converter {
 }
 
 /// Sample data for fragmentation
+///
+/// **DEPRECATED**: Use [`crate::media::segment::StreamSegment`] instead.
+/// Convert using `Sample::to_stream_segment()`.
+#[deprecated(since = "0.2.0", note = "Use media::segment::StreamSegment instead")]
 pub struct Sample {
     pub data: Vec<u8>,
     pub duration: u32,
@@ -340,6 +344,23 @@ impl Sample {
             size,
             is_keyframe,
         }
+    }
+
+    /// Convert to a unified StreamSegment with additional context
+    ///
+    /// The `timescale` parameter converts duration to microseconds.
+    /// Typical values: 90000 for video (90kHz), 48000 for audio (48kHz).
+    pub fn to_stream_segment(
+        &self,
+        stream_id: crate::media::segment::StreamId,
+        sequence: u64,
+        pts_us: u64,
+        timescale: u32,
+        media_type: crate::media::segment::MediaType,
+    ) -> crate::media::segment::StreamSegment {
+        crate::media::segment::StreamSegment::from_sample(
+            self, stream_id, sequence, pts_us, timescale, media_type,
+        )
     }
 }
 

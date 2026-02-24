@@ -11,9 +11,15 @@ use tracing::{debug, error, info};
 use OpenBroadcastNetwork_core::media::{
     ChunkBuilder, MediaChunk, OpenH264Codec, OpusCodec, StreamId, StreamMetadata,
 };
-use OpenBroadcastNetwork_core::overlay::interface::OverlayError;
+// Unified segment types for more efficient wire format
+use OpenBroadcastNetwork_core::media::segment::{
+    MediaType, SegmentBuilder, StreamId as UnifiedStreamId, StreamSegment,
+};
+use OpenBroadcastNetwork_core::media::wire_format::ToWireFormat;
+use OpenBroadcastNetwork_core::overlay::interface::{
+    Overlay, OverlayError, StreamId as OverlayStreamId,
+};
 use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
-use OpenBroadcastNetwork_core::pubsub::Topic;
 
 /// Streaming demo configuration
 #[derive(Debug, Clone)]
@@ -106,6 +112,17 @@ impl StreamingDemo {
     pub async fn start(&mut self) -> Result<(), OverlayError> {
         info!("Starting streaming demo: '{}'", self.config.title);
 
+        // Convert media StreamId to overlay StreamId and set up GossipSub topic
+        let overlay_stream_id: OverlayStreamId = (&self.stream_id).into();
+
+        // Publish and subscribe to the stream topic to enable GossipSub routing
+        self.overlay.publish_stream(&overlay_stream_id).await?;
+        self.overlay.subscribe_stream(&overlay_stream_id).await?;
+        info!(
+            "Subscribed to GossipSub stream topic: {}",
+            overlay_stream_id
+        );
+
         // Create stream metadata and send it first
         let metadata = StreamMetadata::new_h264_opus(
             self.config.title.clone(),
@@ -122,12 +139,9 @@ impl StreamingDemo {
 
         self.send_chunk(metadata_chunk).await?;
 
-        // Create streaming topic
-        let stream_topic = Topic::stream_topic(&self.stream_id.as_str());
-
         // Start video and audio generation loops
-        let _video_handle = self.start_video_generation(stream_topic.clone());
-        let _audio_handle = self.start_audio_generation(stream_topic.clone());
+        let _video_handle = self.start_video_generation();
+        let _audio_handle = self.start_audio_generation();
 
         // Wait for demo duration
         sleep(Duration::from_secs(self.config.duration_seconds)).await;
@@ -137,7 +151,7 @@ impl StreamingDemo {
     }
 
     /// Start video frame generation and encoding
-    fn start_video_generation(&mut self, topic: Topic) -> tokio::task::JoinHandle<()> {
+    fn start_video_generation(&mut self) -> tokio::task::JoinHandle<()> {
         let video_codec = Arc::clone(&self.video_codec);
         let frame_duration_ms = 1000 / self.config.video_fps as u64;
         let mut frame_interval = interval(Duration::from_millis(frame_duration_ms));
@@ -160,16 +174,17 @@ impl StreamingDemo {
                 let encoded_frame = format!("h264_frame_{}", frame_count).into_bytes();
 
                 // Create video chunk
+                let is_keyframe = frame_count % 30 == 0;
                 let chunk = MediaChunk::new_video(
                     stream_id.clone(),
                     frame_count,
                     encoded_frame,
                     frame_duration_ms,
-                    frame_count % 30 == 0, // Keyframe every second
+                    is_keyframe,
                 );
 
-                // Send chunk over P2P network
-                if let Err(e) = send_chunk_to_network(&overlay, &topic, chunk).await {
+                // Send chunk over P2P network via GossipSub
+                if let Err(e) = send_chunk_to_network(&overlay, chunk).await {
                     error!("Failed to send video chunk: {}", e);
                     break;
                 }
@@ -188,7 +203,7 @@ impl StreamingDemo {
     }
 
     /// Start audio generation and encoding
-    fn start_audio_generation(&mut self, topic: Topic) -> tokio::task::JoinHandle<()> {
+    fn start_audio_generation(&mut self) -> tokio::task::JoinHandle<()> {
         let audio_codec = Arc::clone(&self.audio_codec);
         let sample_rate = self.config.audio_sample_rate;
         let channels = self.config.audio_channels;
@@ -224,8 +239,8 @@ impl StreamingDemo {
                     frame_duration_ms,
                 );
 
-                // Send chunk over P2P network
-                if let Err(e) = send_chunk_to_network(&overlay, &topic, chunk).await {
+                // Send chunk over P2P network via GossipSub
+                if let Err(e) = send_chunk_to_network(&overlay, chunk).await {
                     error!("Failed to send audio chunk: {}", e);
                     break;
                 }
@@ -244,45 +259,87 @@ impl StreamingDemo {
 
     /// Send a media chunk over the P2P network
     async fn send_chunk(&self, chunk: MediaChunk) -> Result<(), OverlayError> {
-        let topic = Topic::stream_topic(&self.stream_id.as_str());
-        send_chunk_to_network(&self.overlay, &topic, chunk).await
+        send_chunk_to_network(&self.overlay, chunk).await
     }
 }
 
-/// Send a chunk to the P2P network via GossipSub
+/// Send a chunk to the P2P network via GossipSub (legacy JSON format)
 async fn send_chunk_to_network(
-    _overlay: &Libp2pOverlay,
-    topic: &Topic,
+    overlay: &Libp2pOverlay,
     chunk: MediaChunk,
 ) -> Result<(), OverlayError> {
-    // Serialize chunk for transmission
+    // Serialize chunk for transmission (JSON format)
     let chunk_data = chunk
         .to_bytes()
         .map_err(|e| OverlayError::General(format!("Failed to serialize chunk: {}", e)))?;
 
+    let chunk_type_str = match chunk.chunk_type {
+        OpenBroadcastNetwork_core::media::ChunkType::Video => "video",
+        OpenBroadcastNetwork_core::media::ChunkType::Audio => "audio",
+        OpenBroadcastNetwork_core::media::ChunkType::Metadata => "metadata",
+    };
+
     debug!(
-        "Sending {} chunk {} ({} bytes)",
-        match chunk.chunk_type {
-            OpenBroadcastNetwork_core::media::ChunkType::Video => "video",
-            OpenBroadcastNetwork_core::media::ChunkType::Audio => "audio",
-            OpenBroadcastNetwork_core::media::ChunkType::Metadata => "metadata",
-        },
+        "Publishing {} chunk {} ({} bytes) to stream {}",
+        chunk_type_str,
         chunk.sequence,
-        chunk_data.len()
-    );
-
-    // For now, just simulate publishing to the topic
-    // TODO: Implement proper GossipSub integration when the overlay API is complete
-    info!(
-        "Would publish {} bytes to topic: {}",
         chunk_data.len(),
-        topic.id()
+        chunk.stream_id
     );
 
-    // In a real implementation, this would:
-    // 1. Subscribe to the topic if not already subscribed
-    // 2. Publish the chunk data to all subscribers
-    // 3. Handle any network errors
+    // Convert media StreamId to overlay StreamId
+    let overlay_stream_id: OverlayStreamId = (&chunk.stream_id).into();
+
+    // Publish to GossipSub via the Overlay trait
+    overlay
+        .publish_stream_data(&overlay_stream_id, chunk_data)
+        .await?;
+
+    info!(
+        "Published {} chunk {} ({} bytes) to stream {}",
+        chunk_type_str,
+        chunk.sequence,
+        chunk.data.len(),
+        chunk.stream_id
+    );
+
+    Ok(())
+}
+
+/// Send a unified segment to the P2P network via GossipSub (efficient bincode format)
+///
+/// This is the preferred method for new code - it uses ~30-40% less bandwidth than JSON.
+#[allow(dead_code)]
+async fn send_segment_to_network(
+    overlay: &Libp2pOverlay,
+    segment: &StreamSegment,
+) -> Result<(), OverlayError> {
+    // Serialize using efficient bincode wire format
+    let wire_data = segment
+        .to_wire_bytes()
+        .map_err(|e| OverlayError::General(format!("Failed to serialize segment: {}", e)))?;
+
+    debug!(
+        "Publishing {} segment {} ({} bytes, bincode)",
+        segment.media_type,
+        segment.sequence,
+        wire_data.len(),
+    );
+
+    // Convert StreamId to overlay StreamId
+    let overlay_stream_id = OverlayStreamId::from_bytes(segment.stream_id.to_vec());
+
+    // Publish to GossipSub via the Overlay trait
+    overlay
+        .publish_stream_data(&overlay_stream_id, wire_data)
+        .await?;
+
+    info!(
+        "Published {} segment {} ({} bytes, bincode)",
+        segment.media_type,
+        segment.sequence,
+        segment.data.len(),
+    );
 
     Ok(())
 }

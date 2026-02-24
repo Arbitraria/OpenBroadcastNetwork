@@ -2,7 +2,15 @@
 //!
 //! This module provides the `StreamPublisher` which reads media from a source
 //! and publishes it to the P2P overlay network.
+//!
+//! The publisher supports two serialization formats:
+//! - Legacy JSON format via `MediaChunk` (for backward compatibility)
+//! - New bincode format via `WireSegment` (more efficient, preferred)
 
+use crate::media::segment::{
+    MediaType, SegmentBuilder, StreamId as UnifiedStreamId, StreamSegment,
+};
+use crate::media::wire_format::{ToWireFormat, WireSegment};
 use crate::media::{ChunkBuilder, MediaChunk, Mp4Parser, StreamId, StreamMetadata};
 use crate::overlay::interface::{Overlay, OverlayError, StreamId as OverlayStreamId};
 use std::path::Path;
@@ -35,7 +43,8 @@ pub struct StreamPublisher<O: Overlay + Send + Sync> {
 impl<O: Overlay + Send + Sync> StreamPublisher<O> {
     pub fn new(overlay: Arc<O>, _title: String) -> Self {
         let stream_id = StreamId::generate();
-        let overlay_stream_id = OverlayStreamId::from_bytes(stream_id.as_str().as_bytes().to_vec());
+        // Use from_string directly for cleaner conversion
+        let overlay_stream_id = OverlayStreamId::from_string(stream_id.as_str());
         let chunk_builder = ChunkBuilder::new(stream_id.clone());
         let (stop_signal, _) = broadcast::channel(1);
 
@@ -169,6 +178,25 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
             .publish_stream_data(&self.overlay_stream_id, data)
             .await?;
         Ok(())
+    }
+
+    /// Publish a unified StreamSegment using the efficient bincode wire format
+    ///
+    /// This is the preferred method for new code. It uses the `WireSegment`
+    /// format which is 30-40% smaller than JSON.
+    pub async fn publish_segment(&self, segment: &StreamSegment) -> Result<(), PublisherError> {
+        let wire_bytes = segment
+            .to_wire_bytes()
+            .map_err(|e| PublisherError::Media(format!("Failed to serialize segment: {:?}", e)))?;
+        self.overlay
+            .publish_stream_data(&self.overlay_stream_id, wire_bytes)
+            .await?;
+        Ok(())
+    }
+
+    /// Get a unified stream ID for use with the new segment types
+    pub fn unified_stream_id(&self) -> UnifiedStreamId {
+        UnifiedStreamId::new(self.stream_id.as_str())
     }
 
     pub fn stop(&self) {

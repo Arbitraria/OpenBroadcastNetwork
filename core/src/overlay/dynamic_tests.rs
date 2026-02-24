@@ -20,7 +20,7 @@ mod dynamic_tests {
 
     // Helper to create a StreamId
     fn create_stream_id(id: &str) -> StreamId {
-        StreamId(id.as_bytes().to_vec())
+        StreamId::from_string(id)
     }
 
     // Helper to create a peer with basic info

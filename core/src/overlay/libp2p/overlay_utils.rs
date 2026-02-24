@@ -103,7 +103,7 @@ pub async fn connect_peer(
 ) -> Result<(), OverlayError> {
     debug!("Connecting to peer {}", peer_id);
 
-    let libp2p_peer_id = to_libp2p_peer_id(peer_id)?;
+    let libp2p_peer_id = to_libp2p_peer_id(peer_id);
 
     let mut swarm_lock = swarm.lock().await;
     let swarm = match &mut *swarm_lock {
@@ -145,7 +145,7 @@ pub async fn disconnect_peer(
 ) -> Result<(), OverlayError> {
     debug!("Disconnecting from peer {}", peer_id);
 
-    let libp2p_peer_id = to_libp2p_peer_id(peer_id)?;
+    let libp2p_peer_id = to_libp2p_peer_id(peer_id);
 
     let mut swarm_lock = swarm.lock().await;
     let swarm = match &mut *swarm_lock {
@@ -295,7 +295,8 @@ pub async fn connect_peer_impl(
     {
         let mut swarm_lock = overlay.swarm.lock().await;
         if let Some(swarm) = &mut *swarm_lock {
-            swarm.dial(multiaddr.clone())
+            swarm
+                .dial(multiaddr.clone())
                 .map_err(|e| OverlayError::ConnectionError(format!("Failed to dial: {}", e)))?;
         } else {
             return Err(OverlayError::NotRunning);
@@ -329,8 +330,8 @@ pub async fn disconnect_peer_impl(
 ) -> Result<(), OverlayError> {
     debug!("Disconnecting from peer: {}", peer_id);
 
-    // Convert to libp2p peer ID
-    let libp2p_peer_id = to_libp2p_peer_id(peer_id)?;
+    // Convert to libp2p peer ID (zero-cost)
+    let _libp2p_peer_id = to_libp2p_peer_id(peer_id);
 
     // For now, this is a placeholder implementation
     // In a full implementation, this would:

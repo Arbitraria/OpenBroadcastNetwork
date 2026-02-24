@@ -1,13 +1,19 @@
 //! Event handlers for the libp2p overlay
 //!
 //! This module contains handlers for libp2p network events used by the overlay implementation.
+//!
+//! Supports both legacy JSON-serialized `MediaChunk` and new bincode `WireSegment` formats,
+//! with automatic format detection for backward compatibility.
 
 // Core library imports
 use futures::SinkExt;
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // Local imports
+use crate::media::segment::MediaType;
+use crate::media::wire_format::WireSegment;
+use crate::media::MediaChunk;
 use crate::overlay::interface::{OverlayError, OverlayEvent};
 use crate::overlay::libp2p::behavior::OverlayBehaviorEvent;
 use crate::overlay::libp2p::impl_core::Libp2pOverlay;
@@ -34,7 +40,7 @@ impl Libp2pOverlay {
 
         // Poll for events using futures::StreamExt
         use futures::StreamExt;
-        
+
         // Use timeout to avoid holding the lock indefinitely, allowing other tasks to access the swarm
         match tokio::time::timeout(Duration::from_millis(10), swarm.next()).await {
             Ok(Some(event)) => match event {
@@ -157,7 +163,7 @@ impl Libp2pOverlay {
             },
             Ok(None) => {
                 debug!("Swarm stream ended");
-            },
+            }
             Err(_) => {
                 // Timeout exceeded, release lock to allow other tasks to access swarm
             }
@@ -202,22 +208,82 @@ impl Libp2pOverlay {
                 // Check if this is a stream data message
                 if let Some(stream_id) = topics::parse_stream_id(topic) {
                     if topic.ends_with("/data") {
-                        debug!("Received data message for stream {}", stream_id);
+                        debug!(
+                            "Received data message for stream {} ({} bytes)",
+                            stream_id,
+                            data.len()
+                        );
+
+                        // Try to deserialize - first try bincode WireSegment (new format),
+                        // then fall back to JSON MediaChunk (legacy format)
+                        let (sequence, timestamp, is_keyframe, content_type) = if let Ok(
+                            wire_segment,
+                        ) =
+                            WireSegment::from_bytes(&data)
+                        {
+                            // New bincode format
+                            debug!(
+                                "Deserialized WireSegment: type={}, seq={}, keyframe={}",
+                                wire_segment.media_type,
+                                wire_segment.sequence,
+                                wire_segment.is_keyframe
+                            );
+                            let content_type = match MediaType::from_u8(wire_segment.media_type) {
+                                Some(MediaType::Video) => "video/h264",
+                                Some(MediaType::Audio) => "audio/opus",
+                                Some(MediaType::Metadata) => "application/json",
+                                Some(MediaType::Initialization) => "video/mp4",
+                                None => "application/octet-stream",
+                            };
+                            (
+                                wire_segment.sequence,
+                                wire_segment.pts_us / 1000, // convert us to ms
+                                wire_segment.is_keyframe,
+                                content_type.to_string(),
+                            )
+                        } else if let Ok(media_chunk) = MediaChunk::from_bytes(&data) {
+                            // Legacy JSON format
+                            debug!(
+                                "Deserialized MediaChunk (legacy): type={:?}, seq={}, keyframe={}",
+                                media_chunk.chunk_type,
+                                media_chunk.sequence,
+                                media_chunk.is_keyframe
+                            );
+                            let content_type = match media_chunk.chunk_type {
+                                crate::media::ChunkType::Video => "video/h264",
+                                crate::media::ChunkType::Audio => "audio/opus",
+                                crate::media::ChunkType::Metadata => "application/json",
+                            };
+                            (
+                                media_chunk.sequence,
+                                media_chunk.timestamp,
+                                media_chunk.is_keyframe,
+                                content_type.to_string(),
+                            )
+                        } else {
+                            warn!("Failed to deserialize as WireSegment or MediaChunk, using defaults");
+                            (
+                                0,
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                false,
+                                "application/octet-stream".to_string(),
+                            )
+                        };
 
                         // Forward to relay
                         let relay_node = self.relay.relay_node();
                         let chunk = StreamChunk {
-                            id: 0, // Chunk ID would be generated/extracted from message
+                            id: sequence,
                             stream_id: stream_id.clone(),
-                            data: data.clone(), // Clone data for chunk
-                            timestamp: std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                            sequence: 0, // Sequence number would be extracted from message
-                            content_type: "application/octet-stream".to_string(), // Default content type
-                            is_keyframe: false, // Would be determined from message metadata
-                            source: Some(to_libp2p_peer_id(&source_peer_id)?),
+                            data: bytes::Bytes::from(data.clone()),
+                            timestamp,
+                            sequence,
+                            content_type,
+                            is_keyframe,
+                            source: Some(to_libp2p_peer_id(&source_peer_id)),
                         };
 
                         relay_node.publish_chunk(chunk).await?;
@@ -257,8 +323,8 @@ impl Libp2pOverlay {
                     // If it's a data topic, add as subscriber
                     if topic.as_str().ends_with("/data") {
                         let relay_node = self.relay.relay_node();
-                        // Convert LocalPeerId to libp2p::PeerId before passing to relay_node
-                        let libp2p_peer_id = to_libp2p_peer_id(&peer_id)?;
+                        // Convert LocalPeerId to libp2p::PeerId (zero-cost)
+                        let libp2p_peer_id = to_libp2p_peer_id(&peer_id);
                         relay_node
                             .add_subscriber(&stream_id, libp2p_peer_id)
                             .await?;
@@ -275,8 +341,8 @@ impl Libp2pOverlay {
                     // If it's a data topic, remove as subscriber
                     if topic.as_str().ends_with("/data") {
                         let relay_node = self.relay.relay_node();
-                        // Convert LocalPeerId to libp2p::PeerId before passing to relay_node
-                        let libp2p_peer_id = to_libp2p_peer_id(&peer_id)?;
+                        // Convert LocalPeerId to libp2p::PeerId (zero-cost)
+                        let libp2p_peer_id = to_libp2p_peer_id(&peer_id);
                         relay_node
                             .remove_subscriber(&stream_id, &libp2p_peer_id)
                             .await?;

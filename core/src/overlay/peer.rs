@@ -4,52 +4,58 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::fmt;
 use std::hash::Hash;
 use std::time::{Duration, Instant};
 
 /// A unique peer identifier
 ///
-/// This is a wrapper around a byte vector that represents a peer's unique identifier.
-/// It implements common traits like Debug, Clone, PartialEq, Eq, Hash, Serialize, and Deserialize.
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct LocalPeerId(pub Vec<u8>);
+/// This is a wrapper around libp2p::PeerId that provides zero-cost conversions
+/// and custom serialization. By wrapping PeerId directly (instead of Vec<u8>),
+/// we avoid fallible conversions and expensive byte copies.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct LocalPeerId(pub libp2p::PeerId);
 
 impl LocalPeerId {
     /// Create a new random peer ID
     pub fn new_random() -> Self {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let mut bytes = vec![0u8; 32];
-        rng.fill(&mut bytes[..]);
-        Self(bytes)
+        // Generate a random Ed25519 keypair and derive peer ID from it
+        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        Self(keypair.public().to_peer_id())
     }
 
-    /// Create a peer ID from a byte vector
-    pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self(bytes)
+    /// Create a LocalPeerId from a libp2p::PeerId
+    pub fn new(peer_id: libp2p::PeerId) -> Self {
+        Self(peer_id)
     }
 
-    /// Create a peer ID from a string
-    pub fn from_string(s: &str) -> Self {
-        Self(s.as_bytes().to_vec())
+    /// Create a peer ID from a byte slice (fallible)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        libp2p::PeerId::from_bytes(bytes)
+            .map(Self)
+            .map_err(|e| format!("Failed to parse PeerId: {}", e))
     }
 
-    /// Get the inner bytes
-    pub fn as_bytes(&self) -> &[u8] {
+    /// Create a peer ID from a base58 string
+    pub fn from_base58(s: &str) -> Result<Self, String> {
+        s.parse::<libp2p::PeerId>()
+            .map(Self)
+            .map_err(|e| format!("Failed to parse PeerId from base58: {}", e))
+    }
+
+    /// Get the inner libp2p::PeerId
+    pub fn inner(&self) -> &libp2p::PeerId {
         &self.0
+    }
+
+    /// Get the bytes representation of the peer ID
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.0.to_bytes()
     }
 
     /// Convert to a base58 string (compatible with libp2p)
     pub fn to_base58(&self) -> String {
-        bs58::encode(&self.0).into_string()
-    }
-
-    /// Create from a base58 string
-    pub fn from_base58(s: &str) -> Result<Self, bs58::decode::Error> {
-        let bytes = bs58::decode(s).into_vec()?;
-        Ok(Self(bytes))
+        self.0.to_base58()
     }
 
     /// Get a shortened version of the peer ID for display
@@ -75,37 +81,54 @@ impl fmt::Display for LocalPeerId {
     }
 }
 
-// Implement conversion from libp2p::PeerId to LocalPeerId
+// Zero-cost conversion from libp2p::PeerId to LocalPeerId
 impl From<libp2p::PeerId> for LocalPeerId {
     fn from(peer_id: libp2p::PeerId) -> Self {
-        Self(peer_id.to_bytes())
+        Self(peer_id)
     }
 }
 
-// Implement conversion from &libp2p::PeerId to LocalPeerId
+// Zero-cost conversion from &libp2p::PeerId to LocalPeerId
 impl From<&libp2p::PeerId> for LocalPeerId {
     fn from(peer_id: &libp2p::PeerId) -> Self {
-        Self(peer_id.to_bytes())
+        Self(*peer_id)
     }
 }
 
-// Implement conversion from LocalPeerId to libp2p::PeerId (fallible)
-impl TryFrom<LocalPeerId> for libp2p::PeerId {
-    type Error = String;
-
-    fn try_from(peer_id: LocalPeerId) -> Result<Self, Self::Error> {
-        libp2p::PeerId::from_bytes(&peer_id.0)
-            .map_err(|e| format!("Failed to convert to PeerId: {}", e))
+// Zero-cost conversion from LocalPeerId to libp2p::PeerId (infallible now!)
+impl From<LocalPeerId> for libp2p::PeerId {
+    fn from(peer_id: LocalPeerId) -> Self {
+        peer_id.0
     }
 }
 
-// Implement conversion from &LocalPeerId to libp2p::PeerId (fallible)
-impl TryFrom<&LocalPeerId> for libp2p::PeerId {
-    type Error = String;
+// Zero-cost conversion from &LocalPeerId to libp2p::PeerId (infallible now!)
+impl From<&LocalPeerId> for libp2p::PeerId {
+    fn from(peer_id: &LocalPeerId) -> Self {
+        peer_id.0
+    }
+}
 
-    fn try_from(peer_id: &LocalPeerId) -> Result<Self, Self::Error> {
-        libp2p::PeerId::from_bytes(&peer_id.0)
-            .map_err(|e| format!("Failed to convert to PeerId: {}", e))
+// Custom serialization - serialize as base58 string for JSON compatibility
+impl Serialize for LocalPeerId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0.to_base58())
+    }
+}
+
+// Custom deserialization - deserialize from base58 string
+impl<'de> Deserialize<'de> for LocalPeerId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<libp2p::PeerId>()
+            .map(Self)
+            .map_err(serde::de::Error::custom)
     }
 }
 

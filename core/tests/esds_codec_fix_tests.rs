@@ -410,9 +410,9 @@ fn create_esds_with_extended_encoding() -> Vec<u8> {
     // DecSpecificInfo (AudioSpecificConfig)
     esds_content.push(0x05); // tag
     esds_content.extend_from_slice(&[0x80, 0x80, 0x80, 0x02]); // Extended length (2 bytes)
-    // AudioSpecificConfig: AAC-LC, 48kHz, stereo
-    // audioObjectType=2 (5 bits) | samplingFrequencyIndex=3 (4 bits) | channelConfiguration=2 (4 bits) | ...
-    // 00010 | 0011 | 0010 = 0x11 0x90
+                                                               // AudioSpecificConfig: AAC-LC, 48kHz, stereo
+                                                               // audioObjectType=2 (5 bits) | samplingFrequencyIndex=3 (4 bits) | channelConfiguration=2 (4 bits) | ...
+                                                               // 00010 | 0011 | 0010 = 0x11 0x90
     esds_content.extend_from_slice(&[0x11, 0x90]);
 
     // SLConfigDescriptor

@@ -370,4 +370,19 @@ impl FFmpegVideoReader {
         debug!("Generated fMP4 media segment: {} bytes", segment.len());
         Ok(segment)
     }
+
+    /// Convert an FFmpegSample to a StreamSegment
+    ///
+    /// This is a helper method for the unified type migration.
+    /// The `media_type` parameter specifies whether this is video or audio.
+    pub fn sample_to_stream_segment(
+        sample: &FFmpegSample,
+        stream_id: crate::media::segment::StreamId,
+        sequence: u64,
+        media_type: crate::media::segment::MediaType,
+    ) -> crate::media::segment::StreamSegment {
+        crate::media::segment::StreamSegment::from_ffmpeg_sample(
+            sample, stream_id, sequence, media_type,
+        )
+    }
 }

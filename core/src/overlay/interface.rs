@@ -126,8 +126,11 @@ pub enum OverlayError {
 }
 
 /// A unique stream identifier
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct StreamId(pub Vec<u8>);
+///
+/// Uses `bytes::Bytes` for zero-copy cloning, which is important for performance
+/// when stream IDs are frequently cloned (e.g., in hash map operations).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StreamId(pub bytes::Bytes);
 
 impl StreamId {
     /// Create a new random stream ID
@@ -136,32 +139,72 @@ impl StreamId {
         let mut rng = rand::thread_rng();
         let mut bytes = vec![0u8; 16];
         rng.fill(&mut bytes[..]);
-        Self(bytes)
+        Self(bytes::Bytes::from(bytes))
     }
 
     /// Create a stream ID from a byte vector
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes::Bytes::from(bytes))
+    }
+
+    /// Create a stream ID from a Bytes object (zero-copy)
+    pub fn from_bytes_ref(bytes: bytes::Bytes) -> Self {
         Self(bytes)
     }
 
     /// Create a stream ID from a string
     pub fn from_string(s: &str) -> Self {
-        Self(s.as_bytes().to_vec())
+        Self(bytes::Bytes::from(s.to_owned()))
     }
 
-    /// Get the inner bytes
+    /// Get the inner bytes as a slice
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Get the inner Bytes object (zero-copy clone)
+    pub fn bytes(&self) -> bytes::Bytes {
+        self.0.clone()
+    }
+
+    /// Try to interpret as a UTF-8 string
+    pub fn as_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.0).ok()
     }
 }
 
 impl fmt::Display for StreamId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Convert the bytes to a hex string for display
-        for byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
+        // Try UTF-8 first, fall back to hex
+        match std::str::from_utf8(&self.0) {
+            Ok(s) => write!(f, "{}", s),
+            Err(_) => {
+                for byte in self.0.iter() {
+                    write!(f, "{:02x}", byte)?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
+    }
+}
+
+// Serialization support - serialize as bytes for binary formats
+impl Serialize for StreamId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for StreamId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Vec::deserialize(deserializer)?;
+        Ok(StreamId::from_bytes(bytes))
     }
 }
 

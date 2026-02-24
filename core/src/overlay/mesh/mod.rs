@@ -8,7 +8,7 @@ mod mesh;
 pub use mesh::{MeshNode, MeshStats, StreamMesh};
 
 use crate::overlay::interface::StreamId;
-use crate::overlay::peer::{LocalPeerId, PeerRole};
+use crate::overlay::peer::PeerRole;
 use libp2p::PeerId;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -79,8 +79,8 @@ impl Default for MeshConfig {
 /// Manages the mesh network for all streams
 #[derive(Debug)]
 pub struct MeshNetwork {
-    /// Local peer ID
-    pub local_peer_id: LocalPeerId,
+    /// Local peer ID (using libp2p::PeerId directly for efficiency)
+    pub local_peer_id: PeerId,
     /// Configuration
     pub config: MeshConfig,
     /// Meshes for each stream
@@ -89,7 +89,7 @@ pub struct MeshNetwork {
 
 impl MeshNetwork {
     /// Create a new mesh network manager
-    pub fn new(local_peer_id: LocalPeerId, config: MeshConfig) -> Self {
+    pub fn new(local_peer_id: PeerId, config: MeshConfig) -> Self {
         Self {
             local_peer_id,
             config,

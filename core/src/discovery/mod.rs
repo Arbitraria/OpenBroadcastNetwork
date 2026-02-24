@@ -16,10 +16,10 @@
 pub mod bootstrap;
 /// Distributed Hash Table (DHT) based peer discovery
 pub mod dht;
-/// Multicast DNS based local network peer discovery
-
 /// Core interfaces and types for peer discovery
 pub mod interface;
+/// Stream discovery for finding available streams in the network
+pub mod stream_discovery;
 
 #[cfg(test)]
 mod tests;
@@ -30,6 +30,9 @@ pub use interface::{Discovery, DiscoveryError, DiscoveryEvent, PeerInfo};
 // Re-export the discovery implementations
 pub use bootstrap::{BootstrapDiscovery, BootstrapDiscoveryConfig};
 pub use dht::{DhtDiscovery, DhtDiscoveryConfig};
+pub use stream_discovery::{
+    StreamAnnouncement, StreamDiscovery, StreamDiscoveryConfig, STREAM_ANNOUNCE_TOPIC,
+};
 
 use std::collections::HashMap;
 use std::sync::Arc;

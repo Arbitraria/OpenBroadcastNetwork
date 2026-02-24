@@ -27,6 +27,10 @@ pub enum VideoReaderError {
 pub type Result<T> = std::result::Result<T, VideoReaderError>;
 
 /// Represents a media sample (video frame or audio frame)
+///
+/// **DEPRECATED**: Use [`crate::media::segment::StreamSegment`] instead.
+/// Convert using `StreamSegment::from_media_sample()`.
+#[deprecated(since = "0.2.0", note = "Use media::segment::StreamSegment instead")]
 #[derive(Debug, Clone)]
 pub struct MediaSample {
     pub data: Vec<u8>,
@@ -298,6 +302,29 @@ impl VideoReader {
     /// Prepare audio sample (pass through)
     pub fn prepare_audio_sample(&self, sample: &MediaSample) -> Result<Vec<u8>> {
         Ok(sample.data.clone())
+    }
+
+    /// Read all samples and convert to unified StreamSegments
+    ///
+    /// This is the new unified API that returns `StreamSegment` types
+    /// for use throughout the system.
+    pub fn read_all_stream_segments(
+        &mut self,
+        stream_id: crate::media::segment::StreamId,
+    ) -> Result<Vec<crate::media::segment::StreamSegment>> {
+        let samples = self.read_all_samples()?;
+        let mut result = Vec::with_capacity(samples.len());
+
+        for (i, sample) in samples.iter().enumerate() {
+            let segment = crate::media::segment::StreamSegment::from_media_sample(
+                sample,
+                stream_id.clone(),
+                i as u64,
+            );
+            result.push(segment);
+        }
+
+        Ok(result)
     }
 }
 

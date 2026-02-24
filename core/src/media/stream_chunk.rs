@@ -1,13 +1,27 @@
 //! Streaming chunk format for decentralized media distribution
 //!
-//! This module defines the format for media chunks that are transmitted
-//! over the P2P network. Each chunk contains encoded media data along
-//! with metadata for proper reconstruction and playback.
+//! **DEPRECATED**: This module contains legacy types for backward compatibility.
+//! New code should use the unified types from [`crate::media::segment`]:
+//! - [`crate::media::segment::StreamSegment`] instead of [`MediaChunk`]
+//! - [`crate::media::segment::StreamId`] instead of [`StreamId`]
+//! - [`crate::media::segment::MediaType`] instead of [`ChunkType`]
+//!
+//! For P2P transmission, use [`crate::media::wire_format::WireSegment`] which
+//! provides more efficient bincode serialization (30-40% smaller than JSON).
+//!
+//! This module will be removed in a future version.
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Unique identifier for a stream
+///
+/// **DEPRECATED**: Use [`crate::media::segment::StreamId`] instead, which provides
+/// zero-copy cloning via `bytes::Bytes` and better performance.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use media::segment::StreamId instead for better performance"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StreamId(pub String);
 
@@ -36,7 +50,36 @@ impl std::fmt::Display for StreamId {
     }
 }
 
+// Type conversions between media::StreamId and overlay::StreamId
+impl From<&StreamId> for crate::overlay::interface::StreamId {
+    fn from(media_id: &StreamId) -> Self {
+        crate::overlay::interface::StreamId::from_bytes(media_id.as_str().as_bytes().to_vec())
+    }
+}
+
+impl From<StreamId> for crate::overlay::interface::StreamId {
+    fn from(media_id: StreamId) -> Self {
+        crate::overlay::interface::StreamId::from_bytes(media_id.as_str().as_bytes().to_vec())
+    }
+}
+
+impl From<&crate::overlay::interface::StreamId> for StreamId {
+    fn from(overlay_id: &crate::overlay::interface::StreamId) -> Self {
+        StreamId::new(String::from_utf8_lossy(overlay_id.as_bytes()).to_string())
+    }
+}
+
+impl From<crate::overlay::interface::StreamId> for StreamId {
+    fn from(overlay_id: crate::overlay::interface::StreamId) -> Self {
+        StreamId::new(String::from_utf8_lossy(overlay_id.as_bytes()).to_string())
+    }
+}
+
 /// Type of media chunk
+///
+/// **DEPRECATED**: Use [`crate::media::segment::MediaType`] instead, which also includes
+/// an `Initialization` variant for fMP4 init segments.
+#[deprecated(since = "0.2.0", note = "Use media::segment::MediaType instead")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChunkType {
     /// Video data (H.264)
@@ -48,6 +91,15 @@ pub enum ChunkType {
 }
 
 /// Media chunk for streaming
+///
+/// **DEPRECATED**: Use [`crate::media::segment::StreamSegment`] instead, which provides:
+/// - Microsecond-precision timestamps
+/// - Zero-copy data via `bytes::Bytes`
+/// - Track identification for multi-track streams
+/// - Efficient bincode serialization via [`crate::media::wire_format::WireSegment`]
+///
+/// Convert to/from `StreamSegment` using the `From` trait implementations.
+#[deprecated(since = "0.2.0", note = "Use media::segment::StreamSegment instead")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaChunk {
     /// Stream identifier
@@ -186,7 +238,11 @@ fn current_timestamp_ms() -> u64 {
 }
 
 /// Stream chunk builder for easier construction
+///
+/// **DEPRECATED**: Use [`crate::media::segment::SegmentBuilder`] instead.
+#[deprecated(since = "0.2.0", note = "Use media::segment::SegmentBuilder instead")]
 pub struct ChunkBuilder {
+    #[allow(deprecated)]
     stream_id: StreamId,
     video_sequence: u64,
     audio_sequence: u64,

@@ -791,7 +791,7 @@ mod tests {
     use crate::overlay::topology::Region;
 
     fn create_stream_id(id: &str) -> StreamId {
-        StreamId(id.as_bytes().to_vec())
+        StreamId::from_string(id)
     }
 
     #[test]

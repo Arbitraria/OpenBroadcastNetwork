@@ -2,25 +2,23 @@
 //!
 //! This module contains utility functions like peer ID conversion
 
-use crate::overlay::interface::OverlayError;
 use crate::overlay::peer::LocalPeerId;
 use libp2p::PeerId as Libp2pPeerId;
 use serde::de::{self, Visitor};
 use serde::{Deserializer, Serializer};
-use std::convert::TryFrom;
 use std::fmt;
 use std::str::FromStr;
 
-/// Convert our LocalPeerId to libp2p's PeerId
-pub fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<Libp2pPeerId, OverlayError> {
-    // Use the TryFrom trait implementation
-    Libp2pPeerId::try_from(peer_id)
-        .map_err(|e| OverlayError::Other(format!("Invalid peer ID: {}", e)))
+/// Convert our LocalPeerId to libp2p's PeerId (zero-cost, infallible)
+///
+/// Since LocalPeerId now wraps libp2p::PeerId directly, this conversion
+/// is always valid and never fails.
+pub fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Libp2pPeerId {
+    Libp2pPeerId::from(peer_id)
 }
 
-/// Convert libp2p's PeerId to our LocalPeerId
+/// Convert libp2p's PeerId to our LocalPeerId (zero-cost)
 pub fn from_libp2p_peer_id(peer_id: &Libp2pPeerId) -> LocalPeerId {
-    // Use the From trait implementation
     LocalPeerId::from(peer_id)
 }
 
