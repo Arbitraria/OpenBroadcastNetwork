@@ -17,6 +17,7 @@ use OpenBroadcastNetwork_core::prelude::*;
 use OpenBroadcastNetwork_node::visualization::*;
 use OpenBroadcastNetwork_node::{StreamingDemo, StreamingDemoConfig};
 
+mod bootstrap_server;
 mod web_server;
 use web_server::{WebServer, WebServerConfig};
 
@@ -161,13 +162,36 @@ enum Commands {
         #[clap(long)]
         video: Option<String>,
 
-        /// Connect to P2P stream with this Stream ID
+        /// Connect to P2P stream with this Stream ID (subscriber mode)
         #[clap(long)]
         stream_id: Option<String>,
+
+        /// Publish local video to P2P network (publisher mode)
+        #[clap(long, action)]
+        publish: bool,
 
         /// Enable DHT discovery for P2P mode
         #[clap(short = 'D', long, action)]
         dht: bool,
+    },
+
+    /// Run as a bootstrap server for peer discovery
+    BootstrapServer {
+        /// Port to listen on
+        #[clap(short, long, default_value = "9000")]
+        port: u16,
+
+        /// Listen address
+        #[clap(short, long, default_value = "0.0.0.0")]
+        listen: String,
+
+        /// Peer expiration time in seconds
+        #[clap(long, default_value = "3600")]
+        peer_expiration: u64,
+
+        /// Maximum number of peers to track
+        #[clap(long, default_value = "1000")]
+        max_peers: usize,
     },
 }
 
@@ -409,9 +433,13 @@ async fn run_web_viewer(
     enable_cors: bool,
     video_file: Option<String>,
     stream_id: Option<String>,
+    publish: bool,
     enable_dht: bool,
 ) -> Result<(), anyhow::Error> {
     info!("Starting web viewer server on {}:{}", host, port);
+
+    // Determine P2P mode: either subscribing to a stream_id or publishing a local video
+    let enable_p2p = stream_id.is_some() || (publish && video_file.is_some());
 
     // Create web server configuration
     let config = WebServerConfig {
@@ -420,13 +448,14 @@ async fn run_web_viewer(
         web_root: PathBuf::from(web_root),
         enable_cors,
         video_file: video_file.as_ref().map(|v| PathBuf::from(v)),
-        enable_p2p: stream_id.is_some(), // Enable P2P if stream_id is provided
+        enable_p2p,
         p2p_fallback: true,
     };
 
-    // Create server with P2P support if stream_id is provided
-    let (server, stream_manager, p2p_node) = if let Some(sid) = stream_id {
-        info!("P2P streaming mode enabled for stream: {}", sid);
+    // Create server with P2P support
+    let (server, stream_manager, p2p_node) = if let Some(sid) = stream_id.clone() {
+        // Subscriber mode: connect to an existing P2P stream
+        info!("📡 P2P subscriber mode enabled for stream: {}", sid);
 
         // Create P2P overlay for receiving streams
         let node = RunningNode::new(
@@ -438,7 +467,58 @@ async fn run_web_viewer(
         .await?;
         node.overlay.start().await?;
 
-        let stream_id_obj = StreamId::new(sid);
+        // Connect to bootstrap nodes
+        for bootstrap in &bootstrap_nodes {
+            info!("Connecting to bootstrap node: {}", bootstrap);
+            if let Err(e) = Overlay::connect_peer(node.overlay.as_ref(), bootstrap.as_str()).await {
+                warn!("Failed to connect to bootstrap {}: {}", bootstrap, e);
+            }
+        }
+
+        let stream_id_obj = StreamId::new(sid.clone());
+        let stream_manager = Arc::new(web_server::StreamManager::with_p2p(
+            node.overlay.clone(),
+            stream_id_obj,
+        ));
+
+        let config_clone = config.clone();
+        let app_state = web_server::AppState {
+            config: config_clone,
+            stream_manager: stream_manager.clone(),
+            clients: Arc::new(RwLock::new(HashMap::new())),
+        };
+
+        let server = web_server::WebServer::new_with_state(config, app_state);
+        info!("📡 Subscribing to stream: {}", sid);
+        info!("Other nodes can publish with: --stream-id {}", sid);
+        (server, stream_manager, Some(node))
+    } else if publish && video_file.is_some() {
+        // Publisher mode: create a new stream and publish local video to P2P
+        info!("📡 P2P publisher mode enabled");
+
+        // Create P2P overlay for publishing streams
+        let node = RunningNode::new(
+            PeerRole::Publisher,
+            enable_dht,
+            false,
+            bootstrap_nodes.clone(),
+        )
+        .await?;
+        node.overlay.start().await?;
+
+        // Connect to bootstrap nodes so other peers can discover this stream
+        for bootstrap in &bootstrap_nodes {
+            info!("Connecting to bootstrap node: {}", bootstrap);
+            if let Err(e) = Overlay::connect_peer(node.overlay.as_ref(), bootstrap.as_str()).await {
+                warn!("Failed to connect to bootstrap {}: {}", bootstrap, e);
+            }
+        }
+
+        // Generate a new stream ID for publishing
+        let stream_id_obj = StreamId::generate();
+        info!("📡 Publishing stream with ID: {}", stream_id_obj);
+        info!("Other nodes can subscribe with: --stream-id {}", stream_id_obj);
+
         let stream_manager = Arc::new(web_server::StreamManager::with_p2p(
             node.overlay.clone(),
             stream_id_obj,
@@ -897,6 +977,7 @@ async fn main() -> Result<(), anyhow::Error> {
             cors,
             video,
             stream_id,
+            publish,
             dht,
         } => {
             let bootstrap_nodes = bootstrap.clone().unwrap_or_else(Vec::new);
@@ -908,9 +989,26 @@ async fn main() -> Result<(), anyhow::Error> {
                 *cors,
                 video.clone(),
                 stream_id.clone(),
+                *publish,
                 *dht,
             )
             .await?;
+        }
+        Commands::BootstrapServer {
+            port,
+            listen,
+            peer_expiration,
+            max_peers,
+        } => {
+            let config = bootstrap_server::BootstrapServerConfig {
+                listen_addr: listen.clone(),
+                port: *port,
+                max_peers: *max_peers,
+                peer_expiration: Duration::from_secs(*peer_expiration),
+            };
+
+            let mut server = bootstrap_server::BootstrapServer::new(config);
+            server.run().await.map_err(|e| anyhow::anyhow!("{}", e))?;
         }
     }
 
