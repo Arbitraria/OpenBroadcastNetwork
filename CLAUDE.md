@@ -123,6 +123,25 @@ cargo run -p OpenBroadcastNetwork-node -- status
 cargo run -p OpenBroadcastNetwork-node -- visualize --format text
 ```
 
+### P2P Streaming Commands
+```bash
+# Start bootstrap server for peer discovery (DHT-based)
+cargo run -p OpenBroadcastNetwork-node -- bootstrap-server --port 9000
+
+# Start web viewer as publisher (streams local video to P2P network)
+cargo run -p OpenBroadcastNetwork-node -- web-viewer \
+  --port 9080 --video test_simple.mp4 --publish \
+  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<PEER_ID>
+
+# Start web viewer as subscriber (receives P2P stream)
+cargo run -p OpenBroadcastNetwork-node -- web-viewer \
+  --port 9081 --stream-id <STREAM_ID> \
+  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<PEER_ID>
+
+# Web viewer for local playback only (no P2P)
+cargo run -p OpenBroadcastNetwork-node -- web-viewer --port 8080 --video sample.mp4
+```
+
 ## Logging and Debugging
 
 ### Server Logs Location

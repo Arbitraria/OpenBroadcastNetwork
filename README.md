@@ -59,6 +59,29 @@ cargo run -p OpenBroadcastNetwork-node -- visualize --node 127.0.0.1:9000 --form
 - **`status`**: Display network status with beautiful Unicode formatting
 - **`list-streams`**: Show active streams in the network
 - **`visualize`**: Generate network topology in multiple formats (text, dot, json)
+- **`bootstrap-server`**: Run a DHT bootstrap server for peer discovery
+- **`web-viewer`**: Web-based video viewer with P2P streaming support
+
+### P2P Streaming
+
+Stream video peer-to-peer with automatic discovery via Kademlia DHT:
+
+```bash
+# Terminal 1: Start bootstrap server for peer discovery
+cargo run -p OpenBroadcastNetwork-node -- bootstrap-server --port 9000
+
+# Terminal 2: Publisher - stream a video file (note the Peer ID from bootstrap output)
+cargo run -p OpenBroadcastNetwork-node -- web-viewer \
+  --port 9080 --video test_simple.mp4 --publish \
+  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<BOOTSTRAP_PEER_ID>
+
+# Terminal 3: Subscriber - watch the stream (use Stream ID from publisher output)
+cargo run -p OpenBroadcastNetwork-node -- web-viewer \
+  --port 9081 --stream-id <STREAM_ID> \
+  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<BOOTSTRAP_PEER_ID>
+```
+
+Open `http://127.0.0.1:9080` (publisher) or `http://127.0.0.1:9081` (subscriber) in a browser.
 
 ## Development
 
