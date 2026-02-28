@@ -192,6 +192,18 @@ enum Commands {
         /// Maximum number of peers to track
         #[clap(long, default_value = "1000")]
         max_peers: usize,
+
+        /// Enable circuit relay v2 server for NAT traversal
+        #[clap(long, action, default_value = "true")]
+        relay_server: bool,
+
+        /// Maximum relay reservations
+        #[clap(long, default_value = "128")]
+        max_reservations: usize,
+
+        /// Maximum active relay circuits
+        #[clap(long, default_value = "512")]
+        max_circuits: usize,
     },
 }
 
@@ -999,12 +1011,18 @@ async fn main() -> Result<(), anyhow::Error> {
             listen,
             peer_expiration,
             max_peers,
+            relay_server,
+            max_reservations,
+            max_circuits,
         } => {
             let config = bootstrap_server::BootstrapServerConfig {
                 listen_addr: listen.clone(),
                 port: *port,
                 max_peers: *max_peers,
                 peer_expiration: Duration::from_secs(*peer_expiration),
+                enable_relay: *relay_server,
+                max_reservations: *max_reservations,
+                max_circuits: *max_circuits,
             };
 
             let mut server = bootstrap_server::BootstrapServer::new(config);

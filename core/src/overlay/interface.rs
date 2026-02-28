@@ -305,6 +305,11 @@ pub struct OverlayConfig {
     pub rebalance_interval: Duration,
     /// Whether to enable geo-aware topology rebalancing
     pub enable_geo_aware: bool,
+    /// Whether to enable relay client for NAT traversal
+    pub enable_relay_client: bool,
+    /// Relay server address to use for NAT traversal (optional)
+    /// Format: /ip4/<ip>/tcp/<port>/p2p/<peer-id>
+    pub relay_server: Option<String>,
 }
 
 impl Default for OverlayConfig {
@@ -321,6 +326,8 @@ impl Default for OverlayConfig {
             heartbeat_interval: Duration::from_secs(15),
             rebalance_interval: Duration::from_secs(60),
             enable_geo_aware: true,
+            enable_relay_client: true,
+            relay_server: None,
         }
     }
 }

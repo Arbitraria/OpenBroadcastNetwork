@@ -23,9 +23,12 @@ use crate::overlay::peer::Peer;
 use crate::overlay::relay::StreamChunk;
 
 // External dependencies
+use libp2p::autonat;
+use libp2p::dcutr;
 use libp2p::gossipsub::Event as GossipsubEvent;
 use libp2p::identify::Event as IdentifyEvent;
 use libp2p::kad::Event as KademliaEvent;
+use libp2p::relay;
 use libp2p::swarm::SwarmEvent;
 
 impl Libp2pOverlay {
@@ -186,6 +189,15 @@ impl Libp2pOverlay {
             }
             OverlayBehaviorEvent::Identify(identify_event) => {
                 self.handle_identify_event(identify_event).await?
+            }
+            OverlayBehaviorEvent::RelayClient(relay_event) => {
+                self.handle_relay_client_event(relay_event).await?
+            }
+            OverlayBehaviorEvent::Autonat(autonat_event) => {
+                self.handle_autonat_event(autonat_event).await?
+            }
+            OverlayBehaviorEvent::Dcutr(dcutr_event) => {
+                self.handle_dcutr_event(dcutr_event).await?
             }
         }
 
@@ -409,6 +421,89 @@ impl Libp2pOverlay {
             _ => {}
         }
 
+        Ok(())
+    }
+
+    /// Handle relay client events for NAT traversal
+    pub async fn handle_relay_client_event(
+        &self,
+        event: relay::client::Event,
+    ) -> Result<(), OverlayError> {
+        match event {
+            relay::client::Event::ReservationReqAccepted {
+                relay_peer_id,
+                renewal,
+                ..
+            } => {
+                if renewal {
+                    info!("Relay reservation renewed with {}", relay_peer_id);
+                } else {
+                    info!("Relay reservation accepted by {}", relay_peer_id);
+                }
+            }
+            relay::client::Event::OutboundCircuitEstablished {
+                relay_peer_id,
+                ..
+            } => {
+                info!("Outbound circuit established through relay {}", relay_peer_id);
+            }
+            relay::client::Event::InboundCircuitEstablished { src_peer_id, .. } => {
+                info!("Inbound circuit established from {}", src_peer_id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle AutoNAT events for NAT status detection
+    pub async fn handle_autonat_event(
+        &self,
+        event: autonat::Event,
+    ) -> Result<(), OverlayError> {
+        match event {
+            autonat::Event::StatusChanged { old, new } => {
+                info!("NAT status changed: {:?} -> {:?}", old, new);
+                match new {
+                    autonat::NatStatus::Public(addr) => {
+                        info!("NAT status: Public, reachable at {}", addr);
+                    }
+                    autonat::NatStatus::Private => {
+                        info!("NAT status: Private, using relay for connectivity");
+                    }
+                    autonat::NatStatus::Unknown => {
+                        debug!("NAT status: Unknown, probing...");
+                    }
+                }
+            }
+            autonat::Event::InboundProbe(probe) => {
+                debug!("AutoNAT inbound probe: {:?}", probe);
+            }
+            autonat::Event::OutboundProbe(probe) => {
+                debug!("AutoNAT outbound probe: {:?}", probe);
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle DCUtR events for direct connection upgrade through relay
+    pub async fn handle_dcutr_event(
+        &self,
+        event: dcutr::Event,
+    ) -> Result<(), OverlayError> {
+        // DCUtR Event has fields: remote_peer_id and result
+        match &event.result {
+            Ok(connection_id) => {
+                info!(
+                    "Direct connection upgrade succeeded with {} (connection: {:?})",
+                    event.remote_peer_id, connection_id
+                );
+            }
+            Err(error) => {
+                warn!(
+                    "Direct connection upgrade failed with {}: {}",
+                    event.remote_peer_id, error
+                );
+            }
+        }
         Ok(())
     }
 

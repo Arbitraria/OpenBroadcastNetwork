@@ -1,6 +1,5 @@
 use futures_util::StreamExt;
 use libp2p::{
-    core::Endpoint,
     identify::{Behaviour as Identify, Config as IdentifyConfig, Event as IdentifyEvent},
     identity::Keypair,
     kad::{
@@ -8,37 +7,24 @@ use libp2p::{
         Event as KademliaEvent, Mode,
     },
     noise,
-    swarm::{
-        ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, SwarmEvent, THandlerInEvent,
-        ToSwarm,
-    },
+    relay::{self, Config as RelayConfig},
+    swarm::SwarmEvent,
     tcp::Config as GenTcpConfig,
     Multiaddr, PeerId, SwarmBuilder,
 };
-use std::collections::{HashMap, VecDeque};
-use std::task::{Context, Poll};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-/// Combined network behavior for the bootstrap server
+/// Combined network behavior for the bootstrap server using derive macro
+/// for proper connection handler composition.
+#[derive(libp2p::swarm::NetworkBehaviour)]
+#[behaviour(to_swarm = "BootstrapBehaviorEvent")]
 struct BootstrapBehavior {
     identify: Identify,
     kademlia: Kademlia<MemoryStore>,
-    events: VecDeque<BootstrapBehaviorEvent>,
-}
-
-impl BootstrapBehavior {
-    fn new(identify: Identify, kademlia: Kademlia<MemoryStore>) -> Self {
-        Self {
-            identify,
-            kademlia,
-            events: VecDeque::new(),
-        }
-    }
-
-    fn queue_event(&mut self, event: BootstrapBehaviorEvent) {
-        self.events.push_back(event);
-    }
+    /// Circuit relay v2 server behavior for NAT traversal
+    relay: relay::Behaviour,
 }
 
 /// Events emitted by the combined bootstrap behavior
@@ -46,6 +32,7 @@ impl BootstrapBehavior {
 enum BootstrapBehaviorEvent {
     Identify(IdentifyEvent),
     Kademlia(KademliaEvent),
+    Relay(relay::Event),
 }
 
 impl From<IdentifyEvent> for BootstrapBehaviorEvent {
@@ -60,90 +47,9 @@ impl From<KademliaEvent> for BootstrapBehaviorEvent {
     }
 }
 
-impl NetworkBehaviour for BootstrapBehavior {
-    type ConnectionHandler = libp2p::swarm::dummy::ConnectionHandler;
-    type ToSwarm = BootstrapBehaviorEvent;
-
-    fn handle_established_inbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        peer: PeerId,
-        local_addr: &Multiaddr,
-        remote_addr: &Multiaddr,
-    ) -> Result<libp2p::swarm::THandler<Self>, ConnectionDenied> {
-        let _ = self.identify.handle_established_inbound_connection(
-            connection_id,
-            peer,
-            local_addr,
-            remote_addr,
-        );
-        let _ = self.kademlia.handle_established_inbound_connection(
-            connection_id,
-            peer,
-            local_addr,
-            remote_addr,
-        );
-        Ok(libp2p::swarm::dummy::ConnectionHandler)
-    }
-
-    fn handle_established_outbound_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        peer: PeerId,
-        addr: &Multiaddr,
-        role_override: Endpoint,
-    ) -> Result<libp2p::swarm::THandler<Self>, ConnectionDenied> {
-        let _ = self.identify.handle_established_outbound_connection(
-            connection_id,
-            peer,
-            addr,
-            role_override,
-        );
-        let _ = self.kademlia.handle_established_outbound_connection(
-            connection_id,
-            peer,
-            addr,
-            role_override,
-        );
-        Ok(libp2p::swarm::dummy::ConnectionHandler)
-    }
-
-    fn on_swarm_event(&mut self, event: FromSwarm) {
-        self.identify.on_swarm_event(event.clone());
-        self.kademlia.on_swarm_event(event);
-    }
-
-    fn on_connection_handler_event(
-        &mut self,
-        _peer_id: PeerId,
-        _connection_id: ConnectionId,
-        _event: THandlerInEvent<Self>,
-    ) {
-        // No-op since we're using dummy connection handlers
-    }
-
-    fn poll(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        // Check pending events
-        if let Some(event) = self.events.pop_front() {
-            return Poll::Ready(ToSwarm::GenerateEvent(event));
-        }
-
-        // Poll Identify
-        if let Poll::Ready(ToSwarm::GenerateEvent(event)) = self.identify.poll(cx) {
-            self.queue_event(BootstrapBehaviorEvent::Identify(event));
-            return Poll::Ready(ToSwarm::GenerateEvent(self.events.pop_front().unwrap()));
-        }
-
-        // Poll Kademlia
-        if let Poll::Ready(ToSwarm::GenerateEvent(event)) = self.kademlia.poll(cx) {
-            self.queue_event(BootstrapBehaviorEvent::Kademlia(event));
-            return Poll::Ready(ToSwarm::GenerateEvent(self.events.pop_front().unwrap()));
-        }
-
-        Poll::Pending
+impl From<relay::Event> for BootstrapBehaviorEvent {
+    fn from(event: relay::Event) -> Self {
+        BootstrapBehaviorEvent::Relay(event)
     }
 }
 
@@ -157,6 +63,26 @@ pub struct BootstrapServerConfig {
     pub max_peers: usize,
     /// How long before a peer is considered expired
     pub peer_expiration: Duration,
+    /// Whether to enable relay server functionality
+    pub enable_relay: bool,
+    /// Maximum number of relay reservations
+    pub max_reservations: usize,
+    /// Maximum number of active relay circuits
+    pub max_circuits: usize,
+}
+
+impl Default for BootstrapServerConfig {
+    fn default() -> Self {
+        Self {
+            listen_addr: "0.0.0.0".to_string(),
+            port: 9000,
+            max_peers: 1000,
+            peer_expiration: Duration::from_secs(3600),
+            enable_relay: true,
+            max_reservations: 128,
+            max_circuits: 512,
+        }
+    }
 }
 
 /// Information about a tracked peer
@@ -171,11 +97,14 @@ struct TrackedPeer {
     agent_version: String,
 }
 
-/// Bootstrap server for peer discovery
+/// Bootstrap server for peer discovery with optional relay server functionality
 ///
 /// This server acts as a rendezvous point for nodes in the network.
 /// Nodes connect to exchange peer information, enabling peer discovery
 /// without requiring manual address configuration.
+///
+/// When relay is enabled, this server also acts as a Circuit Relay v2 server,
+/// allowing peers behind NATs to be reachable through this server.
 pub struct BootstrapServer {
     config: BootstrapServerConfig,
     peers: HashMap<PeerId, TrackedPeer>,
@@ -196,6 +125,9 @@ impl BootstrapServer {
     /// Connected peers are tracked and their information is exchanged via
     /// the Identify protocol. Kademlia DHT enables automatic peer discovery
     /// after initial bootstrap connection.
+    ///
+    /// When relay is enabled, the server also handles relay reservations and
+    /// circuit connections for NAT traversal.
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let keypair = Keypair::generate_ed25519();
         let peer_id = keypair.public().to_peer_id();
@@ -212,7 +144,22 @@ impl BootstrapServer {
         // Set to server mode so this node participates in DHT routing
         kademlia.set_mode(Some(Mode::Server));
 
-        let behavior = BootstrapBehavior::new(identify, kademlia);
+        // Configure Circuit Relay v2 server for NAT traversal
+        let relay_config = RelayConfig {
+            max_reservations: self.config.max_reservations,
+            max_circuits: self.config.max_circuits,
+            reservation_duration: Duration::from_secs(3600), // 1 hour reservations
+            max_circuit_duration: Duration::from_secs(3600 * 2), // 2 hour max circuit
+            max_circuit_bytes: u64::MAX, // Essentially unlimited bytes per circuit
+            ..Default::default()
+        };
+        let relay = relay::Behaviour::new(peer_id, relay_config);
+
+        let behavior = BootstrapBehavior {
+            identify,
+            kademlia,
+            relay,
+        };
 
         let mut swarm = SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
@@ -236,6 +183,12 @@ impl BootstrapServer {
         info!("🚀 Bootstrap server starting...");
         info!("Peer ID: {}", peer_id);
         info!("DHT: Kademlia enabled for peer discovery");
+        if self.config.enable_relay {
+            info!(
+                "🔗 Relay: Circuit relay v2 enabled (max {} reservations, {} circuits)",
+                self.config.max_reservations, self.config.max_circuits
+            );
+        }
         info!(
             "Max peers: {}, Peer expiration: {:?}",
             self.config.max_peers, self.config.peer_expiration
@@ -264,6 +217,12 @@ impl BootstrapServer {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => {
                 info!("📡 Listening on: {}", address);
+                // Print the full relay address for clients to use
+                info!(
+                    "🔗 Relay address: {}/p2p/{}",
+                    address,
+                    swarm.local_peer_id()
+                );
             }
 
             SwarmEvent::ConnectionEstablished {
@@ -323,7 +282,11 @@ impl BootstrapServer {
                         .kademlia
                         .add_address(&peer_id, addr.clone());
                 }
-                info!("🌐 Added {} addresses to DHT for peer {}", info.listen_addrs.len(), peer_id);
+                info!(
+                    "🌐 Added {} addresses to DHT for peer {}",
+                    info.listen_addrs.len(),
+                    peer_id
+                );
 
                 // Track the peer if we haven't exceeded max_peers
                 if self.peers.len() < self.config.max_peers || self.peers.contains_key(&peer_id) {
@@ -391,6 +354,51 @@ impl BootstrapServer {
                     }
                     _ => {
                         debug!("DHT event: {:?}", event);
+                    }
+                }
+            }
+
+            // Handle relay events
+            SwarmEvent::Behaviour(BootstrapBehaviorEvent::Relay(event)) => {
+                #[allow(deprecated)]
+                match event {
+                    relay::Event::ReservationReqAccepted {
+                        src_peer_id,
+                        renewed,
+                    } => {
+                        if renewed {
+                            info!("🔗 Relay reservation renewed for {}", src_peer_id);
+                        } else {
+                            info!("🔗 Relay reservation accepted for {}", src_peer_id);
+                        }
+                    }
+                    relay::Event::ReservationReqDenied { src_peer_id } => {
+                        warn!("🔗 Relay reservation denied for {}", src_peer_id);
+                    }
+                    relay::Event::ReservationTimedOut { src_peer_id } => {
+                        info!("🔗 Relay reservation timed out for {}", src_peer_id);
+                    }
+                    relay::Event::CircuitReqAccepted {
+                        src_peer_id,
+                        dst_peer_id,
+                    } => {
+                        info!(
+                            "🔗 Circuit established: {} -> {}",
+                            src_peer_id, dst_peer_id
+                        );
+                    }
+                    relay::Event::CircuitReqDenied {
+                        src_peer_id,
+                        dst_peer_id,
+                    } => {
+                        warn!(
+                            "🔗 Circuit denied: {} -> {}",
+                            src_peer_id, dst_peer_id
+                        );
+                    }
+                    // Handle deprecated events
+                    _ => {
+                        debug!("🔗 Relay event: {:?}", event);
                     }
                 }
             }

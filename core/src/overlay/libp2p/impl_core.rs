@@ -11,12 +11,19 @@
 //!    the libp2p Swarm. This is the entry point for network operations.
 //!
 //! 2. **Behavior Layer (`OverlayBehavior`)** - Combines multiple libp2p protocols
-//!    (Gossipsub, Kademlia, Identify) into a unified behavior.
+//!    (Gossipsub, Kademlia, Identify, Relay, AutoNAT, DCUtR) into a unified behavior.
 //!
 //! 3. **Management Layer** - Specialized components that handle specific aspects:
 //!    - `TopologyManager` - Manages peer connections and network topology
 //!    - `RelayManager` - Handles stream relaying between peers
 //!    - `MeshNetwork` - Manages mesh network connections
+//!
+//! # NAT Traversal
+//!
+//! This implementation includes NAT traversal support via:
+//! - Circuit Relay v2 (relay client behavior)
+//! - AutoNAT for NAT status detection
+//! - DCUtR for direct connection upgrade through relay
 //!
 //! # Concurrency Pattern
 //!
@@ -39,11 +46,13 @@ use libp2p::identify::{Behaviour as Identify, Config as IdentifyConfig};
 use libp2p::identity;
 use libp2p::kad::{store::MemoryStore, Behaviour as Kademlia, Config as KademliaConfig};
 use libp2p::noise;
+use libp2p::relay;
 use libp2p::tcp::Config as GenTcpConfig;
 use libp2p::Multiaddr;
 use libp2p::PeerId as Libp2pPeerId;
+use libp2p::{autonat, dcutr};
 use libp2p::{Swarm, SwarmBuilder, Transport};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 // Local crate imports
 use crate::discovery::{
@@ -67,6 +76,8 @@ pub struct Libp2pOverlay {
     /// Since LocalPeerId now wraps libp2p::PeerId directly, we only need
     /// to store one copy. Use `local_peer_id()` to get the LocalPeerId wrapper.
     pub peer_id: Libp2pPeerId,
+    /// The keypair for this node (needed for relay transport)
+    keypair: identity::Keypair,
     /// Swarm
     pub swarm: Arc<Mutex<Option<Swarm<OverlayBehavior>>>>,
     /// Topology manager
@@ -96,6 +107,7 @@ impl Clone for Libp2pOverlay {
         Self {
             config: self.config.clone(),
             peer_id: self.peer_id,
+            keypair: self.keypair.clone(),
             swarm: self.swarm.clone(),
             topology: self.topology.clone(),
             relay: self.relay.clone(),
@@ -115,8 +127,8 @@ impl Libp2pOverlay {
     /// Create a new libp2p-based overlay
     pub async fn new(config: OverlayConfig) -> Result<Self, OverlayError> {
         // Create the libp2p identity
-        let local_key = identity::Keypair::generate_ed25519();
-        let peer_id = local_key.public().to_peer_id();
+        let keypair = identity::Keypair::generate_ed25519();
+        let peer_id = keypair.public().to_peer_id();
 
         // Create channel for events
         let (event_tx, event_rx) = mpsc::channel(100);
@@ -187,6 +199,7 @@ impl Libp2pOverlay {
         Ok(Self {
             config,
             peer_id,
+            keypair,
             swarm,
             topology,
             relay,
@@ -206,13 +219,24 @@ impl Libp2pOverlay {
         LocalPeerId::from(self.peer_id)
     }
 
-    /// Initialize the swarm with behaviors
+    /// Initialize the swarm with behaviors including NAT traversal support
     pub async fn init_swarm(&self) -> Result<Swarm<OverlayBehavior>, OverlayError> {
-        // Create keypair from local identity (in a real app we'd load this)
-        let local_key = identity::Keypair::generate_ed25519();
+        // Clone the keypair for use in transport and behaviors
+        let local_key = self.keypair.clone();
+        let local_peer_id = local_key.public().to_peer_id();
 
-        // Create transport
-        let transport = libp2p::tcp::tokio::Transport::new(GenTcpConfig::default().nodelay(true))
+        // Create TCP transport
+        let tcp_transport =
+            libp2p::tcp::tokio::Transport::new(GenTcpConfig::default().nodelay(true));
+
+        // Create relay client transport for NAT traversal
+        // This allows us to connect through relay servers when direct connections fail
+        let (relay_transport, relay_client) = relay::client::new(local_peer_id);
+
+        // Combine transports: TCP first, relay as fallback
+        // OrTransport tries the first transport, then falls back to the second
+        let transport = tcp_transport
+            .or_transport(relay_transport)
             .upgrade(upgrade::Version::V1)
             .authenticate(
                 noise::Config::new(&local_key)
@@ -246,8 +270,35 @@ impl Libp2pOverlay {
         );
         let identify = Identify::new(identify_config);
 
+        // Create AutoNAT behavior for automatic NAT detection
+        // AutoNAT probes other peers to determine if we're reachable from the internet
+        let autonat_config = autonat::Config {
+            // Use bootstrap peers as servers for NAT probing
+            boot_delay: Duration::from_secs(10),
+            refresh_interval: Duration::from_secs(60),
+            retry_interval: Duration::from_secs(30),
+            throttle_server_period: Duration::from_secs(5),
+            only_global_ips: true,
+            ..Default::default()
+        };
+        let autonat = autonat::Behaviour::new(local_peer_id, autonat_config);
+
+        // Create DCUtR behavior for direct connection upgrade through relay
+        // This attempts to hole-punch and establish a direct connection when both
+        // peers are behind NATs
+        let dcutr = dcutr::Behaviour::new(local_peer_id);
+
+        info!("NAT traversal enabled: relay client, autonat, dcutr");
+
         // Combine behaviors
-        let behavior = OverlayBehavior::new(gossipsub, kademlia, identify);
+        let behavior = OverlayBehavior::new(
+            gossipsub,
+            kademlia,
+            identify,
+            relay_client,
+            autonat,
+            dcutr,
+        );
 
         // Create Swarm
         let swarm = SwarmBuilder::with_existing_identity(local_key)
