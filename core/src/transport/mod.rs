@@ -13,8 +13,10 @@
 
 /// Core interfaces and types for transport implementations
 pub mod interface;
+/// WebRTC signaling types for browser-to-browser P2P connections
+pub mod webrtc_signaling;
 /// WebRTC-based transport implementation for browser compatibility
-// pub mod webrtc;  // Temporarily disabled due to compilation issues
+// pub mod webrtc;  // Disabled - using browser-native WebRTC via signaling
 /// QUIC protocol transport for high-performance connections
 pub mod quic;
 
@@ -24,6 +26,6 @@ mod tests;
 // Re-export the main interface types
 pub use interface::{Connection, ConnectionId, Transport, TransportError, TransportEvent};
 
-// Re-export concrete implementations
-// pub use webrtc::WebRtcTransport;
+// Re-export signaling types for WebRTC P2P
+pub use webrtc_signaling::{SignalingMessage, PeerInfo};
 // pub use quic::QuicTransport;

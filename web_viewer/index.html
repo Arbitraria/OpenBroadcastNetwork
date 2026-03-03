@@ -87,6 +87,11 @@
             <button id="disconnectBtn" disabled>Disconnect</button>
             <button id="playBtn" disabled>Play</button>
             <button id="clearBtn">Clear Log</button>
+            <select id="connectionModeSelect">
+                <option value="auto">Auto (WebRTC with fallback)</option>
+                <option value="webrtc">WebRTC Only</option>
+                <option value="websocket">WebSocket Only</option>
+            </select>
             <select id="modeSelect">
                 <option value="auto">Auto-detect Browser</option>
                 <option value="chrome">Chrome Mode</option>
@@ -111,8 +116,20 @@
                 <span id="h264Support">Checking...</span>
             </div>
             <div class="status-item">
-                <span class="status-label">AAC Support:</span> 
+                <span class="status-label">AAC Support:</span>
                 <span id="opusSupport">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">WebRTC Support:</span>
+                <span id="webrtcSupport">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Transport Mode:</span>
+                <span id="transportMode">Not connected</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">P2P Peers:</span>
+                <span id="peerCount">0</span>
             </div>
         </div>
         
@@ -141,9 +158,16 @@
         <div id="log"></div>
     </div>
 
+    <script src="webrtc-client.js"></script>
     <script>
         // Global variables - using the working approach from index.html
         let mediaSource = null;
+
+        // WebRTC client for P2P streaming
+        let webrtcClient = null;
+        let connectionMode = 'auto'; // 'auto', 'webrtc', or 'websocket'
+        let currentTransport = null; // 'webrtc' or 'websocket'
+        let streamId = 'default-stream'; // Stream ID for WebRTC
         let videoSourceBuffer = null;
         let audioSourceBuffer = null;
         let websocket = null;
@@ -164,6 +188,9 @@
         let initSegmentChunks = []; // Store chunks for reassembly
         let expectedInitSize = null; // Expected total size of init segment
         let initSegmentComplete = false; // Flag to track if init segment is fully received
+
+        // Pending chunks queue for chunks that arrive before MediaSource is ready
+        let pendingChunks = [];
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
@@ -221,6 +248,17 @@
                 document.getElementById('opusSupport').textContent = 'AAC Not Supported';
                 document.getElementById('opusSupport').style.color = '#f44336';
                 logMessage('WARNING: No AAC codec variant supported', 'warning');
+            }
+
+            // Check WebRTC support
+            if ('RTCPeerConnection' in window && 'RTCDataChannel' in window) {
+                document.getElementById('webrtcSupport').textContent = 'Supported';
+                document.getElementById('webrtcSupport').style.color = '#4CAF50';
+                logMessage('WebRTC data channels supported');
+            } else {
+                document.getElementById('webrtcSupport').textContent = 'Not Supported';
+                document.getElementById('webrtcSupport').style.color = '#f44336';
+                logMessage('WARNING: WebRTC not supported, will use WebSocket only', 'warning');
             }
         }
 
@@ -289,11 +327,21 @@
                 });
                 logMessage('Mode select event listener attached', 'info');
             }
+
+            // Connection mode select (WebRTC vs WebSocket)
+            const connectionModeSelect = document.getElementById('connectionModeSelect');
+            if (connectionModeSelect) {
+                connectionModeSelect.addEventListener('change', (e) => {
+                    connectionMode = e.target.value;
+                    logMessage(`Connection mode set to: ${connectionMode}`, 'info');
+                });
+                logMessage('Connection mode select event listener attached', 'info');
+            }
         }
 
         function connectToStream() {
             logMessage('🚀 connectToStream function called!', 'success');
-            
+
             if (connected || connecting) {
                 logMessage(`⚠️ Connection already in progress: connected=${connected}, connecting=${connecting}`, 'warning');
                 return;
@@ -301,93 +349,93 @@
 
             connecting = true;
             mediaSourceReady = false;
-            
+
             logMessage('🔄 Connecting to OpenBroadcastNetwork stream...', 'info');
             updateStatus('Connecting...', 'info');
-            
+
             // Update button states
             document.getElementById('connectBtn').disabled = true;
             document.getElementById('disconnectBtn').disabled = false;
-            
+
             // Clean up any existing connections
             if (websocket) {
                 websocket.close();
                 websocket = null;
             }
-            
-            // Check if we need to create a new MediaSource
-            let needNewMediaSource = true;
-            
-            if (mediaSource) {
-                try {
-                    if (mediaSource.readyState === 'open') {
-                        // MediaSource is working, reuse it
-                        logMessage('Reusing existing open MediaSource');
-                        needNewMediaSource = false;
-                        videoSourceBuffer = null;
-                        audioSourceBuffer = null;
-                    } else {
-                        // MediaSource is closed/ended, clean it up
-                        logMessage(`Cleaning up MediaSource in state: ${mediaSource.readyState}`);
-                        mediaSource = null;
-                        videoSourceBuffer = null;
-                        audioSourceBuffer = null;
-                    }
-                } catch (e) {
-                    console.warn('Failed to check MediaSource state:', e);
-                    mediaSource = null;
-                    videoSourceBuffer = null;
-                    audioSourceBuffer = null;
-                }
-            }
-            
-            // Initialize new MediaSource only if needed
-            if (needNewMediaSource) {
-                mediaSource = new MediaSource();
-            }
-            
-            const video = document.getElementById('video');
-            
-            // Set up video source only if we have a new MediaSource
-            if (needNewMediaSource) {
-                // Revoke old object URL if it exists
-                if (video.src && video.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(video.src);
-                }
-                
-                video.src = URL.createObjectURL(mediaSource);
+            if (webrtcClient) {
+                webrtcClient.disconnect();
+                webrtcClient = null;
             }
 
-            // Handle MediaSource setup (whether new or existing)
-            if (mediaSource.readyState === 'open') {
-                // MediaSource is already open, set up buffers immediately
-                setupSourceBuffers();
-            } else {
-                // MediaSource not open yet, wait for sourceopen event
-                mediaSource.addEventListener('sourceopen', setupSourceBuffers);
+            // Clean up existing MediaSource - we'll create a new one after receiving stream_info
+            if (mediaSource) {
+                try {
+                    logMessage(`Cleaning up existing MediaSource in state: ${mediaSource.readyState}`);
+                } catch (e) {
+                    console.warn('Failed to check MediaSource state:', e);
+                }
+                mediaSource = null;
+                videoSourceBuffer = null;
+                audioSourceBuffer = null;
             }
-            
-            function setupSourceBuffers() {
+
+            // Connect transport first - MediaSource will be created after stream_info is received
+            logMessage('Connecting transport to get stream info...');
+            connectTransport();
+        }
+
+        /**
+         * Set up MediaSource with the correct codec after receiving stream_info
+         */
+        function setupMediaSourceWithCodec(hasAudio) {
+            logMessage(`Setting up MediaSource (hasAudio: ${hasAudio})`);
+
+            const video = document.getElementById('video');
+
+            // Revoke old object URL if it exists
+            if (video.src && video.src.startsWith('blob:')) {
+                URL.revokeObjectURL(video.src);
+            }
+
+            // Create new MediaSource
+            mediaSource = new MediaSource();
+            video.src = URL.createObjectURL(mediaSource);
+
+            // Wait for sourceopen event
+            mediaSource.addEventListener('sourceopen', () => {
                 logMessage('MediaSource opened successfully');
 
                 try {
-                    // Use a SINGLE combined SourceBuffer for both video and audio
-                    // This is required because media segments contain both tracks interleaved
-                    // Chrome MSE separate buffers would require separate media segments too
-                    const combinedMimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+                    // Choose MIME type based on whether stream has audio
                     const videoOnlyMimeType = 'video/mp4; codecs="avc1.42E01E"';
+                    const combinedMimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
 
-                    // Try combined first, fall back to video-only
-                    let mimeTypeToUse = combinedMimeType;
-                    if (!MediaSource.isTypeSupported(combinedMimeType)) {
-                        logMessage(`Combined codec not supported, trying video-only`, 'warning');
+                    let mimeTypeToUse;
+                    if (hasAudio && detectedAudioMimeType) {
+                        // Use server-detected audio codec if available
+                        const audioCodec = detectedAudioMimeType.match(/codecs="([^"]+)"/)?.[1] || 'mp4a.40.2';
+                        mimeTypeToUse = `video/mp4; codecs="avc1.42E01E, ${audioCodec}"`;
+
+                        // Check if this combined codec is supported
+                        if (!MediaSource.isTypeSupported(mimeTypeToUse)) {
+                            logMessage(`Combined codec ${mimeTypeToUse} not supported, trying default`, 'warning');
+                            mimeTypeToUse = combinedMimeType;
+                        }
+
+                        // Final fallback to video-only if combined not supported
+                        if (!MediaSource.isTypeSupported(mimeTypeToUse)) {
+                            logMessage(`Combined codec not supported, falling back to video-only`, 'warning');
+                            mimeTypeToUse = videoOnlyMimeType;
+                        }
+                    } else {
+                        // Video-only stream
                         mimeTypeToUse = videoOnlyMimeType;
                     }
 
                     if (MediaSource.isTypeSupported(mimeTypeToUse)) {
                         videoSourceBuffer = mediaSource.addSourceBuffer(mimeTypeToUse);
                         currentVideoMimeType = mimeTypeToUse;
-                        logMessage(`✅ Combined source buffer created: ${mimeTypeToUse}`, 'success');
+                        logMessage(`✅ Source buffer created: ${mimeTypeToUse}`, 'success');
 
                         // Add event listener for buffer updates
                         videoSourceBuffer.addEventListener('updateend', () => {
@@ -404,56 +452,207 @@
                             }
                         });
 
-                        // Wait a moment for source buffer to be fully ready, then connect WebSocket
-                        setTimeout(() => {
-                            if (mediaSource && mediaSource.readyState === 'open' && videoSourceBuffer) {
-                                mediaSourceReady = true;
-                                logMessage('MediaSource and SourceBuffer ready, connecting WebSocket...');
-                                connectWebSocket();
-                            } else {
-                                logMessage('MediaSource not ready, retrying connection...', 'warning');
-                                connecting = false;
-                                mediaSourceReady = false;
-                            }
-                        }, 100); // Small delay to ensure everything is ready
+                        mediaSourceReady = true;
+                        logMessage('MediaSource ready for streaming', 'success');
+
+                        // Process any queued chunks
+                        if (pendingChunks.length > 0) {
+                            logMessage(`Processing ${pendingChunks.length} queued chunks`, 'info');
+                            processPendingChunks();
+                        }
                     } else {
                         logMessage(`Codec not supported: ${mimeTypeToUse}`, 'error');
-                        connecting = false;
+                        mediaSourceReady = false;
                     }
-
-                    // NOTE: Using single combined buffer - no separate audio buffer needed
-                    // All media segments (containing both video+audio) go to videoSourceBuffer
-                    logMessage(`📋 Using single combined buffer for video+audio`);
-
-                    // MediaSource setup complete - wait for WebSocket connection
-                    if (!serverCodecReceived) {
-                        logMessage('MediaSource video buffer ready - waiting for server codec info via WebSocket', 'success');
-                    }
-                    
                 } catch (error) {
-                    logMessage(`Error setting up source buffers: ${error.message}`, 'error');
-                    connecting = false;
+                    logMessage(`Error setting up source buffer: ${error.message}`, 'error');
                     mediaSourceReady = false;
+                }
+            });
+
+            mediaSource.addEventListener('sourceended', () => {
+                logMessage('MediaSource ended');
+                mediaSourceReady = false;
+            });
+
+            mediaSource.addEventListener('sourceclose', () => {
+                logMessage('MediaSource closed unexpectedly', 'warning');
+                mediaSourceReady = false;
+            });
+
+            mediaSource.addEventListener('error', (e) => {
+                logMessage(`MediaSource error: ${e}`, 'error');
+                mediaSourceReady = false;
+            });
+        }
+
+        /**
+         * Process chunks that were queued while waiting for MediaSource
+         */
+        function processPendingChunks() {
+            if (pendingChunks.length === 0) return;
+
+            const chunksToProcess = pendingChunks.slice();
+            pendingChunks.length = 0; // Clear queue to prevent re-queuing
+
+            logMessage(`Processing ${chunksToProcess.length} pending chunks...`, 'info');
+
+            // Process chunks sequentially
+            let index = 0;
+            function processNext() {
+                if (index >= chunksToProcess.length) {
+                    logMessage('All pending chunks processed', 'success');
+                    return;
+                }
+
+                if (!videoSourceBuffer || videoSourceBuffer.updating) {
+                    // Wait for buffer to be ready
+                    videoSourceBuffer.addEventListener('updateend', processNext, { once: true });
+                    return;
+                }
+
+                const chunk = chunksToProcess[index++];
+                nextChunkType = chunk.chunkType;
+
+                // Directly append to avoid re-queuing checks
+                try {
+                    videoSourceBuffer.appendBuffer(chunk.buffer);
+                    logMessage(`Appended queued chunk ${index}/${chunksToProcess.length} (${formatBytes(chunk.buffer.byteLength)})`);
+
+                    // Wait for updateend before next chunk
+                    videoSourceBuffer.addEventListener('updateend', () => {
+                        updateBufferInfo();
+                        processNext();
+                    }, { once: true });
+                } catch (error) {
+                    logMessage(`Failed to append queued chunk: ${error.message}`, 'error');
+                    processNext(); // Skip and continue
                 }
             }
 
-            // Add event listeners only for new MediaSource instances
-            if (needNewMediaSource) {
-                mediaSource.addEventListener('sourceended', () => {
-                    logMessage('MediaSource ended');
-                    mediaSourceReady = false;
-                });
+            processNext();
+        }
 
-                mediaSource.addEventListener('sourceclose', () => {
-                    logMessage('MediaSource closed unexpectedly', 'warning');
-                    mediaSourceReady = false;
-                });
+        /**
+         * Connect using the selected transport mode (WebRTC or WebSocket)
+         */
+        async function connectTransport() {
+            const useWebRTC = shouldUseWebRTC();
 
-                mediaSource.addEventListener('error', (e) => {
-                    logMessage(`MediaSource error: ${e}`, 'error');
-                    mediaSourceReady = false;
-                });
+            if (useWebRTC) {
+                logMessage('🔗 Attempting WebRTC P2P connection...', 'info');
+                updateTransportMode('WebRTC (connecting)');
+
+                try {
+                    await connectWebRTC();
+                    // WebRTC connected successfully, but we still need WebSocket for stream_info
+                    // Connect WebSocket as well for initialization data
+                    logMessage('🔗 Also connecting WebSocket for stream initialization...', 'info');
+                    connectWebSocket();
+                } catch (error) {
+                    logMessage(`⚠️ WebRTC connection failed: ${error.message}`, 'warning');
+
+                    if (connectionMode !== 'webrtc') {
+                        // Fall back to WebSocket
+                        logMessage('📡 Falling back to WebSocket transport...', 'info');
+                        updateTransportMode('WebSocket (fallback)');
+                        connectWebSocket();
+                    } else {
+                        logMessage('❌ WebRTC-only mode - connection failed', 'error');
+                        connecting = false;
+                        updateStatus('WebRTC connection failed', 'error');
+                        document.getElementById('connectBtn').disabled = false;
+                        document.getElementById('disconnectBtn').disabled = true;
+                    }
+                }
+            } else {
+                logMessage('📡 Using WebSocket transport...', 'info');
+                updateTransportMode('WebSocket');
+                connectWebSocket();
             }
+        }
+
+        /**
+         * Determine if WebRTC should be used based on mode and browser support
+         */
+        function shouldUseWebRTC() {
+            // Check browser support
+            if (!('RTCPeerConnection' in window)) {
+                logMessage('WebRTC not supported by browser', 'warning');
+                return false;
+            }
+
+            // Check connection mode setting
+            if (connectionMode === 'websocket') {
+                return false;
+            }
+            if (connectionMode === 'webrtc') {
+                return true;
+            }
+            // Auto mode - prefer WebRTC
+            return true;
+        }
+
+        /**
+         * Connect using WebRTC for P2P streaming
+         */
+        async function connectWebRTC() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const signalingUrl = `${protocol}//${window.location.host}/webrtc/signal`;
+
+            logMessage(`Connecting to signaling server: ${signalingUrl}`);
+
+            // Create WebRTC client as subscriber (receiving stream)
+            webrtcClient = new WebRtcStreamClient(signalingUrl, streamId, false);
+
+            // Set up callbacks
+            webrtcClient.onStreamData = (data) => {
+                // Process received stream data (same as WebSocket binary data)
+                processStreamChunk(data);
+            };
+
+            webrtcClient.onPeerConnected = (peerId) => {
+                logMessage(`🎉 P2P connected to peer: ${peerId}`, 'success');
+                updatePeerCount();
+                currentTransport = 'webrtc';
+                updateTransportMode('WebRTC P2P');
+            };
+
+            webrtcClient.onPeerDisconnected = (peerId) => {
+                logMessage(`Peer disconnected: ${peerId}`, 'warning');
+                updatePeerCount();
+            };
+
+            webrtcClient.onError = (error) => {
+                logMessage(`WebRTC error: ${error.message}`, 'error');
+            };
+
+            webrtcClient.onStateChange = (state) => {
+                logMessage(`WebRTC state: ${state}`, 'info');
+                if (state === 'streaming') {
+                    updateTransportMode('WebRTC P2P (streaming)');
+                }
+            };
+
+            // Connect to signaling server
+            await webrtcClient.connect();
+
+            logMessage('WebRTC signaling connected, waiting for peers...', 'success');
+        }
+
+        /**
+         * Update the displayed peer count
+         */
+        function updatePeerCount() {
+            const count = webrtcClient ? webrtcClient.getConnectedPeerCount() : 0;
+            document.getElementById('peerCount').textContent = count;
+        }
+
+        /**
+         * Update the displayed transport mode
+         */
+        function updateTransportMode(mode) {
+            document.getElementById('transportMode').textContent = mode;
         }
 
         function connectWebSocket() {
@@ -461,9 +660,10 @@
             // Use the current host to avoid CORS issues
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/stream`;
-            
+
             logMessage(`Connecting to WebSocket: ${wsUrl}`);
             websocket = new WebSocket(wsUrl);
+            currentTransport = currentTransport || 'websocket';
             
             websocket.addEventListener('open', () => {
                 connected = true;
@@ -634,12 +834,16 @@
             
             // Check if MediaSource system is ready
             if (!mediaSourceReady || !mediaSource || mediaSource.readyState !== 'open') {
-                logMessage(`MediaSource not ready (ready: ${mediaSourceReady}, state: ${mediaSource ? mediaSource.readyState : 'null'}), skipping chunk`, 'warning');
+                // Queue chunk for later processing
+                logMessage(`MediaSource not ready (ready: ${mediaSourceReady}, state: ${mediaSource ? mediaSource.readyState : 'null'}), queuing chunk`, 'warning');
+                pendingChunks.push({ buffer: arrayBuffer, chunkType: nextChunkType });
                 return;
             }
-            
+
             if (!videoSourceBuffer || videoSourceBuffer.updating) {
-                logMessage(`VideoSourceBuffer not ready (exists: ${!!videoSourceBuffer}, updating: ${videoSourceBuffer ? videoSourceBuffer.updating : 'N/A'}), skipping chunk`, 'warning');
+                // Queue chunk for later processing
+                logMessage(`VideoSourceBuffer not ready (exists: ${!!videoSourceBuffer}, updating: ${videoSourceBuffer ? videoSourceBuffer.updating : 'N/A'}), queuing chunk`, 'warning');
+                pendingChunks.push({ buffer: arrayBuffer, chunkType: nextChunkType });
                 return;
             }
             
@@ -884,13 +1088,14 @@
 
         function handleControlMessage(message) {
             logMessage(`📋 Received: ${message.type}`);
-            
+
             switch (message.type) {
                 case 'stream_info':
                     logMessage('📋 Received stream info from server');
                     updateStreamInfo(message.data);
-                    
+
                     // Capture detected MIME types from server
+                    let hasAudio = false;
                     if (message.data.video) {
                         if (message.data.video.mime_type) {
                             detectedVideoMimeType = message.data.video.mime_type;
@@ -901,26 +1106,31 @@
                         if (message.data.audio.mime_type) {
                             detectedAudioMimeType = message.data.audio.mime_type;
                             logMessage(`🎵 Server audio codec: ${detectedAudioMimeType}`);
-                            
+
                             // Check for AC-3/Dolby Digital audio (not supported by Chrome MSE)
                             if (detectedAudioMimeType.includes('ac-3') || detectedAudioMimeType.includes('AC-3')) {
                                 logMessage(`⚠️ AC-3/Dolby Digital audio detected - not supported by Chrome MSE`, 'warning');
                                 logMessage(`🎬 Falling back to video-only mode for Chrome compatibility`, 'info');
-                                
-                                // Mark as video-only mode (don't create audio buffer)
-                                serverCodecReceived = true;
                                 detectedAudioMimeType = null; // Clear to prevent audio buffer creation
-                                
+                                hasAudio = false;
                             } else {
-                                // Mark that we've received server codec info
-                                serverCodecReceived = true;
-                                
-                                // Now create audio buffer with exact server codec
-                                createAudioBufferWithServerCodec();
+                                hasAudio = true;
                             }
                         }
                     } else {
                         logMessage(`🎵 Video-only stream (no audio track)`, 'info');
+                        hasAudio = false;
+                    }
+
+                    // Mark that we've received server codec info
+                    serverCodecReceived = true;
+
+                    // Now set up MediaSource with the correct codec
+                    if (!mediaSource || mediaSource.readyState === 'closed') {
+                        logMessage(`🎬 Setting up MediaSource with hasAudio=${hasAudio}`, 'info');
+                        setupMediaSourceWithCodec(hasAudio);
+                    } else {
+                        logMessage(`MediaSource already set up (state: ${mediaSource.readyState})`, 'info');
                     }
                     break;
                     
@@ -1092,12 +1302,22 @@
             connected = false;
             connecting = false;
             mediaSourceReady = false;
-            
+
+            // Close WebSocket
             if (websocket) {
                 websocket.close();
                 websocket = null;
             }
-            
+
+            // Close WebRTC
+            if (webrtcClient) {
+                webrtcClient.disconnect();
+                webrtcClient = null;
+            }
+
+            // Reset transport state
+            currentTransport = null;
+
             // Reset state variables
             chunksReceived = 0;
             bytesReceived = 0;
@@ -1109,20 +1329,24 @@
             initSegmentChunks.length = 0;
             expectedInitSize = null;
             initSegmentComplete = false;
-            
+            pendingChunks.length = 0;
+
             updateConnectionState('Disconnected');
             updateStatus('Disconnected', 'warning');
+            updateTransportMode('Not connected');
+            updatePeerCount();
             logMessage('Disconnected from stream');
-            
+
             // Update button states
             document.getElementById('connectBtn').disabled = false;
             document.getElementById('disconnectBtn').disabled = true;
             document.getElementById('playBtn').disabled = true;
-            
+
             // Reset stats
             document.getElementById('segmentsStat').textContent = '0';
             document.getElementById('dataStat').textContent = '0';
             document.getElementById('bufferedStat').textContent = '0';
+            document.getElementById('peerCount').textContent = '0';
         }
 
         function playVideo() {

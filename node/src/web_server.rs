@@ -46,10 +46,13 @@ use axum::{
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use tracing::{debug, error, info, warn};
+
+// Import WebRTC signaling types
+use OpenBroadcastNetwork_core::transport::{SignalingMessage, PeerInfo};
 
 use std::time::Duration;
 use OpenBroadcastNetwork_core::media::codec::{OpenH264Codec, OpusCodec};
@@ -101,6 +104,32 @@ pub struct AppState {
     pub config: WebServerConfig,
     pub stream_manager: Arc<StreamManager>,
     pub clients: Arc<RwLock<HashMap<String, ClientConnection>>>,
+    /// WebRTC signaling state for P2P connections
+    pub signaling_state: Arc<SignalingState>,
+}
+
+/// State for WebRTC signaling coordination
+pub struct SignalingState {
+    /// Map of stream_id -> list of connected peers
+    pub streams: RwLock<HashMap<String, Vec<SignalingPeer>>>,
+    /// Map of peer_id -> sender for signaling messages
+    pub peer_senders: RwLock<HashMap<String, mpsc::UnboundedSender<SignalingMessage>>>,
+}
+
+/// Represents a connected signaling peer
+#[derive(Debug, Clone)]
+pub struct SignalingPeer {
+    pub peer_id: String,
+    pub is_publisher: bool,
+}
+
+impl Default for SignalingState {
+    fn default() -> Self {
+        Self {
+            streams: RwLock::new(HashMap::new()),
+            peer_senders: RwLock::new(HashMap::new()),
+        }
+    }
 }
 
 /// Manages streaming connections and codec operations
@@ -868,11 +897,13 @@ impl WebServer {
     pub fn new(config: WebServerConfig) -> Self {
         let stream_manager = Arc::new(StreamManager::new());
         let clients = Arc::new(RwLock::new(HashMap::new()));
+        let signaling_state = Arc::new(SignalingState::default());
 
         let app_state = AppState {
             config: config.clone(),
             stream_manager,
             clients,
+            signaling_state,
         };
 
         Self { config, app_state }
@@ -902,6 +933,7 @@ impl WebServer {
     async fn create_app(&self) -> Router {
         let mut router = Router::new()
             .route("/stream", get(websocket_handler))
+            .route("/webrtc/signal", get(webrtc_signaling_handler))
             .route("/api/stream/start", post(start_stream_handler))
             .route("/api/stream/stop", post(stop_stream_handler))
             .route("/api/stream/status", get(stream_status_handler))
@@ -1357,6 +1389,305 @@ async fn list_streams_handler(State(state): State<AppState>) -> impl IntoRespons
         "count": streams.len(),
         "p2p_enabled": state.stream_manager.enable_p2p
     }))
+}
+
+// ============================================================================
+// WebRTC Signaling Handlers
+// ============================================================================
+
+/// WebSocket handler for WebRTC signaling connections
+///
+/// This endpoint handles WebSocket connections for WebRTC signaling,
+/// relaying SDP offers/answers and ICE candidates between peers.
+async fn webrtc_signaling_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    ws.on_upgrade(|socket| handle_webrtc_signaling(socket, state))
+}
+
+/// Handle individual WebRTC signaling connections
+///
+/// This function:
+/// 1. Assigns a unique peer ID to the connection
+/// 2. Receives and relays signaling messages between peers
+/// 3. Manages peer registration and discovery for streams
+async fn handle_webrtc_signaling(socket: WebSocket, state: AppState) {
+    let peer_id = uuid::Uuid::new_v4().to_string();
+    info!("New WebRTC signaling client connected: {}", peer_id);
+
+    // Split the socket into sender and receiver
+    let (mut sender, mut receiver) = socket.split();
+
+    // Create channel for sending messages to this peer
+    let (tx, mut rx) = mpsc::unbounded_channel::<SignalingMessage>();
+
+    // Register this peer's sender
+    {
+        let mut senders = state.signaling_state.peer_senders.write().await;
+        senders.insert(peer_id.clone(), tx);
+    }
+
+    // Track which stream this peer is in (if any)
+    let mut current_stream_id: Option<String> = None;
+
+    // Spawn task to forward messages from channel to WebSocket
+    let peer_id_clone = peer_id.clone();
+    let sender_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match serde_json::to_string(&msg) {
+                Ok(json) => {
+                    if let Err(e) = sender.send(Message::Text(json)).await {
+                        debug!("Failed to send signaling message to {}: {}", peer_id_clone, e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to serialize signaling message: {}", e);
+                }
+            }
+        }
+    });
+
+    // Process incoming messages
+    while let Some(message) = receiver.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                match serde_json::from_str::<SignalingMessage>(&text) {
+                    Ok(signal_msg) => {
+                        handle_signaling_message(
+                            &state,
+                            &peer_id,
+                            &mut current_stream_id,
+                            signal_msg,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        warn!("Invalid signaling message from {}: {}", peer_id, e);
+                        // Send error back to peer
+                        let error_msg = SignalingMessage::Error {
+                            message: format!("Invalid message format: {}", e),
+                        };
+                        let senders = state.signaling_state.peer_senders.read().await;
+                        if let Some(sender) = senders.get(&peer_id) {
+                            let _ = sender.send(error_msg);
+                        }
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => {
+                info!("WebRTC signaling client {} disconnected", peer_id);
+                break;
+            }
+            Err(e) => {
+                error!("WebSocket error for signaling client {}: {}", peer_id, e);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // Cleanup on disconnect
+    sender_task.abort();
+    cleanup_signaling_peer(&state, &peer_id, &current_stream_id).await;
+}
+
+/// Process a signaling message from a peer
+async fn handle_signaling_message(
+    state: &AppState,
+    peer_id: &str,
+    current_stream_id: &mut Option<String>,
+    message: SignalingMessage,
+) {
+    match message {
+        SignalingMessage::PeerJoin {
+            peer_id: _,
+            stream_id,
+            is_publisher,
+        } => {
+            info!(
+                "Peer {} joining stream {} (publisher: {})",
+                peer_id, stream_id, is_publisher
+            );
+
+            // Add peer to stream
+            {
+                let mut streams = state.signaling_state.streams.write().await;
+                let peers = streams.entry(stream_id.clone()).or_insert_with(Vec::new);
+
+                // Remove if already exists (rejoin)
+                peers.retain(|p| p.peer_id != peer_id);
+
+                peers.push(SignalingPeer {
+                    peer_id: peer_id.to_string(),
+                    is_publisher,
+                });
+
+                debug!(
+                    "Stream {} now has {} peers",
+                    stream_id,
+                    peers.len()
+                );
+            }
+
+            *current_stream_id = Some(stream_id.clone());
+
+            // Send list of existing peers to the new peer
+            let peer_list = {
+                let streams = state.signaling_state.streams.read().await;
+                if let Some(peers) = streams.get(&stream_id) {
+                    peers
+                        .iter()
+                        .filter(|p| p.peer_id != peer_id)
+                        .map(|p| PeerInfo {
+                            peer_id: p.peer_id.clone(),
+                            is_publisher: p.is_publisher,
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                }
+            };
+
+            let peer_list_msg = SignalingMessage::PeerList { peers: peer_list };
+            let senders = state.signaling_state.peer_senders.read().await;
+            if let Some(sender) = senders.get(peer_id) {
+                let _ = sender.send(peer_list_msg);
+            }
+
+            // Notify other peers about the new peer
+            let join_notification = SignalingMessage::PeerJoin {
+                peer_id: peer_id.to_string(),
+                stream_id: stream_id.clone(),
+                is_publisher,
+            };
+
+            let streams = state.signaling_state.streams.read().await;
+            if let Some(peers) = streams.get(&stream_id) {
+                for other_peer in peers.iter().filter(|p| p.peer_id != peer_id) {
+                    if let Some(sender) = senders.get(&other_peer.peer_id) {
+                        let _ = sender.send(join_notification.clone());
+                    }
+                }
+            }
+        }
+
+        SignalingMessage::PeerLeave { peer_id: _ } => {
+            info!("Peer {} leaving stream", peer_id);
+            cleanup_signaling_peer(state, peer_id, current_stream_id).await;
+            *current_stream_id = None;
+        }
+
+        SignalingMessage::Offer {
+            peer_id: _,
+            target_peer_id,
+            sdp,
+        } => {
+            if let Some(target_id) = target_peer_id {
+                debug!("Relaying offer from {} to {}", peer_id, target_id);
+                let offer = SignalingMessage::Offer {
+                    peer_id: peer_id.to_string(),
+                    target_peer_id: Some(target_id.clone()),
+                    sdp,
+                };
+
+                let senders = state.signaling_state.peer_senders.read().await;
+                if let Some(sender) = senders.get(&target_id) {
+                    let _ = sender.send(offer);
+                } else {
+                    warn!("Target peer {} not found for offer relay", target_id);
+                }
+            }
+        }
+
+        SignalingMessage::Answer {
+            peer_id: _,
+            target_peer_id,
+            sdp,
+        } => {
+            debug!("Relaying answer from {} to {}", peer_id, target_peer_id);
+            let answer = SignalingMessage::Answer {
+                peer_id: peer_id.to_string(),
+                target_peer_id: target_peer_id.clone(),
+                sdp,
+            };
+
+            let senders = state.signaling_state.peer_senders.read().await;
+            if let Some(sender) = senders.get(&target_peer_id) {
+                let _ = sender.send(answer);
+            } else {
+                warn!("Target peer {} not found for answer relay", target_peer_id);
+            }
+        }
+
+        SignalingMessage::IceCandidate {
+            peer_id: _,
+            target_peer_id,
+            candidate,
+            sdp_mid,
+            sdp_mline_index,
+        } => {
+            debug!("Relaying ICE candidate from {} to {}", peer_id, target_peer_id);
+            let ice = SignalingMessage::IceCandidate {
+                peer_id: peer_id.to_string(),
+                target_peer_id: target_peer_id.clone(),
+                candidate,
+                sdp_mid,
+                sdp_mline_index,
+            };
+
+            let senders = state.signaling_state.peer_senders.read().await;
+            if let Some(sender) = senders.get(&target_peer_id) {
+                let _ = sender.send(ice);
+            } else {
+                debug!("Target peer {} not found for ICE relay", target_peer_id);
+            }
+        }
+
+        SignalingMessage::PeerList { .. } | SignalingMessage::Error { .. } => {
+            // These are server-to-client messages, ignore if received from client
+            debug!("Ignoring server-only message type from client {}", peer_id);
+        }
+    }
+}
+
+/// Clean up a peer's presence in the signaling system
+async fn cleanup_signaling_peer(
+    state: &AppState,
+    peer_id: &str,
+    current_stream_id: &Option<String>,
+) {
+    // Remove from peer senders
+    {
+        let mut senders = state.signaling_state.peer_senders.write().await;
+        senders.remove(peer_id);
+    }
+
+    // Remove from stream
+    if let Some(stream_id) = current_stream_id {
+        let mut streams = state.signaling_state.streams.write().await;
+        if let Some(peers) = streams.get_mut(stream_id) {
+            peers.retain(|p| p.peer_id != peer_id);
+
+            // Notify remaining peers
+            let leave_msg = SignalingMessage::PeerLeave {
+                peer_id: peer_id.to_string(),
+            };
+
+            let senders = state.signaling_state.peer_senders.read().await;
+            for other_peer in peers.iter() {
+                if let Some(sender) = senders.get(&other_peer.peer_id) {
+                    let _ = sender.send(leave_msg.clone());
+                }
+            }
+
+            // Clean up empty streams
+            if peers.is_empty() {
+                streams.remove(stream_id);
+                debug!("Removed empty stream: {}", stream_id);
+            }
+        }
+    }
+
+    info!("Cleaned up signaling peer: {}", peer_id);
 }
 
 /// Default HTML page when web_root is not available

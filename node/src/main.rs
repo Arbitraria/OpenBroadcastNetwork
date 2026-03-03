@@ -498,6 +498,7 @@ async fn run_web_viewer(
             config: config_clone,
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
+            signaling_state: Arc::new(web_server::SignalingState::default()),
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -541,6 +542,7 @@ async fn run_web_viewer(
             config: config_clone,
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
+            signaling_state: Arc::new(web_server::SignalingState::default()),
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);

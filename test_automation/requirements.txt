@@ -1,0 +1,23 @@
+# Test automation dependencies for OpenBroadcastNetwork
+# Install with: pip install -r requirements.txt
+
+# Browser automation
+playwright>=1.40.0
+
+# Testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-timeout>=2.2.0
+pytest-html>=4.1.0
+
+# Process management
+psutil>=5.9.0
+
+# WebSocket client
+websockets>=12.0
+
+# HTTP client
+aiohttp>=3.9.0
+
+# Utilities
+python-dateutil>=2.8.0

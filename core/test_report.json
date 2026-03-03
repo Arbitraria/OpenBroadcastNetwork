@@ -5,10 +5,10 @@
       "module": "pubsub",
       "status": "fail",
       "error": "Any { .. }",
-      "duration_ms": 1001,
+      "duration_ms": 1002,
       "timestamp": {
-        "secs_since_epoch": 1772229447,
-        "nanos_since_epoch": 828611378
+        "secs_since_epoch": 1772330270,
+        "nanos_since_epoch": 227549709
       }
     }
   ]

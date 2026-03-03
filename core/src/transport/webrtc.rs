@@ -7,6 +7,7 @@
 use crate::transport::interface::{
     Transport, TransportEvent, TransportError, Connection, ConnectionId
 };
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 use std::net::SocketAddr;
@@ -24,6 +25,86 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::interceptor::registry::Registry;
 use tracing::{debug, error, info, warn};
+
+/// WebRTC signaling messages for peer connection establishment
+///
+/// These messages are exchanged via a signaling server (WebSocket) to establish
+/// direct peer-to-peer WebRTC connections between browsers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SignalingMessage {
+    /// SDP offer from initiating peer
+    #[serde(rename = "offer")]
+    Offer {
+        /// Unique identifier of the sending peer
+        peer_id: String,
+        /// Target peer ID (if directed)
+        target_peer_id: Option<String>,
+        /// SDP offer description
+        sdp: String,
+    },
+    /// SDP answer in response to an offer
+    #[serde(rename = "answer")]
+    Answer {
+        /// Unique identifier of the sending peer
+        peer_id: String,
+        /// Target peer ID
+        target_peer_id: String,
+        /// SDP answer description
+        sdp: String,
+    },
+    /// ICE candidate for NAT traversal
+    #[serde(rename = "ice_candidate")]
+    IceCandidate {
+        /// Unique identifier of the sending peer
+        peer_id: String,
+        /// Target peer ID
+        target_peer_id: String,
+        /// ICE candidate string
+        candidate: String,
+        /// SDP media identifier
+        sdp_mid: Option<String>,
+        /// SDP media line index
+        sdp_mline_index: Option<u32>,
+    },
+    /// Peer joining a stream
+    #[serde(rename = "peer_join")]
+    PeerJoin {
+        /// Unique identifier of the peer
+        peer_id: String,
+        /// Stream ID the peer wants to join
+        stream_id: String,
+        /// Whether this peer is a publisher
+        is_publisher: bool,
+    },
+    /// Peer leaving a stream
+    #[serde(rename = "peer_leave")]
+    PeerLeave {
+        /// Unique identifier of the peer
+        peer_id: String,
+    },
+    /// List of peers in a stream (sent to newly joined peers)
+    #[serde(rename = "peer_list")]
+    PeerList {
+        /// List of peer IDs currently in the stream
+        peers: Vec<PeerInfo>,
+    },
+    /// Error message from signaling server
+    #[serde(rename = "error")]
+    Error {
+        /// Error message
+        message: String,
+    },
+}
+
+/// Information about a peer in the signaling system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerInfo {
+    /// Unique identifier of the peer
+    pub peer_id: String,
+    /// Whether this peer is a publisher
+    pub is_publisher: bool,
+}
 
 /// Configuration for WebRTC transport
 #[derive(Debug, Clone)]

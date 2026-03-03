@@ -1470,47 +1470,82 @@ impl Mp4Parser {
             );
         }
 
+        // Get video timescale for proper timing
+        let video_track = self.tracks.iter().find(|t| t.media_type == "vide");
+        let timescale = video_track.map(|t| t.timescale).unwrap_or(1000);
+        info!("Using timescale {} for fragment timing", timescale);
+
+        // Count how many moof+mdat pairs we have to estimate duration per fragment
+        let fragment_count = self
+            .boxes
+            .iter()
+            .filter(|b| b.header.box_type == "moof")
+            .count();
+        let total_duration = video_track.map(|t| t.duration).unwrap_or(0);
+
+        // Estimate frame duration based on total duration and fragment count
+        let frame_duration = if fragment_count > 0 && total_duration > 0 {
+            total_duration / fragment_count as u64
+        } else {
+            // Default to ~30fps worth of samples
+            timescale as u64 / 30
+        };
+        info!(
+            "Estimated frame duration: {} timescale units ({} fragments, total duration {})",
+            frame_duration, fragment_count, total_duration
+        );
+
         // Create media segments from moof + mdat pairs
         let mut i = 0;
+        let mut fragment_index = 0u64;
         while i < self.boxes.len() {
             if self.boxes[i].header.box_type == "moof"
                 && i + 1 < self.boxes.len()
                 && self.boxes[i + 1].header.box_type == "mdat"
             {
-                let mut media_data = Vec::new();
-
                 // Fix TFHD flags in moof box for MSE compatibility
                 let fixed_moof_data = self.fix_moof_tfhd_flags(&self.boxes[i])?;
-                media_data.extend_from_slice(&fixed_moof_data); // moof with MSE-compatible TFHD
+
+                // Calculate decode time for this fragment
+                let base_media_decode_time = fragment_index * frame_duration;
+
+                // Ensure moof has proper tfdt box with timing
+                let moof_with_tfdt = self.ensure_moof_has_tfdt(
+                    &fixed_moof_data,
+                    base_media_decode_time,
+                    timescale,
+                )?;
+
+                let mut media_data = Vec::new();
+                media_data.extend_from_slice(&moof_with_tfdt);
                 media_data.extend_from_slice(&self.serialize_box(&self.boxes[i + 1])); // mdat
 
                 let media_data_len = media_data.len();
 
-                // Calculate timestamp and duration based on segment index
-                let segment_index = segments.len() - 1; // Subtract 1 for init segment
-                let timestamp = if segment_index > 0 {
-                    Some((segment_index as u64) * 1000)
-                } else {
-                    Some(0)
-                };
-                let duration = Some(1000); // Default 1 second duration
+                // Calculate timestamp in milliseconds for MseSegment metadata
+                let timestamp_ms = (base_media_decode_time * 1000) / timescale as u64;
+                let duration_ms = (frame_duration * 1000) / timescale as u64;
 
                 // Determine if this is a keyframe by checking for SPS/PPS or using segment index
-                let is_keyframe = self.is_likely_keyframe(&media_data, segment_index);
+                let is_keyframe = self.is_likely_keyframe(&media_data, fragment_index as usize);
 
                 segments.push(MseSegment {
                     segment_type: "media".to_string(),
                     data: media_data,
-                    timestamp,
-                    duration,
+                    timestamp: Some(timestamp_ms),
+                    duration: Some(duration_ms),
                     is_keyframe,
                 });
 
                 debug!(
-                    "Created media segment {} ({} bytes)",
-                    segments.len() - 1,
-                    media_data_len
+                    "Created media segment {} ({} bytes, decode_time={}, ts={}ms)",
+                    fragment_index,
+                    media_data_len,
+                    base_media_decode_time,
+                    timestamp_ms
                 );
+
+                fragment_index += 1;
                 i += 2; // Skip both moof and mdat
             } else {
                 i += 1;
@@ -1733,31 +1768,52 @@ impl Mp4Parser {
         })
     }
 
-    /// Create a minimal moof (movie fragment) box
+    /// Create a minimal moof (movie fragment) box with timing
     ///
     /// This creates the most basic moof box structure needed for MSE.
-    /// A proper implementation would include more detailed track information.
+    /// Includes tfdt (Track Fragment Decode Time) which is required by MSE.
     fn create_minimal_moof(&self, data_size: u32) -> Result<Vec<u8>, io::Error> {
+        // Default to sequence 1 and decode time 0
+        self.create_minimal_moof_with_timing(data_size, 1, 0, 1000)
+    }
+
+    /// Create a minimal moof (movie fragment) box with timing information
+    ///
+    /// This creates the most basic moof box structure needed for MSE.
+    /// Includes tfdt (Track Fragment Decode Time) which is required by MSE to know
+    /// when each fragment should be decoded/presented.
+    ///
+    /// # Arguments
+    /// * `data_size` - Size of the mdat content that follows
+    /// * `sequence_number` - Fragment sequence number (1-based)
+    /// * `base_media_decode_time` - Decode time in media timescale units
+    /// * `sample_duration` - Duration of this sample in timescale units
+    fn create_minimal_moof_with_timing(
+        &self,
+        data_size: u32,
+        sequence_number: u32,
+        base_media_decode_time: u64,
+        sample_duration: u32,
+    ) -> Result<Vec<u8>, io::Error> {
         let mut moof_data = Vec::new();
 
         // moof box header will be added at the end
         let mut moof_content = Vec::new();
 
         // Add mfhd (movie fragment header)
-        let mfhd_content = vec![
-            0, 0, 0, 0, // version + flags
-            0, 0, 0, 1, // sequence number
-        ];
+        let mut mfhd_content = vec![0, 0, 0, 0]; // version + flags
+        mfhd_content.extend_from_slice(&sequence_number.to_be_bytes()); // sequence number
         let mfhd_size = 8 + mfhd_content.len() as u32;
         moof_content.extend_from_slice(&mfhd_size.to_be_bytes());
         moof_content.extend_from_slice(b"mfhd");
         moof_content.extend_from_slice(&mfhd_content);
 
-        // Add traf (track fragment) - simplified
+        // Add traf (track fragment)
         let mut traf_content = Vec::new();
 
         // tfhd (track fragment header) with MSE-compatible flags
-        let tfhd_content = vec![
+        // flags = 0x020038: default-base-is-moof + default-sample-duration-present + default-sample-size-present
+        let mut tfhd_content = vec![
             0, // version
             0x02, 0x00,
             0x38, // flags = 0x020038 (MSE-compatible: default-base-is-moof + other required flags)
@@ -1768,21 +1824,31 @@ impl Mp4Parser {
         traf_content.extend_from_slice(b"tfhd");
         traf_content.extend_from_slice(&tfhd_content);
 
-        // trun (track run) - simplified
-        let trun_content = vec![
-            0,
-            0,
-            0,
-            0, // version + flags
-            0,
-            0,
-            0,
-            1, // sample_count = 1
-            data_size.to_be_bytes()[0],
-            data_size.to_be_bytes()[1],
-            data_size.to_be_bytes()[2],
-            data_size.to_be_bytes()[3], // data_offset
+        // tfdt (track fragment decode time) - REQUIRED for MSE!
+        // This tells MSE when this fragment should be presented
+        // Version 1 uses 64-bit baseMediaDecodeTime
+        let mut tfdt_content = vec![
+            1, // version = 1 (64-bit time)
+            0, 0, 0, // flags
         ];
+        tfdt_content.extend_from_slice(&base_media_decode_time.to_be_bytes()); // 64-bit baseMediaDecodeTime
+        let tfdt_size = 8 + tfdt_content.len() as u32;
+        traf_content.extend_from_slice(&tfdt_size.to_be_bytes());
+        traf_content.extend_from_slice(b"tfdt");
+        traf_content.extend_from_slice(&tfdt_content);
+
+        // trun (track run)
+        // flags: 0x000301 = data-offset-present + sample-duration-present + sample-size-present
+        let moof_size_estimate = 8 + 16 + 8 + 12 + 8 + 20 + 8 + 20; // rough estimate for data_offset
+        let data_offset = moof_size_estimate + 8; // offset to mdat content (after moof + mdat header)
+        let mut trun_content = vec![
+            0, // version
+            0, 0x03, 0x01, // flags: data-offset-present + sample-duration-present + sample-size-present
+        ];
+        trun_content.extend_from_slice(&1u32.to_be_bytes()); // sample_count = 1
+        trun_content.extend_from_slice(&(data_offset as i32).to_be_bytes()); // data_offset (signed)
+        trun_content.extend_from_slice(&sample_duration.to_be_bytes()); // sample_duration
+        trun_content.extend_from_slice(&data_size.to_be_bytes()); // sample_size
         let trun_size = 8 + trun_content.len() as u32;
         traf_content.extend_from_slice(&trun_size.to_be_bytes());
         traf_content.extend_from_slice(b"trun");
@@ -1800,7 +1866,12 @@ impl Mp4Parser {
         moof_data.extend_from_slice(b"moof");
         moof_data.extend_from_slice(&moof_content);
 
-        debug!("Created minimal moof box ({} bytes)", moof_data.len());
+        debug!(
+            "Created minimal moof box with tfdt ({} bytes, decode_time={}, duration={})",
+            moof_data.len(),
+            base_media_decode_time,
+            sample_duration
+        );
         Ok(moof_data)
     }
 
@@ -2157,6 +2228,193 @@ impl Mp4Parser {
         info!("  Added: default-base-is-moof (relative addressing for MSE)");
 
         true
+    }
+
+    /// Ensure moof box has a proper tfdt (Track Fragment Decode Time) box
+    ///
+    /// MSE requires tfdt boxes to know when each fragment should be presented.
+    /// This function adds or updates the tfdt box with the given decode time.
+    ///
+    /// # Arguments
+    /// * `moof_data` - The moof box data (including box header)
+    /// * `base_media_decode_time` - Decode time in timescale units
+    /// * `timescale` - Media timescale (e.g., 1000 for milliseconds, 90000 for 90kHz)
+    ///
+    /// # Returns
+    /// Modified moof data with proper tfdt box
+    fn ensure_moof_has_tfdt(
+        &self,
+        moof_data: &[u8],
+        base_media_decode_time: u64,
+        _timescale: u32,
+    ) -> Result<Vec<u8>, std::io::Error> {
+        // moof structure: [size:4][type:4][mfhd:...][traf:[tfhd][tfdt?][trun]...]
+        // We need to find traf and ensure it has a tfdt with correct time
+
+        if moof_data.len() < 8 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "moof data too small",
+            ));
+        }
+
+        // Parse moof box
+        let moof_size = u32::from_be_bytes([moof_data[0], moof_data[1], moof_data[2], moof_data[3]]);
+        let moof_type = &moof_data[4..8];
+        if moof_type != b"moof" {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Not a moof box",
+            ));
+        }
+
+        let mut result = Vec::new();
+        let mut cursor = 8; // Skip moof header
+
+        // We'll rebuild the moof with proper tfdt
+        let mut moof_content = Vec::new();
+
+        while cursor + 8 <= moof_size as usize && cursor < moof_data.len() {
+            let child_size = u32::from_be_bytes([
+                moof_data[cursor],
+                moof_data[cursor + 1],
+                moof_data[cursor + 2],
+                moof_data[cursor + 3],
+            ]) as usize;
+            let child_type = std::str::from_utf8(&moof_data[cursor + 4..cursor + 8])
+                .unwrap_or("????");
+
+            if child_size == 0 || cursor + child_size > moof_data.len() {
+                break;
+            }
+
+            if child_type == "traf" {
+                // Process traf box - add/update tfdt
+                let traf_data = &moof_data[cursor..cursor + child_size];
+                let new_traf = self.ensure_traf_has_tfdt(traf_data, base_media_decode_time)?;
+                moof_content.extend_from_slice(&new_traf);
+            } else {
+                // Copy other boxes (mfhd, etc.) as-is
+                moof_content.extend_from_slice(&moof_data[cursor..cursor + child_size]);
+            }
+
+            cursor += child_size;
+        }
+
+        // Build new moof box
+        let new_moof_size = 8 + moof_content.len() as u32;
+        result.extend_from_slice(&new_moof_size.to_be_bytes());
+        result.extend_from_slice(b"moof");
+        result.extend_from_slice(&moof_content);
+
+        debug!(
+            "Updated moof with tfdt: {} bytes -> {} bytes, decode_time={}",
+            moof_data.len(),
+            result.len(),
+            base_media_decode_time
+        );
+
+        Ok(result)
+    }
+
+    /// Ensure traf box has a proper tfdt box
+    fn ensure_traf_has_tfdt(
+        &self,
+        traf_data: &[u8],
+        base_media_decode_time: u64,
+    ) -> Result<Vec<u8>, std::io::Error> {
+        if traf_data.len() < 8 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "traf data too small",
+            ));
+        }
+
+        let traf_size = u32::from_be_bytes([traf_data[0], traf_data[1], traf_data[2], traf_data[3]]) as usize;
+
+        let mut traf_content = Vec::new();
+        let mut cursor = 8; // Skip traf header
+        let mut has_tfdt = false;
+        let mut tfhd_data: Option<Vec<u8>> = None;
+
+        // Parse traf children
+        while cursor + 8 <= traf_size && cursor < traf_data.len() {
+            let child_size = u32::from_be_bytes([
+                traf_data[cursor],
+                traf_data[cursor + 1],
+                traf_data[cursor + 2],
+                traf_data[cursor + 3],
+            ]) as usize;
+            let child_type = std::str::from_utf8(&traf_data[cursor + 4..cursor + 8])
+                .unwrap_or("????");
+
+            if child_size == 0 || cursor + child_size > traf_data.len() {
+                break;
+            }
+
+            match child_type {
+                "tfhd" => {
+                    // Keep tfhd for later
+                    tfhd_data = Some(traf_data[cursor..cursor + child_size].to_vec());
+                }
+                "tfdt" => {
+                    // Replace existing tfdt with new one
+                    has_tfdt = true;
+                    let new_tfdt = self.create_tfdt_box(base_media_decode_time);
+                    traf_content.extend_from_slice(&new_tfdt);
+                }
+                _ => {
+                    // Copy other boxes (trun, etc.) as-is
+                    traf_content.extend_from_slice(&traf_data[cursor..cursor + child_size]);
+                }
+            }
+
+            cursor += child_size;
+        }
+
+        // Build new traf with correct order: tfhd, tfdt, trun...
+        let mut new_traf_content = Vec::new();
+
+        // Add tfhd first
+        if let Some(tfhd) = tfhd_data {
+            new_traf_content.extend_from_slice(&tfhd);
+        }
+
+        // Add tfdt if not already added
+        if !has_tfdt {
+            let new_tfdt = self.create_tfdt_box(base_media_decode_time);
+            new_traf_content.extend_from_slice(&new_tfdt);
+        }
+
+        // Add the rest (trun and others were collected in traf_content)
+        new_traf_content.extend_from_slice(&traf_content);
+
+        // Build new traf box
+        let new_traf_size = 8 + new_traf_content.len() as u32;
+        let mut result = Vec::new();
+        result.extend_from_slice(&new_traf_size.to_be_bytes());
+        result.extend_from_slice(b"traf");
+        result.extend_from_slice(&new_traf_content);
+
+        Ok(result)
+    }
+
+    /// Create a tfdt (Track Fragment Decode Time) box
+    fn create_tfdt_box(&self, base_media_decode_time: u64) -> Vec<u8> {
+        // tfdt version 1 with 64-bit baseMediaDecodeTime
+        let mut tfdt = Vec::new();
+
+        // Content: version (1 byte) + flags (3 bytes) + baseMediaDecodeTime (8 bytes)
+        let content_size = 1 + 3 + 8;
+        let box_size = 8 + content_size;
+
+        tfdt.extend_from_slice(&(box_size as u32).to_be_bytes());
+        tfdt.extend_from_slice(b"tfdt");
+        tfdt.push(1); // version = 1 (64-bit time)
+        tfdt.extend_from_slice(&[0, 0, 0]); // flags
+        tfdt.extend_from_slice(&base_media_decode_time.to_be_bytes());
+
+        tfdt
     }
 
     /// Create a video-only moov box by removing audio tracks
