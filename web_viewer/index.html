@@ -88,7 +88,8 @@
             <button id="playBtn" disabled>Play</button>
             <button id="clearBtn">Clear Log</button>
             <select id="connectionModeSelect">
-                <option value="auto">Auto (WebRTC with fallback)</option>
+                <option value="auto">Auto (WebSocket + P2P relay)</option>
+                <option value="p2p-first">P2P First (true mesh)</option>
                 <option value="webrtc">WebRTC Only</option>
                 <option value="websocket">WebSocket Only</option>
             </select>
@@ -541,13 +542,118 @@
         /**
          * Connect using the selected transport mode (WebRTC or WebSocket)
          *
-         * Architecture:
-         * - Always connect WebSocket first to get stream data from server
-         * - This client becomes a "publisher" to other P2P peers
-         * - Also connect WebRTC signaling to allow other peers to connect
-         * - Subscribers connect via WebRTC and receive data from us
+         * Modes:
+         * - "auto": WebSocket first, P2P for relay (current behavior)
+         * - "p2p-first": Try P2P first, fall back to WebSocket if no peers
+         * - "webrtc": WebRTC only, fail if no peers
+         * - "websocket": WebSocket only, no P2P
          */
         async function connectTransport() {
+            if (connectionMode === 'p2p-first') {
+                await connectP2PFirst();
+            } else if (connectionMode === 'websocket') {
+                logMessage('Using WebSocket-only transport...', 'info');
+                updateTransportMode('WebSocket');
+                connectWebSocket();
+            } else {
+                // 'auto' or 'webrtc' mode - WebSocket + P2P relay
+                await connectWebSocketFirst();
+            }
+        }
+
+        /**
+         * P2P-first connection mode:
+         * 1. Connect to signaling as subscriber
+         * 2. Check for publishers
+         * 3. If publishers exist, wait for P2P stream
+         * 4. If no publishers or timeout, become publisher with WebSocket
+         */
+        async function connectP2PFirst() {
+            logMessage('P2P-first mode: Looking for existing publishers...', 'info');
+            updateTransportMode('P2P (connecting)');
+
+            try {
+                // Connect to signaling as subscriber first
+                await connectWebRTC(false);
+
+                // Wait for peer list and check for publishers
+                const hasPublishers = await waitForPublishers(3000);
+
+                if (hasPublishers) {
+                    logMessage('Found publishers, waiting for P2P stream...', 'info');
+                    updateTransportMode('WebRTC P2P (subscriber)');
+
+                    // Set timeout for receiving actual data
+                    p2pFallbackTimeout = setTimeout(() => {
+                        if (!serverCodecReceived) {
+                            logMessage('No P2P data received, becoming publisher...', 'warning');
+                            becomePublisher();
+                        }
+                    }, P2P_TIMEOUT_MS);
+                } else {
+                    logMessage('No publishers found, becoming the seed publisher...', 'info');
+                    becomePublisher();
+                }
+            } catch (error) {
+                logMessage(`P2P connection failed: ${error.message}`, 'warning');
+                logMessage('Falling back to WebSocket...', 'info');
+                becomePublisher();
+            }
+        }
+
+        /**
+         * Wait for peer list and check if publishers exist
+         */
+        function waitForPublishers(timeout) {
+            return new Promise((resolve) => {
+                let resolved = false;
+
+                // Set up callback for peer list
+                if (webrtcClient) {
+                    webrtcClient.onPeerListReceived = (publishers, subscribers) => {
+                        if (!resolved) {
+                            resolved = true;
+                            resolve(publishers.length > 0);
+                        }
+                    };
+                }
+
+                // Timeout if no peer list received
+                setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        logMessage('Peer list timeout', 'warning');
+                        resolve(false);
+                    }
+                }, timeout);
+            });
+        }
+
+        /**
+         * Become a publisher by connecting to WebSocket and switching role
+         */
+        function becomePublisher() {
+            logMessage('Connecting to WebSocket as publisher...', 'info');
+            updateTransportMode('WebSocket + P2P (publisher)');
+
+            // Connect WebSocket for stream source
+            connectWebSocket();
+
+            // Switch WebRTC client to publisher mode and re-announce
+            if (webrtcClient) {
+                webrtcClient.becomePublisher();
+                isPublisher = true;
+                logMessage('Switched to publisher mode', 'success');
+            } else {
+                isPublisher = true;
+            }
+        }
+
+        /**
+         * WebSocket-first connection mode (original behavior):
+         * Connect WebSocket first, use P2P for relay
+         */
+        async function connectWebSocketFirst() {
             const useWebRTC = shouldUseWebRTC();
 
             // Always connect WebSocket first - this is our stream source
@@ -724,7 +830,12 @@
                 updateTransportMode('WebSocket (fallback)');
             } else {
                 logMessage('Reconnecting to WebSocket for fallback...', 'info');
-                connectWebSocket();
+                // In p2p-first mode, become a publisher when falling back
+                if (connectionMode === 'p2p-first') {
+                    becomePublisher();
+                } else {
+                    connectWebSocket();
+                }
             }
         }
 

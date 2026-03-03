@@ -42,6 +42,7 @@ class WebRtcStreamClient {
         // P2P streaming callbacks
         this.onStreamInfo = null;       // Called when stream_info is received from peer
         this.onSegmentReceived = null;  // Called when a segment is received: (header, buffer)
+        this.onPeerListReceived = null; // Called when peer list is received: (publishers, subscribers)
 
         // ICE servers configuration
         this.iceServers = [
@@ -178,6 +179,28 @@ class WebRtcStreamClient {
     }
 
     /**
+     * Switch to publisher mode and re-announce
+     * Used when a subscriber becomes a publisher (P2P-first mode fallback)
+     */
+    becomePublisher() {
+        if (this.isPublisher) {
+            this.log('info', 'Already a publisher');
+            return;
+        }
+
+        this.isPublisher = true;
+        this.log('info', 'Switching to publisher mode');
+
+        // Re-announce as publisher so other peers know
+        this.sendSignaling({
+            type: 'peer_update',
+            peer_id: this.localPeerId,
+            stream_id: this.streamId,
+            is_publisher: true
+        });
+    }
+
+    /**
      * Send a signaling message
      */
     sendSignaling(message) {
@@ -198,10 +221,18 @@ class WebRtcStreamClient {
         switch (message.type) {
             case 'peer_list':
                 // List of existing peers in the stream
-                this.log('info', `Received peer list: ${message.peers.length} peers`);
-                for (const peer of message.peers) {
-                    // As subscriber, initiate connections to publishers
-                    if (!this.isPublisher && peer.is_publisher) {
+                const publishers = message.peers.filter(p => p.is_publisher);
+                const subscribers = message.peers.filter(p => !p.is_publisher);
+                this.log('info', `Received peer list: ${publishers.length} publishers, ${subscribers.length} subscribers`);
+
+                // Notify callback
+                if (this.onPeerListReceived) {
+                    this.onPeerListReceived(publishers, subscribers);
+                }
+
+                // As subscriber, initiate connections to publishers
+                for (const peer of publishers) {
+                    if (!this.isPublisher) {
                         await this.initiateConnection(peer.peer_id);
                     }
                 }
