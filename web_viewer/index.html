@@ -168,6 +168,11 @@
         let connectionMode = 'auto'; // 'auto', 'webrtc', or 'websocket'
         let currentTransport = null; // 'webrtc' or 'websocket'
         let streamId = 'default-stream'; // Stream ID for WebRTC
+
+        // P2P streaming state
+        let isPublisher = false;  // Set when we receive data from WebSocket
+        let p2pFallbackTimeout = null;
+        const P2P_TIMEOUT_MS = 5000; // Time to wait for P2P peers before fallback
         let videoSourceBuffer = null;
         let audioSourceBuffer = null;
         let websocket = null;
@@ -535,40 +540,36 @@
 
         /**
          * Connect using the selected transport mode (WebRTC or WebSocket)
+         *
+         * Architecture:
+         * - Always connect WebSocket first to get stream data from server
+         * - This client becomes a "publisher" to other P2P peers
+         * - Also connect WebRTC signaling to allow other peers to connect
+         * - Subscribers connect via WebRTC and receive data from us
          */
         async function connectTransport() {
             const useWebRTC = shouldUseWebRTC();
 
+            // Always connect WebSocket first - this is our stream source
+            logMessage('Connecting to WebSocket for stream source...', 'info');
+            connectWebSocket();
+
             if (useWebRTC) {
-                logMessage('🔗 Attempting WebRTC P2P connection...', 'info');
-                updateTransportMode('WebRTC (connecting)');
+                logMessage('Setting up WebRTC P2P for peer streaming...', 'info');
+                updateTransportMode('WebSocket + WebRTC P2P');
 
                 try {
-                    await connectWebRTC();
-                    // WebRTC connected successfully, but we still need WebSocket for stream_info
-                    // Connect WebSocket as well for initialization data
-                    logMessage('🔗 Also connecting WebSocket for stream initialization...', 'info');
-                    connectWebSocket();
+                    // Connect as publisher since we have WebSocket source
+                    await connectWebRTC(true);
+                    logMessage('WebRTC P2P ready - will relay to connected peers', 'success');
                 } catch (error) {
-                    logMessage(`⚠️ WebRTC connection failed: ${error.message}`, 'warning');
-
-                    if (connectionMode !== 'webrtc') {
-                        // Fall back to WebSocket
-                        logMessage('📡 Falling back to WebSocket transport...', 'info');
-                        updateTransportMode('WebSocket (fallback)');
-                        connectWebSocket();
-                    } else {
-                        logMessage('❌ WebRTC-only mode - connection failed', 'error');
-                        connecting = false;
-                        updateStatus('WebRTC connection failed', 'error');
-                        document.getElementById('connectBtn').disabled = false;
-                        document.getElementById('disconnectBtn').disabled = true;
-                    }
+                    logMessage(`WebRTC setup failed: ${error.message}`, 'warning');
+                    logMessage('Continuing with WebSocket-only mode', 'info');
+                    updateTransportMode('WebSocket');
                 }
             } else {
-                logMessage('📡 Using WebSocket transport...', 'info');
+                logMessage('Using WebSocket-only transport...', 'info');
                 updateTransportMode('WebSocket');
-                connectWebSocket();
             }
         }
 
@@ -595,32 +596,94 @@
 
         /**
          * Connect using WebRTC for P2P streaming
+         * @param {boolean} asPublisher - Whether to connect as publisher (has WebSocket source)
          */
-        async function connectWebRTC() {
+        async function connectWebRTC(asPublisher = false) {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const signalingUrl = `${protocol}//${window.location.host}/webrtc/signal`;
 
-            logMessage(`Connecting to signaling server: ${signalingUrl}`);
+            logMessage(`Connecting to signaling server: ${signalingUrl} (${asPublisher ? 'publisher' : 'subscriber'})`);
 
-            // Create WebRTC client as subscriber (receiving stream)
-            webrtcClient = new WebRtcStreamClient(signalingUrl, streamId, false);
+            // Create WebRTC client
+            isPublisher = asPublisher;
+            webrtcClient = new WebRtcStreamClient(signalingUrl, streamId, asPublisher);
 
-            // Set up callbacks
+            // Set up legacy callback for backward compatibility
             webrtcClient.onStreamData = (data) => {
                 // Process received stream data (same as WebSocket binary data)
                 processStreamChunk(data);
             };
 
+            // P2P streaming callbacks for subscribers
+            webrtcClient.onStreamInfo = (streamInfo) => {
+                logMessage('Received stream_info via P2P', 'success');
+                // Set up MediaSource with codec info from peer
+                let hasAudio = false;
+                if (streamInfo.video && streamInfo.video.mime_type) {
+                    detectedVideoMimeType = streamInfo.video.mime_type;
+                    logMessage(`P2P video codec: ${detectedVideoMimeType}`);
+                }
+                if (streamInfo.audio && streamInfo.audio.mime_type) {
+                    detectedAudioMimeType = streamInfo.audio.mime_type;
+                    logMessage(`P2P audio codec: ${detectedAudioMimeType}`);
+
+                    // Check for AC-3 (unsupported)
+                    if (detectedAudioMimeType.includes('ac-3') || detectedAudioMimeType.includes('AC-3')) {
+                        logMessage('AC-3 audio not supported, falling back to video-only', 'warning');
+                        detectedAudioMimeType = null;
+                    } else {
+                        hasAudio = true;
+                    }
+                }
+
+                serverCodecReceived = true;
+
+                // Set up MediaSource if not already done
+                if (!mediaSource || mediaSource.readyState === 'closed') {
+                    setupMediaSourceWithCodec(hasAudio);
+                }
+
+                // Clear fallback timeout - we have P2P working
+                if (p2pFallbackTimeout) {
+                    clearTimeout(p2pFallbackTimeout);
+                    p2pFallbackTimeout = null;
+                    logMessage('P2P stream established, cancelled WebSocket fallback', 'success');
+                }
+            };
+
+            webrtcClient.onSegmentReceived = (header, buffer) => {
+                // Process segment from P2P peer
+                logMessage(`P2P segment: ${header.segment_type} seq=${header.sequence} (${formatBytes(buffer.byteLength)})`);
+
+                // Set chunk type based on segment header
+                nextChunkType = header.segment_type;
+
+                // Process the segment through normal path
+                processStreamChunk(buffer);
+
+                // Clear fallback timeout on first segment
+                if (p2pFallbackTimeout) {
+                    clearTimeout(p2pFallbackTimeout);
+                    p2pFallbackTimeout = null;
+                }
+            };
+
             webrtcClient.onPeerConnected = (peerId) => {
-                logMessage(`🎉 P2P connected to peer: ${peerId}`, 'success');
+                logMessage(`P2P connected to peer: ${peerId.substring(0, 8)}`, 'success');
                 updatePeerCount();
                 currentTransport = 'webrtc';
                 updateTransportMode('WebRTC P2P');
             };
 
             webrtcClient.onPeerDisconnected = (peerId) => {
-                logMessage(`Peer disconnected: ${peerId}`, 'warning');
+                logMessage(`Peer disconnected: ${peerId.substring(0, 8)}`, 'warning');
                 updatePeerCount();
+
+                // Check if we need to fall back to WebSocket
+                if (webrtcClient.getConnectedPeerCount() === 0 && !isPublisher) {
+                    logMessage('All peers disconnected, falling back to WebSocket...', 'warning');
+                    fallbackToWebSocket();
+                }
             };
 
             webrtcClient.onError = (error) => {
@@ -638,6 +701,31 @@
             await webrtcClient.connect();
 
             logMessage('WebRTC signaling connected, waiting for peers...', 'success');
+
+            // Set up fallback timeout for subscribers
+            if (!asPublisher && connectionMode === 'auto') {
+                p2pFallbackTimeout = setTimeout(() => {
+                    if (webrtcClient.getConnectedPeerCount() === 0) {
+                        logMessage('No P2P peers found within timeout, using WebSocket...', 'warning');
+                        // WebSocket should already be connected, just note the fallback
+                        updateTransportMode('WebSocket (P2P unavailable)');
+                    }
+                }, P2P_TIMEOUT_MS);
+            }
+        }
+
+        /**
+         * Fall back to WebSocket transport when P2P fails
+         */
+        function fallbackToWebSocket() {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                logMessage('Already connected to WebSocket, continuing with fallback', 'info');
+                currentTransport = 'websocket';
+                updateTransportMode('WebSocket (fallback)');
+            } else {
+                logMessage('Reconnecting to WebSocket for fallback...', 'info');
+                connectWebSocket();
+            }
         }
 
         /**
@@ -707,27 +795,82 @@
                 if (data instanceof ArrayBuffer || data instanceof Blob) {
                     // Handle binary streaming data
                     console.log('Received binary data:', data.constructor.name, 'size:', data.size || data.byteLength);
-                    
+
                     if (data instanceof Blob) {
                         data.arrayBuffer().then(buffer => {
                             console.log('Converted Blob to ArrayBuffer:', buffer.byteLength, 'bytes');
-                            processStreamChunk(buffer);
+                            processStreamChunkAndForward(buffer);
                         }).catch(error => {
                             logMessage(`Failed to convert Blob to ArrayBuffer: ${error.message}`, 'error');
                         });
                     } else {
                         console.log('Processing ArrayBuffer directly:', data.byteLength, 'bytes');
-                        processStreamChunk(data);
+                        processStreamChunkAndForward(data);
                     }
                 } else {
                     // Handle JSON control messages
                     console.log('Received text data:', typeof data, 'length:', data.length);
                     const message = JSON.parse(data);
-                    handleControlMessage(message);
+                    handleControlMessageAndForward(message);
                 }
             } catch (error) {
                 logMessage(`Error handling stream data: ${error.message}`, 'error');
             }
+        }
+
+        /**
+         * Process stream chunk locally and forward to P2P peers
+         */
+        function processStreamChunkAndForward(buffer) {
+            // Process locally first
+            processStreamChunk(buffer);
+
+            // Forward to P2P peers if we're a publisher with connected peers
+            if (webrtcClient && webrtcClient.isPublisher && webrtcClient.getConnectedPeerCount() > 0) {
+                const chunkType = nextChunkType || 'video';
+                const isKeyframe = detectKeyframe(buffer);
+                webrtcClient.forwardSegmentToPeers(buffer, chunkType, isKeyframe);
+            }
+        }
+
+        /**
+         * Handle control message locally and forward to P2P peers
+         */
+        function handleControlMessageAndForward(message) {
+            // Process locally
+            handleControlMessage(message);
+
+            // Cache stream info for P2P forwarding
+            if (message.type === 'stream_info' && webrtcClient && webrtcClient.isPublisher) {
+                webrtcClient.cacheStreamInfo(message.data);
+            }
+
+            // Cache init segment info
+            if (message.type === 'chunk_info' && message.data.chunk_type === 'initialization') {
+                // Init segment will be cached when the binary arrives
+            }
+        }
+
+        /**
+         * Detect if a segment is a keyframe by checking for moof+mdat with sync sample
+         * This is a simplified heuristic - looks for moof box at start
+         */
+        function detectKeyframe(buffer) {
+            if (buffer.byteLength < 8) return false;
+
+            const view = new DataView(buffer);
+            const boxType = String.fromCharCode(
+                view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7)
+            );
+
+            // moof typically starts media segments; check for initialization instead
+            if (boxType === 'ftyp') {
+                return true; // Init segment is always needed
+            }
+
+            // For moof, we could parse deeper but this is a reasonable heuristic
+            // Every ~2 seconds of video typically has a keyframe
+            return boxType === 'moof' && (chunksReceived % 30 === 0);
         }
 
         function processStreamChunk(arrayBuffer) {
@@ -883,16 +1026,26 @@
                 
                 // Check if this looks like an initialization segment (starts with ftyp)
                 if (boxType === 'ftyp' && initSegmentExpected) {
-                    logMessage(`🎉 INITIALIZATION SEGMENT RECEIVED (${formatBytes(arrayBuffer.byteLength)})`, 'success');
-                    logMessage(`📊 Server codec: ${detectedAudioMimeType || 'unknown'}`);
-                    logMessage(`📊 Buffer codec: ${currentAudioMimeType || 'unknown'}`);
-                    
+                    logMessage(`INITIALIZATION SEGMENT RECEIVED (${formatBytes(arrayBuffer.byteLength)})`, 'success');
+                    logMessage(`Server codec: ${detectedAudioMimeType || 'unknown'}`);
+                    logMessage(`Buffer codec: ${currentAudioMimeType || 'unknown'}`);
+
+                    // Cache init segment for P2P forwarding
+                    if (webrtcClient && webrtcClient.isPublisher) {
+                        webrtcClient.cacheInitSegment(arrayBuffer);
+                    }
+
                     // Reset flag
                     initSegmentExpected = false;
                 } else if (boxType === 'ftyp') {
-                    logMessage(`📦 Detected MP4 initialization segment (${formatBytes(arrayBuffer.byteLength)})`, 'success');
+                    logMessage(`Detected MP4 initialization segment (${formatBytes(arrayBuffer.byteLength)})`, 'success');
+
+                    // Cache init segment for P2P forwarding
+                    if (webrtcClient && webrtcClient.isPublisher) {
+                        webrtcClient.cacheInitSegment(arrayBuffer);
+                    }
                 } else if (boxType === 'moof') {
-                    logMessage(`📦 Detected MP4 media segment (${formatBytes(arrayBuffer.byteLength)})`, 'success');
+                    logMessage(`Detected MP4 media segment (${formatBytes(arrayBuffer.byteLength)})`, 'success');
                 }
                 
                 // Common MP4 box types that MSE can handle
@@ -1038,26 +1191,26 @@
                 logMessage('No initialization chunks to assemble', 'warning');
                 return;
             }
-            
+
             if (initSegmentComplete) {
                 logMessage('Initialization segment already assembled and appended', 'info');
                 return;
             }
-            
+
             // Calculate total size
             const totalSize = initSegmentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
             logMessage(`Assembling ${initSegmentChunks.length} chunks into ${formatBytes(totalSize)} initialization segment`, 'info');
-            
+
             // Create combined buffer
             const combinedBuffer = new ArrayBuffer(totalSize);
             const combinedView = new Uint8Array(combinedBuffer);
-            
+
             let offset = 0;
             for (let chunk of initSegmentChunks) {
                 combinedView.set(chunk, offset);
                 offset += chunk.length;
             }
-            
+
             // Verify the assembled segment looks like valid MP4
             if (combinedBuffer.byteLength >= 8) {
                 const dataView = new DataView(combinedBuffer);
@@ -1068,20 +1221,31 @@
                 );
                 logMessage(`Assembled segment starts with: ${boxType} box (${boxSize} bytes)`, 'info');
             }
-            
+
+            // Cache init segment for P2P forwarding
+            if (webrtcClient && webrtcClient.isPublisher) {
+                webrtcClient.cacheInitSegment(combinedBuffer);
+                logMessage('Cached init segment for P2P late-joiners', 'info');
+            }
+
             // Try to append the assembled initialization segment
             if (mediaSourceReady && videoSourceBuffer && !videoSourceBuffer.updating) {
                 try {
                     videoSourceBuffer.appendBuffer(combinedBuffer);
-                    logMessage(`✅ Successfully appended ${formatBytes(totalSize)} initialization segment`, 'success');
+                    logMessage(`Successfully appended ${formatBytes(totalSize)} initialization segment`, 'success');
                     initSegmentComplete = true;
+
+                    // Forward init segment to P2P peers
+                    if (webrtcClient && webrtcClient.isPublisher && webrtcClient.getConnectedPeerCount() > 0) {
+                        webrtcClient.forwardSegmentToPeers(combinedBuffer, 'initialization', false);
+                    }
                 } catch (error) {
-                    logMessage(`❌ Failed to append assembled initialization segment: ${error.message}`, 'error');
+                    logMessage(`Failed to append assembled initialization segment: ${error.message}`, 'error');
                 }
             } else {
                 logMessage('VideoSourceBuffer not ready for initialization segment', 'warning');
             }
-            
+
             // Clear chunks after processing
             initSegmentChunks.length = 0;
         }
@@ -1303,6 +1467,12 @@
             connecting = false;
             mediaSourceReady = false;
 
+            // Clear P2P fallback timeout
+            if (p2pFallbackTimeout) {
+                clearTimeout(p2pFallbackTimeout);
+                p2pFallbackTimeout = null;
+            }
+
             // Close WebSocket
             if (websocket) {
                 websocket.close();
@@ -1317,6 +1487,7 @@
 
             // Reset transport state
             currentTransport = null;
+            isPublisher = false;
 
             // Reset state variables
             chunksReceived = 0;

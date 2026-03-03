@@ -33,11 +33,15 @@ class WebRtcStreamClient {
         this.signalingConnected = false;
 
         // Callbacks
-        this.onStreamData = null;       // Called when stream data is received
+        this.onStreamData = null;       // Called when stream data is received (legacy)
         this.onPeerConnected = null;    // Called when a peer connects
         this.onPeerDisconnected = null; // Called when a peer disconnects
         this.onError = null;            // Called on error
         this.onStateChange = null;      // Called on connection state changes
+
+        // P2P streaming callbacks
+        this.onStreamInfo = null;       // Called when stream_info is received from peer
+        this.onSegmentReceived = null;  // Called when a segment is received: (header, buffer)
 
         // ICE servers configuration
         this.iceServers = [
@@ -56,6 +60,17 @@ class WebRtcStreamClient {
         // Message chunking for large segments (WebRTC ~16KB limit)
         this.MAX_CHUNK_SIZE = 16000;
         this.incomingChunks = new Map(); // peerId -> { chunks: [], totalSize: 0, expectedSize: 0 }
+
+        // P2P segment caching for late-joiners (publisher only)
+        this.cachedStreamInfo = null;     // Codec metadata from server
+        this.cachedInitSegment = null;    // ftyp+moov initialization segment
+        this.cachedKeyframe = null;       // Most recent keyframe segment { header, buffer }
+        this.segmentQueue = [];           // Rolling buffer of recent segments
+        this.maxSegmentQueueSize = 30;    // Keep ~30 segments for late-joiners
+        this.segmentSequence = 0;         // Monotonically increasing sequence number
+
+        // P2P segment receiving state (subscriber)
+        this.pendingSegmentHeader = new Map(); // peerId -> pending segment header
 
         this.log('info', `WebRTC client created for stream ${streamId} (${isPublisher ? 'publisher' : 'subscriber'})`);
     }
@@ -449,11 +464,28 @@ class WebRtcStreamClient {
             this.log('info', `Data channel opened with ${remotePeerId}`);
             this.dataChannels.set(remotePeerId, dc);
             this.notifyStateChange('streaming');
+
+            // Publisher: send cached data to new peer (late-joiner support)
+            if (this.isPublisher && this.cachedStreamInfo) {
+                this.log('info', `Sending cached stream data to new peer ${remotePeerId.substring(0, 8)}`);
+                this.sendCachedDataToPeer(dc);
+            }
+
+            // Subscriber: request init data from publisher
+            if (!this.isPublisher) {
+                this.log('info', `Requesting init data from peer ${remotePeerId.substring(0, 8)}`);
+                try {
+                    dc.send(JSON.stringify({ type: 'request_init' }));
+                } catch (e) {
+                    this.log('warn', `Failed to send request_init: ${e.message}`);
+                }
+            }
         };
 
         dc.onclose = () => {
             this.log('info', `Data channel closed with ${remotePeerId}`);
             this.dataChannels.delete(remotePeerId);
+            this.pendingSegmentHeader.delete(remotePeerId);
         };
 
         dc.onerror = (error) => {
@@ -469,42 +501,111 @@ class WebRtcStreamClient {
 
     /**
      * Handle incoming data channel messages (may be chunked)
+     * Supports P2P streaming protocol with segment headers and stream info
      */
     handleDataChannelMessage(peerId, data) {
         if (typeof data === 'string') {
-            // JSON control message (chunk metadata)
+            // JSON control message
             try {
                 const msg = JSON.parse(data);
-                if (msg.type === 'chunk_start') {
-                    // Start receiving a chunked message
-                    this.incomingChunks.set(peerId, {
-                        chunks: [],
-                        totalSize: 0,
-                        expectedSize: msg.size
-                    });
-                } else if (msg.type === 'chunk_end') {
-                    // Assemble chunked message
-                    const state = this.incomingChunks.get(peerId);
-                    if (state) {
-                        const assembled = this.assembleChunks(state.chunks);
-                        this.incomingChunks.delete(peerId);
-                        this.notifyStreamData(assembled);
-                    }
-                }
+                this.handleControlMessage(peerId, msg);
             } catch (e) {
                 this.log('warn', `Invalid control message: ${e.message}`);
             }
         } else if (data instanceof ArrayBuffer) {
             // Binary data (stream segment or chunk)
-            const state = this.incomingChunks.get(peerId);
-            if (state) {
+            const chunkState = this.incomingChunks.get(peerId);
+            if (chunkState) {
                 // Part of a chunked message
-                state.chunks.push(new Uint8Array(data));
-                state.totalSize += data.byteLength;
+                chunkState.chunks.push(new Uint8Array(data));
+                chunkState.totalSize += data.byteLength;
             } else {
-                // Single message (not chunked)
-                this.notifyStreamData(data);
+                // Single message (not chunked) - process as segment
+                this.processReceivedSegment(peerId, data);
             }
+        }
+    }
+
+    /**
+     * Handle JSON control messages from peers
+     */
+    handleControlMessage(peerId, msg) {
+        switch (msg.type) {
+            case 'chunk_start':
+                // Start receiving a chunked message
+                this.incomingChunks.set(peerId, {
+                    chunks: [],
+                    totalSize: 0,
+                    expectedSize: msg.size
+                });
+                break;
+
+            case 'chunk_end':
+                // Assemble chunked message
+                const state = this.incomingChunks.get(peerId);
+                if (state) {
+                    const assembled = this.assembleChunks(state.chunks);
+                    this.incomingChunks.delete(peerId);
+                    this.processReceivedSegment(peerId, assembled);
+                }
+                break;
+
+            case 'stream_info':
+                // Received stream metadata from publisher
+                this.log('info', `Received stream_info from peer ${peerId.substring(0, 8)}`);
+                if (this.onStreamInfo) {
+                    this.onStreamInfo(msg.data);
+                }
+                break;
+
+            case 'segment_header':
+                // Store pending segment header - next binary message is the segment data
+                this.pendingSegmentHeader.set(peerId, {
+                    segment_type: msg.segment_type,
+                    sequence: msg.sequence,
+                    size: msg.size,
+                    is_keyframe: msg.is_keyframe,
+                    timestamp: msg.timestamp
+                });
+                this.log('debug', `Received segment header: ${msg.segment_type} seq=${msg.sequence} size=${msg.size}`);
+                break;
+
+            case 'request_init':
+                // Peer is requesting initialization data (late-joiner)
+                this.log('info', `Peer ${peerId.substring(0, 8)} requesting init data`);
+                const dc = this.dataChannels.get(peerId);
+                if (dc && dc.readyState === 'open') {
+                    this.sendCachedDataToPeer(dc);
+                }
+                break;
+
+            default:
+                this.log('debug', `Unknown control message type: ${msg.type}`);
+        }
+    }
+
+    /**
+     * Process a received binary segment
+     * @param {string} peerId - Peer that sent the segment
+     * @param {ArrayBuffer} buffer - Segment data
+     */
+    processReceivedSegment(peerId, buffer) {
+        const header = this.pendingSegmentHeader.get(peerId);
+        this.pendingSegmentHeader.delete(peerId);
+
+        if (header) {
+            // We have segment metadata - use the new callback
+            this.log('debug', `Processing segment: ${header.segment_type} seq=${header.sequence} (${buffer.byteLength} bytes)`);
+
+            if (this.onSegmentReceived) {
+                this.onSegmentReceived(header, buffer);
+            } else if (this.onStreamData) {
+                // Fallback to legacy callback
+                this.notifyStreamData(buffer);
+            }
+        } else {
+            // No header - legacy mode, just pass raw data
+            this.notifyStreamData(buffer);
         }
     }
 
@@ -569,6 +670,158 @@ class WebRtcStreamClient {
 
         // Send end marker
         dc.send(JSON.stringify({ type: 'chunk_end' }));
+    }
+
+    // =========================================================================
+    // P2P Streaming: Publisher Methods
+    // =========================================================================
+
+    /**
+     * Cache stream info for late-joiners (called by publisher when receiving from server)
+     * @param {Object} streamInfo - Stream metadata (video/audio codec info)
+     */
+    cacheStreamInfo(streamInfo) {
+        this.cachedStreamInfo = streamInfo;
+        this.log('info', 'Cached stream info for late-joiners');
+    }
+
+    /**
+     * Cache initialization segment for late-joiners
+     * @param {ArrayBuffer} buffer - The init segment (ftyp+moov)
+     */
+    cacheInitSegment(buffer) {
+        this.cachedInitSegment = buffer;
+        this.log('info', `Cached init segment: ${buffer.byteLength} bytes`);
+    }
+
+    /**
+     * Forward a segment to all connected peers (publisher function)
+     * @param {ArrayBuffer} buffer - Segment data
+     * @param {string} chunkType - Type of segment (initialization, video, audio, etc.)
+     * @param {boolean} isKeyframe - Whether this is a keyframe segment
+     */
+    forwardSegmentToPeers(buffer, chunkType, isKeyframe = false) {
+        if (!this.isPublisher) {
+            this.log('warn', 'Only publishers can forward segments');
+            return;
+        }
+
+        // Create segment header
+        const sequence = this.segmentSequence++;
+        const header = {
+            type: 'segment_header',
+            segment_type: chunkType,
+            sequence: sequence,
+            size: buffer.byteLength,
+            is_keyframe: isKeyframe,
+            timestamp: Date.now()
+        };
+
+        // Cache special segments for late-joiners
+        if (chunkType === 'initialization' || chunkType === 'init_video') {
+            this.cachedInitSegment = buffer;
+            this.log('info', `Cached init segment (${buffer.byteLength} bytes) for late-joiners`);
+        }
+
+        if (isKeyframe) {
+            this.cachedKeyframe = { header, buffer };
+            this.log('debug', `Cached keyframe segment #${sequence}`);
+        }
+
+        // Add to segment queue for late-joiners
+        this.segmentQueue.push({ header, buffer });
+        while (this.segmentQueue.length > this.maxSegmentQueueSize) {
+            this.segmentQueue.shift();
+        }
+
+        // Send to all connected peers
+        for (const [peerId, dc] of this.dataChannels) {
+            if (dc.readyState === 'open') {
+                this.sendSegmentToPeer(dc, header, buffer);
+            }
+        }
+    }
+
+    /**
+     * Send a single segment to a specific peer
+     * @param {RTCDataChannel} dc - The data channel
+     * @param {Object} header - Segment header
+     * @param {ArrayBuffer} buffer - Segment data
+     */
+    sendSegmentToPeer(dc, header, buffer) {
+        try {
+            // Send header first
+            dc.send(JSON.stringify(header));
+
+            // Send binary data (chunked if needed)
+            if (buffer.byteLength > this.MAX_CHUNK_SIZE) {
+                this.sendChunked(dc, buffer);
+            } else {
+                dc.send(buffer);
+            }
+        } catch (error) {
+            this.log('error', `Failed to send segment: ${error.message}`);
+        }
+    }
+
+    /**
+     * Send cached data to a newly connected peer (late-joiner support)
+     * @param {RTCDataChannel} dc - The data channel
+     */
+    sendCachedDataToPeer(dc) {
+        if (!this.isPublisher) return;
+
+        this.log('info', 'Sending cached data to new peer');
+
+        try {
+            // 1. Send stream info
+            if (this.cachedStreamInfo) {
+                dc.send(JSON.stringify({
+                    type: 'stream_info',
+                    data: this.cachedStreamInfo
+                }));
+                this.log('debug', 'Sent cached stream_info');
+            }
+
+            // 2. Send initialization segment
+            if (this.cachedInitSegment) {
+                const initHeader = {
+                    type: 'segment_header',
+                    segment_type: 'initialization',
+                    sequence: -1,  // Special sequence for init
+                    size: this.cachedInitSegment.byteLength,
+                    is_keyframe: false,
+                    timestamp: Date.now()
+                };
+                this.sendSegmentToPeer(dc, initHeader, this.cachedInitSegment);
+                this.log('debug', 'Sent cached init segment');
+            }
+
+            // 3. Send most recent keyframe (for quick start)
+            if (this.cachedKeyframe) {
+                this.sendSegmentToPeer(dc, this.cachedKeyframe.header, this.cachedKeyframe.buffer);
+                this.log('debug', 'Sent cached keyframe');
+            }
+
+            // 4. Send recent segments from queue (after keyframe)
+            let sentCount = 0;
+            for (const seg of this.segmentQueue) {
+                // Skip if this is the keyframe we already sent
+                if (this.cachedKeyframe && seg.header.sequence === this.cachedKeyframe.header.sequence) {
+                    continue;
+                }
+                // Only send segments after the keyframe
+                if (this.cachedKeyframe && seg.header.sequence > this.cachedKeyframe.header.sequence) {
+                    this.sendSegmentToPeer(dc, seg.header, seg.buffer);
+                    sentCount++;
+                }
+            }
+            if (sentCount > 0) {
+                this.log('debug', `Sent ${sentCount} queued segments to new peer`);
+            }
+        } catch (error) {
+            this.log('error', `Failed to send cached data: ${error.message}`);
+        }
     }
 
     /**
