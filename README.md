@@ -1,146 +1,99 @@
-# OpenBroadcastNetwork
+OpenBroadcastNetwork
 
-A decentralized peer-to-peer live streaming CDN built with Rust and libp2p.
+A decentralized peer-to-peer live streaming prototype exploring resilient infrastructure design, distributed peer discovery, and hybrid overlay topologies.
 
-## Project Purpose
+This project investigates how live media distribution can function without centralized CDN infrastructure by leveraging modern peer-to-peer networking primitives.
 
-OpenBroadcastNetwork creates a scalable, decentralized streaming system that minimizes reliance on centralized infrastructure while providing high-quality, low-latency streaming capabilities across various platforms.
+🚀 Overview
 
-## Key Features
+OpenBroadcastNetwork (OBN) is a Rust-based distributed streaming system built using libp2p. It supports peer discovery, pub/sub messaging, and real-time transport options suitable for browser and CLI-based clients.
 
-- **Hybrid Tree-Mesh Overlay**: Optimized topology combining tree and mesh structures for efficient content distribution
-- **libp2p Integration**: Built on libp2p 0.53.0 for robust peer-to-peer networking
-- **Multiple Transport Protocols**: WebRTC and QUIC support for browser and native clients
-- **DHT-Based Discovery**: Kademlia DHT for decentralized peer discovery
-- **GossipSub Messaging**: Efficient pub/sub communication protocol
-- **Geographic Clustering**: Topology rebalancing for latency optimization
-- **Rich CLI Visualization**: Professional network monitoring and visualization tools
-- **End-to-End Encryption**: Content security through libp2p's built-in encryption
+The project is structured to simulate publisher, relay, and consumer roles in a decentralized network, allowing experimentation with scalable overlay topologies and fault tolerance strategies.
 
-## Project Structure
+🏗 Architecture
 
-This project uses a mono-repo structure:
-- `/core`: Core networking and streaming protocols
-- `/node`: CLI relay node implementation
-- `/ui`: Web-based viewer interface
-- `/proto`: Protocol definitions and shared types
-- `/scripts`: Development and deployment utilities
+Core technologies:
 
-## Getting Started
+Rust
 
-### Quick Demo
+libp2p
 
-Try the interactive demo to see the network visualization in action:
+Kademlia DHT (peer discovery)
 
-```bash
-# Run the simple demo with interactive menu
-./simple_demo.sh
-```
+GossipSub (pub/sub messaging)
 
-### Running a Relay Node
+WebRTC transport
 
-```bash
-# Build the project
-cargo build --release
+QUIC transport
 
-# Start a relay node with DHT discovery and geo-aware rebalancing
-cargo run -p OpenBroadcastNetwork-node -- run --role relay --listen 127.0.0.1:9000 --dht --geo-aware
+Network Model:
 
-# In another terminal, check network status
-cargo run -p OpenBroadcastNetwork-node -- status --node 127.0.0.1:9000
+Hybrid tree-mesh overlay topology
 
-# Visualize the network topology
-cargo run -p OpenBroadcastNetwork-node -- visualize --node 127.0.0.1:9000 --format text
-```
+DHT-based peer bootstrapping
 
-### CLI Commands
+Pub/sub content propagation
 
-- **`run`**: Start a relay node with various roles (relay, publisher, consumer)
-- **`status`**: Display network status with beautiful Unicode formatting
-- **`list-streams`**: Show active streams in the network
-- **`visualize`**: Generate network topology in multiple formats (text, dot, json)
-- **`bootstrap-server`**: Run a DHT bootstrap server for peer discovery
-- **`web-viewer`**: Web-based video viewer with P2P streaming support
+CLI-based relay and node roles
 
-### P2P Streaming
+The hybrid overlay design explores tradeoffs between:
 
-Stream video peer-to-peer with automatic discovery via Kademlia DHT:
+Bandwidth efficiency
 
-```bash
-# Terminal 1: Start bootstrap server for peer discovery
-cargo run -p OpenBroadcastNetwork-node -- bootstrap-server --port 9000
+Latency
 
-# Terminal 2: Publisher - stream a video file (note the Peer ID from bootstrap output)
-cargo run -p OpenBroadcastNetwork-node -- web-viewer \
-  --port 9080 --video test_simple.mp4 --publish \
-  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<BOOTSTRAP_PEER_ID>
+Redundancy
 
-# Terminal 3: Subscriber - watch the stream (use Stream ID from publisher output)
-cargo run -p OpenBroadcastNetwork-node -- web-viewer \
-  --port 9081 --stream-id <STREAM_ID> \
-  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<BOOTSTRAP_PEER_ID>
-```
+Resilience under peer churn
 
-Open `http://127.0.0.1:9080` (publisher) or `http://127.0.0.1:9081` (subscriber) in a browser.
+🎯 Goals
 
-## Development
+Investigate decentralized CDN-like media routing
 
-### Prerequisites
-- Rust toolchain (latest stable)
-- wasm-pack (for UI development)
-- trunk (for UI development)
+Explore fault-tolerant peer discovery mechanisms
 
-### Building
+Evaluate WebRTC and QUIC transport suitability
 
-```bash
-# Build the entire workspace
+Prototype scalable relay hierarchies
+
+Develop reproducible build and test workflows
+
+🛠 Engineering Highlights
+
+Modular repository structure separating protocol, core networking, and node logic
+
+CLI tooling for different network roles (publisher / relay / consumer)
+
+Automated test scripts validating peer discovery and messaging flow
+
+Structured version control workflow
+
+Documentation of architecture tradeoffs
+
+📦 Build & Test
 cargo build
-
-# Build the node CLI (release mode recommended)
-cargo build --release --package OpenBroadcastNetwork-node
-
-# Build the UI (requires wasm-pack)
-cd ui
-wasm-pack build
-```
-
-### Testing
-
-```bash
-# Run all tests
 cargo test
 
-# Run integration tests
-cargo test --package OpenBroadcastNetwork-core --test phase1_integration
+Additional integration scripts available in /scripts.
 
-# Run specific test categories
-cargo test discovery
-cargo test overlay
-```
+🔍 Why This Project Matters
 
-## Current Status
+OpenBroadcastNetwork serves as a research and engineering exploration of:
 
-**Phase 1 Complete**: ✅ 
-- libp2p 0.53.0 integration
-- DHT-based peer discovery (Kademlia)
-- Bootstrap peer discovery
-- GossipSub pub/sub messaging
-- Hybrid tree-mesh overlay topology
-- Geographic-aware rebalancing
-- Complete CLI with visualization
-- Comprehensive test coverage
+Distributed systems design
 
-**Note**: mDNS local discovery has been removed in favor of DHT-based discovery for better scalability and reduced dependencies.
+Infrastructure resilience
 
-## AI Prompt Style Guide
+Peer-to-peer architecture
 
-When generating code for this project:
-- Be explicit about architecture (traits, modules, file names)
-- Include unit and property-based tests
-- Use a sketch-then-complete approach
-- Keep modules focused and single-responsibility
-- Maintain Rust idioms and naming conventions
+Real-time media transport
 
-## License
+Deployment-ready networking components
 
-*TBD* 
+While currently a prototype, the architecture is structured to support incremental evolution toward a production-ready decentralized streaming layer.
+
+📌 Author
+
+Ian Glenn
+Infrastructure & Systems Deployment Engineer
+github.com/Arbitraria
