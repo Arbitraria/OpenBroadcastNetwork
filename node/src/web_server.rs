@@ -948,7 +948,10 @@ impl WebServer {
         // Serve static files (web viewer)
         if self.config.web_root.exists() {
             info!("Serving static files from: {:?}", self.config.web_root);
-            router = router.fallback_service(ServeDir::new(&self.config.web_root));
+            router = router.fallback_service(
+                ServeDir::new(&self.config.web_root)
+                    .append_index_html_on_directories(true)
+            );
         } else {
             warn!("Web root directory not found: {:?}", self.config.web_root);
             router = router.fallback(|| async { Html(DEFAULT_HTML) });
