@@ -11,6 +11,7 @@ OpenBroadcastNetwork (OBN) is a Rust-based distributed streaming system built us
 The project is structured to simulate publisher, relay, and consumer roles in a decentralized network, allowing experimentation with scalable overlay topologies and fault tolerance strategies.
 
 🏗 Architecture
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/398e7892-5405-4a90-9d1c-8eaf6d3e0e34" />
 
 Core technologies:
 
