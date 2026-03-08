@@ -43,6 +43,185 @@ impl FragmentedMp4Converter {
         Ok(fragment)
     }
 
+    /// Create a proper fMP4 segment with sample flags and composition
+    /// offsets for Chrome-compatible playback.
+    pub fn create_fragment_v2(
+        &mut self,
+        frames: &[FrameData],
+        track_id: u32,
+        _timescale: u32,
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut fragment = Vec::new();
+
+        // Create moof with v2 trun (includes sample_flags + ctts)
+        let moof = self.create_moof_v2(frames, track_id)?;
+        fragment.extend_from_slice(&moof);
+
+        // Create mdat
+        let mdat = self.create_mdat_v2(frames)?;
+        fragment.extend_from_slice(&mdat);
+
+        // Update sequence number and decode time
+        self.sequence_number += 1;
+        let total_duration: u64 =
+            frames.iter().map(|f| f.duration as u64).sum();
+        self.base_media_decode_time += total_duration;
+
+        Ok(fragment)
+    }
+
+    /// Create moof box with v2 trun (sample flags + composition offsets)
+    fn create_moof_v2(
+        &self,
+        frames: &[FrameData],
+        track_id: u32,
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut moof_content = Vec::new();
+
+        let mfhd = self.create_mfhd()?;
+        moof_content.extend_from_slice(&mfhd);
+
+        let traf = self.create_traf_v2(frames, track_id)?;
+        moof_content.extend_from_slice(&traf);
+
+        let mut moof = Vec::new();
+        moof.extend_from_slice(
+            &(8 + moof_content.len() as u32).to_be_bytes(),
+        );
+        moof.extend_from_slice(b"moof");
+        moof.extend_from_slice(&moof_content);
+
+        Ok(moof)
+    }
+
+    /// Create traf box with v2 trun
+    fn create_traf_v2(
+        &self,
+        frames: &[FrameData],
+        track_id: u32,
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut traf_content = Vec::new();
+
+        let tfhd = self.create_tfhd(track_id)?;
+        traf_content.extend_from_slice(&tfhd);
+
+        let tfdt = self.create_tfdt_auto()?;
+        traf_content.extend_from_slice(&tfdt);
+
+        let trun = self.create_trun_v2(frames)?;
+        traf_content.extend_from_slice(&trun);
+
+        let mut traf = Vec::new();
+        traf.extend_from_slice(
+            &(8 + traf_content.len() as u32).to_be_bytes(),
+        );
+        traf.extend_from_slice(b"traf");
+        traf.extend_from_slice(&traf_content);
+
+        Ok(traf)
+    }
+
+    /// Create tfdt with automatic version selection (v0 for 32-bit, v1 for
+    /// 64-bit timestamps)
+    fn create_tfdt_auto(&self) -> Result<Vec<u8>, io::Error> {
+        if self.base_media_decode_time > u32::MAX as u64 {
+            // Version 1: 64-bit base_media_decode_time
+            let mut tfdt = Vec::new();
+            tfdt.extend_from_slice(&20u32.to_be_bytes()); // size
+            tfdt.extend_from_slice(b"tfdt");
+            tfdt.push(1); // version 1
+            tfdt.extend_from_slice(&[0, 0, 0]); // flags
+            tfdt.extend_from_slice(
+                &self.base_media_decode_time.to_be_bytes(),
+            );
+            Ok(tfdt)
+        } else {
+            self.create_tfdt()
+        }
+    }
+
+    /// Create trun with sample_flags and composition time offsets
+    fn create_trun_v2(
+        &self,
+        frames: &[FrameData],
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut trun_content = Vec::new();
+
+        // Version 1, flags: data-offset(0x01) | sample-duration(0x100)
+        // | sample-size(0x200) | sample-flags(0x400)
+        // | sample-composition-time-offset(0x800) = 0x000F01
+        trun_content.push(1); // version 1
+        trun_content.extend_from_slice(&[0x00, 0x0F, 0x01]);
+
+        // Sample count
+        trun_content.extend_from_slice(
+            &(frames.len() as u32).to_be_bytes(),
+        );
+
+        // Data offset (from moof start to mdat payload)
+        let data_offset = self.calculate_moof_size_v2(frames) + 8;
+        trun_content.extend_from_slice(&(data_offset as i32).to_be_bytes());
+
+        // Per-sample entries: duration(4) + size(4) + flags(4) + cts_offset(4)
+        for frame in frames {
+            trun_content.extend_from_slice(&frame.duration.to_be_bytes());
+            trun_content.extend_from_slice(&frame.size.to_be_bytes());
+
+            // Sample flags per ISO 14496-12
+            // Keyframe: sample_depends_on=2 (independent) = 0x02000000
+            // Non-keyframe: sample_depends_on=1 (dependent),
+            //               sample_is_non_sync=1 = 0x01010000
+            let flags: u32 = if frame.is_keyframe {
+                0x02000000
+            } else {
+                0x01010000
+            };
+            trun_content.extend_from_slice(&flags.to_be_bytes());
+
+            // Composition time offset (signed, version 1)
+            trun_content.extend_from_slice(
+                &frame.composition_offset.to_be_bytes(),
+            );
+        }
+
+        let mut trun = Vec::new();
+        trun.extend_from_slice(
+            &(8 + trun_content.len() as u32).to_be_bytes(),
+        );
+        trun.extend_from_slice(b"trun");
+        trun.extend_from_slice(&trun_content);
+
+        Ok(trun)
+    }
+
+    /// Create mdat from FrameData slices
+    fn create_mdat_v2(
+        &self,
+        frames: &[FrameData],
+    ) -> Result<Vec<u8>, io::Error> {
+        let mut mdat = Vec::new();
+        let data_size: u32 = frames.iter().map(|f| f.size).sum();
+        let box_size = 8 + data_size;
+        mdat.extend_from_slice(&box_size.to_be_bytes());
+        mdat.extend_from_slice(b"mdat");
+        for frame in frames {
+            mdat.extend_from_slice(&frame.data);
+        }
+        Ok(mdat)
+    }
+
+    /// Calculate moof size for v2 trun (16 bytes per sample instead of 8)
+    fn calculate_moof_size_v2(&self, frames: &[FrameData]) -> u32 {
+        let tfdt_size = if self.base_media_decode_time > u32::MAX as u64 {
+            20 // version 1: 8-byte timestamp
+        } else {
+            16 // version 0: 4-byte timestamp
+        };
+        // moof(8) + mfhd(16) + traf(8) + tfhd(16) + tfdt + trun header(8)
+        // + trun content(12 + N*16)
+        8 + 16 + 8 + 16 + tfdt_size + 8 + 12 + (frames.len() as u32 * 16)
+    }
+
     /// Create moof (movie fragment) box
     fn create_moof(
         &self,
@@ -323,11 +502,44 @@ impl FragmentedMp4Converter {
     }
 }
 
+/// Frame data for proper fMP4 fragmentation with full metadata
+pub struct FrameData {
+    /// Raw frame data (NAL units or audio samples)
+    pub data: Vec<u8>,
+    /// Duration in timescale units
+    pub duration: u32,
+    /// Size in bytes
+    pub size: u32,
+    /// Whether this is a keyframe (sync sample)
+    pub is_keyframe: bool,
+    /// Composition time offset for B-frames
+    pub composition_offset: i32,
+}
+
+impl FrameData {
+    /// Create a new FrameData from raw bytes
+    pub fn new(
+        data: Vec<u8>,
+        duration: u32,
+        is_keyframe: bool,
+        composition_offset: i32,
+    ) -> Self {
+        let size = data.len() as u32;
+        Self {
+            data,
+            duration,
+            size,
+            is_keyframe,
+            composition_offset,
+        }
+    }
+}
+
 /// Sample data for fragmentation
 ///
-/// **DEPRECATED**: Use [`crate::media::segment::StreamSegment`] instead.
-/// Convert using `Sample::to_stream_segment()`.
-#[deprecated(since = "0.2.0", note = "Use media::segment::StreamSegment instead")]
+/// **DEPRECATED**: Use [`FrameData`] or
+/// [`crate::media::segment::StreamSegment`] instead.
+#[deprecated(since = "0.2.0", note = "Use FrameData or StreamSegment instead")]
 pub struct Sample {
     pub data: Vec<u8>,
     pub duration: u32,

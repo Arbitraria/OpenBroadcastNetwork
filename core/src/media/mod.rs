@@ -72,13 +72,13 @@ pub use ffmpeg_reader::{
 };
 // Deprecated: use StreamSegment::from_sample() instead
 #[allow(deprecated)]
-pub use fmp4_converter::{FragmentedMp4Converter, Sample};
+pub use fmp4_converter::{FragmentedMp4Converter, FrameData, Sample};
 pub use fragment_parser::FragmentParser;
 pub use fragment_writer::FragmentWriter;
 pub use interface::{MediaError, MediaFormat, MediaSink, MediaSource, MediaStream};
 // Deprecated: use generate_stream_segments() and StreamSegment instead
 #[allow(deprecated)]
-pub use mp4_parser::{BoxHeader, Mp4Parser, Mp4Track, MseSegment};
+pub use mp4_parser::{BoxHeader, Mp4Parser, Mp4Track, MseSegment, SampleEntry, SampleTable};
 pub use pipeline::{MediaPipeline, PassThroughStage, PipelineStage};
 pub use publisher::{PublisherError, StreamPublisher};
 pub use quality::{BandwidthMonitor, QualityConfig, QualityLevel, QualityManager};

@@ -366,22 +366,16 @@
                 logMessage('MediaSource opened successfully');
 
                 try {
-                    // Use combined MIME type for single SourceBuffer approach
-                    // This works because media segments contain interleaved video+audio
-                    const combinedMimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+                    // Use video-only SourceBuffer; audio gets its own buffer
+                    // when the server sends init_audio
                     const videoOnlyMimeType = 'video/mp4; codecs="avc1.42E01E"';
 
-                    // Try combined first, fall back to video-only
-                    let mimeTypeToUse = combinedMimeType;
-                    if (!MediaSource.isTypeSupported(combinedMimeType)) {
-                        logMessage(`Combined codec not supported, falling back to video-only`, 'warning');
-                        mimeTypeToUse = videoOnlyMimeType;
-                    }
+                    let mimeTypeToUse = videoOnlyMimeType;
 
                     if (MediaSource.isTypeSupported(mimeTypeToUse)) {
                         videoSourceBuffer = mediaSource.addSourceBuffer(mimeTypeToUse);
                         currentVideoMimeType = mimeTypeToUse;
-                        logMessage(`✅ Combined source buffer created: ${mimeTypeToUse}`, 'success');
+                        logMessage(`Video source buffer created: ${mimeTypeToUse}`, 'success');
                         
                         // Add event listener for buffer updates
                         videoSourceBuffer.addEventListener('updateend', () => {
@@ -808,9 +802,38 @@
         }
 
         function createAudioBufferWithServerCodec() {
-            // Audio is handled by the combined source buffer - no separate audio buffer needed
-            logMessage('📋 Audio handled by combined buffer - no separate audio buffer needed');
-            return;
+            if (audioSourceBuffer) {
+                logMessage('Audio buffer already exists, skipping creation');
+                return;
+            }
+
+            if (!mediaSource || mediaSource.readyState !== 'open') {
+                logMessage('MediaSource not open, cannot create audio buffer', 'warning');
+                return;
+            }
+
+            // Use server-detected audio MIME type, or default to AAC
+            const audioMime = detectedAudioMimeType || 'audio/mp4; codecs="mp4a.40.2"';
+
+            if (!MediaSource.isTypeSupported(audioMime)) {
+                logMessage(`Audio MIME type not supported: ${audioMime}`, 'warning');
+                return;
+            }
+
+            try {
+                audioSourceBuffer = mediaSource.addSourceBuffer(audioMime);
+                logMessage(`Audio source buffer created: ${audioMime}`, 'success');
+
+                audioSourceBuffer.addEventListener('updateend', () => {
+                    updateBufferInfo();
+                });
+
+                audioSourceBuffer.addEventListener('error', (e) => {
+                    logMessage(`Audio buffer error: ${e}`, 'error');
+                });
+            } catch (error) {
+                logMessage(`Failed to create audio buffer: ${error.message}`, 'error');
+            }
         }
 
         function updateStreamInfo(info) {
@@ -851,12 +874,29 @@
         function finalizeMediaSource() {
             try {
                 if (mediaSource && mediaSource.readyState === 'open') {
-                    // Wait for any pending SourceBuffer operations to complete
-                    if (videoSourceBuffer && videoSourceBuffer.updating) {
-                        logMessage('SourceBuffer still updating, waiting before endOfStream...', 'info');
-                        videoSourceBuffer.addEventListener('updateend', () => {
-                            callEndOfStream();
-                        }, { once: true });
+                    // Wait for all SourceBuffers to finish updating
+                    const videoUpdating = videoSourceBuffer && videoSourceBuffer.updating;
+                    const audioUpdating = audioSourceBuffer && audioSourceBuffer.updating;
+
+                    if (videoUpdating || audioUpdating) {
+                        logMessage('SourceBuffer(s) still updating, waiting before endOfStream...', 'info');
+
+                        let waitCount = (videoUpdating ? 1 : 0) + (audioUpdating ? 1 : 0);
+                        let doneCount = 0;
+
+                        const onDone = () => {
+                            doneCount++;
+                            if (doneCount >= waitCount) {
+                                callEndOfStream();
+                            }
+                        };
+
+                        if (videoUpdating) {
+                            videoSourceBuffer.addEventListener('updateend', onDone, { once: true });
+                        }
+                        if (audioUpdating) {
+                            audioSourceBuffer.addEventListener('updateend', onDone, { once: true });
+                        }
                     } else {
                         callEndOfStream();
                     }

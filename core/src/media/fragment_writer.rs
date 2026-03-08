@@ -96,6 +96,7 @@ impl FragmentWriter {
                 timestamp: None,
                 duration: None,
                 is_keyframe: true,
+                track_id: 0,
             });
             info!(
                 "Created initialization segment ({} bytes)",
@@ -135,6 +136,7 @@ impl FragmentWriter {
                     timestamp,
                     duration,
                     is_keyframe,
+                    track_id: 1,
                 });
 
                 let media_data_len = segments.last().unwrap().data.len();
@@ -189,6 +191,7 @@ impl FragmentWriter {
                 timestamp: None,
                 duration: None,
                 is_keyframe: true,
+                track_id: 0,
             });
             info!(
                 "Created initialization segment ({} bytes)",
@@ -266,6 +269,7 @@ impl FragmentWriter {
             timestamp,
             duration: Some(1000),
             is_keyframe,
+            track_id: 1,
         })
     }
 

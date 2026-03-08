@@ -488,8 +488,10 @@ impl StreamSegment {
     ) -> Self {
         let media_type = if mse.segment_type == "initialization" {
             MediaType::Initialization
+        } else if mse.track_id == 2 {
+            MediaType::Audio
         } else {
-            MediaType::Video // MseSegment is typically video
+            MediaType::Video
         };
 
         Self {
@@ -500,11 +502,7 @@ impl StreamSegment {
             media_type,
             data: Bytes::from(mse.data.clone()),
             is_keyframe: mse.is_keyframe,
-            track_id: if media_type == MediaType::Initialization {
-                0
-            } else {
-                1
-            },
+            track_id: mse.track_id as u8,
         }
     }
 }
@@ -951,6 +949,7 @@ mod tests {
             timestamp: Some(1000), // ms
             duration: Some(33),
             is_keyframe: true,
+            track_id: 1,
         };
 
         let stream_id = StreamId::new("test_stream");
@@ -974,6 +973,7 @@ mod tests {
             timestamp: None,
             duration: None,
             is_keyframe: true,
+            track_id: 0,
         };
 
         let stream_id = StreamId::new("test_stream");

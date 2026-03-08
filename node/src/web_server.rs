@@ -371,14 +371,24 @@ impl StreamManager {
                     };
 
                     // Create StreamSegment directly from MediaSample
-                    let segment = StreamSegment::video(
-                        segment_stream_id.clone(),
-                        sequence,
-                        sample.timestamp.as_micros() as u64, // us precision
-                        sample.duration.as_micros() as u64,
-                        sample.data.clone(),
-                        sample.is_sync,
-                    );
+                    let segment = if sample.track_id == 2 {
+                        StreamSegment::audio(
+                            segment_stream_id.clone(),
+                            sequence,
+                            sample.timestamp.as_micros() as u64,
+                            sample.duration.as_micros() as u64,
+                            sample.data.clone(),
+                        )
+                    } else {
+                        StreamSegment::video(
+                            segment_stream_id.clone(),
+                            sequence,
+                            sample.timestamp.as_micros() as u64,
+                            sample.duration.as_micros() as u64,
+                            sample.data.clone(),
+                            sample.is_sync,
+                        )
+                    };
 
                     // Send to local WebSocket clients
                     if segment_sender.receiver_count() > 0 {
@@ -717,8 +727,8 @@ impl StreamManager {
                 track_id: if segment.segment_type == "initialization" {
                     99
                 } else {
-                    0
-                }, // Special track ID for init
+                    segment.track_id
+                },
             };
             prepared_samples.push(sample);
 
@@ -1060,22 +1070,154 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
         info!("🔍 WEBSOCKET DEBUG: Successfully sent stream_info message to client");
     }
 
-    // Send initialization segment to client
-    // NOTE: For now, use the combined init segment approach since media segments are also combined.
-    // Chrome MSE buffer separation requires BOTH init AND media segments to be separated.
-    // TODO: Implement media segment separation for full Chrome MSE buffer separation support.
-
-    // Use combined initialization segment (works with single SourceBuffer approach)
+    // Send initialization segments to client
+    // Use separate video/audio init segments for Chrome MSE buffer separation
     {
-        // Fall back to legacy combined initialization segment
-        if let Some(init_segment) = &*state.stream_manager.initialization_segment.lock().await {
+        const MAX_CHUNK_SIZE: usize = 512 * 1024; // 512KB chunks
+
+        let video_init =
+            state.stream_manager.video_init_segment.lock().await.clone();
+        let audio_init =
+            state.stream_manager.audio_init_segment.lock().await.clone();
+
+        if let Some(ref video_init_data) = video_init {
+            // Send video init segment
             info!(
-                "Sending legacy combined initialization segment to client {} ({} bytes)",
+                "Sending video init segment to client {} ({} bytes)",
+                client_id,
+                video_init_data.len()
+            );
+
+            let chunk_info = ClientMessage::ChunkInfo {
+                data: ChunkInfo {
+                    chunk_type: "init_video".to_string(),
+                    size: video_init_data.len(),
+                    timestamp: 0,
+                },
+            };
+
+            if let Ok(info_message) = serde_json::to_string(&chunk_info) {
+                if let Err(e) =
+                    sender.send(Message::Text(info_message)).await
+                {
+                    error!("Failed to send video init chunk info: {}", e);
+                    return;
+                }
+            }
+
+            if video_init_data.len() > MAX_CHUNK_SIZE {
+                let mut offset = 0;
+                let mut chunk_num = 0;
+                while offset < video_init_data.len() {
+                    let chunk_end = std::cmp::min(
+                        offset + MAX_CHUNK_SIZE,
+                        video_init_data.len(),
+                    );
+                    let chunk = &video_init_data[offset..chunk_end];
+                    chunk_num += 1;
+
+                    let chunk_info = ClientMessage::ChunkInfo {
+                        data: ChunkInfo {
+                            chunk_type: format!(
+                                "init_video_chunk_{}",
+                                chunk_num
+                            ),
+                            size: chunk.len(),
+                            timestamp: offset as u64,
+                        },
+                    };
+                    if let Ok(info_message) =
+                        serde_json::to_string(&chunk_info)
+                    {
+                        if let Err(e) =
+                            sender.send(Message::Text(info_message)).await
+                        {
+                            error!(
+                                "Failed to send chunk {} info: {}",
+                                chunk_num, e
+                            );
+                            return;
+                        }
+                    }
+                    if let Err(e) =
+                        sender.send(Message::Binary(chunk.to_vec())).await
+                    {
+                        error!(
+                            "Failed to send video init chunk {}: {}",
+                            chunk_num, e
+                        );
+                        return;
+                    }
+                    offset = chunk_end;
+                }
+            } else {
+                if let Err(e) = sender
+                    .send(Message::Binary(video_init_data.clone()))
+                    .await
+                {
+                    error!("Failed to send video init segment: {}", e);
+                    return;
+                }
+            }
+
+            info!(
+                "Successfully sent video init segment to client {}",
+                client_id
+            );
+
+            // Send audio init segment if available
+            if let Some(ref audio_init_data) = audio_init {
+                info!(
+                    "Sending audio init segment to client {} ({} bytes)",
+                    client_id,
+                    audio_init_data.len()
+                );
+
+                let chunk_info = ClientMessage::ChunkInfo {
+                    data: ChunkInfo {
+                        chunk_type: "init_audio".to_string(),
+                        size: audio_init_data.len(),
+                        timestamp: 0,
+                    },
+                };
+
+                if let Ok(info_message) =
+                    serde_json::to_string(&chunk_info)
+                {
+                    if let Err(e) =
+                        sender.send(Message::Text(info_message)).await
+                    {
+                        error!(
+                            "Failed to send audio init chunk info: {}",
+                            e
+                        );
+                        return;
+                    }
+                }
+
+                if let Err(e) = sender
+                    .send(Message::Binary(audio_init_data.clone()))
+                    .await
+                {
+                    error!("Failed to send audio init segment: {}", e);
+                    return;
+                }
+
+                info!(
+                    "Successfully sent audio init segment to client {}",
+                    client_id
+                );
+            }
+        } else if let Some(init_segment) =
+            &*state.stream_manager.initialization_segment.lock().await
+        {
+            // Fallback: use combined init segment
+            info!(
+                "Sending combined init segment to client {} ({} bytes)",
                 client_id,
                 init_segment.len()
             );
 
-            // Send chunk info first with legacy "initialization" type
             let chunk_info = ClientMessage::ChunkInfo {
                 data: ChunkInfo {
                     chunk_type: "initialization".to_string(),
@@ -1085,46 +1227,58 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
             };
 
             if let Ok(info_message) = serde_json::to_string(&chunk_info) {
-                if let Err(e) = sender.send(Message::Text(info_message)).await {
-                    error!("Failed to send initialization chunk info: {}", e);
+                if let Err(e) =
+                    sender.send(Message::Text(info_message)).await
+                {
+                    error!(
+                        "Failed to send initialization chunk info: {}",
+                        e
+                    );
                     return;
                 }
             }
 
-            // WebSocket frame size limit handling for large init segments
-            const MAX_CHUNK_SIZE: usize = 512 * 1024; // 512KB chunks
-
             if init_segment.len() > MAX_CHUNK_SIZE {
-                info!(
-                    "Legacy init segment exceeds WebSocket frame limit, chunking into {} chunks",
-                    (init_segment.len() + MAX_CHUNK_SIZE - 1) / MAX_CHUNK_SIZE
-                );
-
                 let mut offset = 0;
                 let mut chunk_num = 0;
-
                 while offset < init_segment.len() {
-                    let chunk_end = std::cmp::min(offset + MAX_CHUNK_SIZE, init_segment.len());
+                    let chunk_end = std::cmp::min(
+                        offset + MAX_CHUNK_SIZE,
+                        init_segment.len(),
+                    );
                     let chunk = &init_segment[offset..chunk_end];
                     chunk_num += 1;
 
                     let chunk_info = ClientMessage::ChunkInfo {
                         data: ChunkInfo {
-                            chunk_type: format!("initialization_chunk_{}", chunk_num),
+                            chunk_type: format!(
+                                "initialization_chunk_{}",
+                                chunk_num
+                            ),
                             size: chunk.len(),
                             timestamp: offset as u64,
                         },
                     };
-
-                    if let Ok(info_message) = serde_json::to_string(&chunk_info) {
-                        if let Err(e) = sender.send(Message::Text(info_message)).await {
-                            error!("Failed to send chunk {} info: {}", chunk_num, e);
+                    if let Ok(info_message) =
+                        serde_json::to_string(&chunk_info)
+                    {
+                        if let Err(e) =
+                            sender.send(Message::Text(info_message)).await
+                        {
+                            error!(
+                                "Failed to send chunk {} info: {}",
+                                chunk_num, e
+                            );
                             return;
                         }
                     }
-
-                    if let Err(e) = sender.send(Message::Binary(chunk.to_vec())).await {
-                        error!("Failed to send initialization chunk {}: {}", chunk_num, e);
+                    if let Err(e) =
+                        sender.send(Message::Binary(chunk.to_vec())).await
+                    {
+                        error!(
+                            "Failed to send init chunk {}: {}",
+                            chunk_num, e
+                        );
                         return;
                     }
                     offset = chunk_end;
@@ -1137,22 +1291,31 @@ async fn handle_websocket(socket: WebSocket, state: AppState) {
                         timestamp: 0,
                     },
                 };
-
-                if let Ok(info_message) = serde_json::to_string(&completion_info) {
-                    if let Err(e) = sender.send(Message::Text(info_message)).await {
-                        error!("Failed to send completion marker: {}", e);
+                if let Ok(info_message) =
+                    serde_json::to_string(&completion_info)
+                {
+                    if let Err(e) =
+                        sender.send(Message::Text(info_message)).await
+                    {
+                        error!(
+                            "Failed to send completion marker: {}",
+                            e
+                        );
                         return;
                     }
                 }
             } else {
-                if let Err(e) = sender.send(Message::Binary(init_segment.clone())).await {
+                if let Err(e) = sender
+                    .send(Message::Binary(init_segment.clone()))
+                    .await
+                {
                     error!("Failed to send initialization segment: {}", e);
                     return;
                 }
             }
 
             info!(
-                "Successfully sent legacy init segment to client {}",
+                "Successfully sent combined init segment to client {}",
                 client_id
             );
         } else {

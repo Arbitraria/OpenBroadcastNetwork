@@ -154,6 +154,7 @@ impl FragmentParser {
                 codec: "H.264".to_string(),
                 codec_mime_type: "video/mp4; codecs=\"avc1.42E01E\"".to_string(),
                 codec_params: Some("avc1.42E01E".to_string()),
+                sample_table: None,
             };
             self.tracks.push(track);
         }
