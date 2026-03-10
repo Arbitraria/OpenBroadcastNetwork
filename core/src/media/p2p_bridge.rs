@@ -28,9 +28,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use crate::media::segment::{MediaType, StreamId, StreamSegment};
+use crate::media::segment::{StreamId, StreamSegment};
 use crate::media::wire_format::WireSegment;
 use crate::overlay::interface::{Overlay, OverlayError, OverlayEvent, StreamId as OverlayStreamId};
 

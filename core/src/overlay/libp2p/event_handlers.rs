@@ -17,6 +17,7 @@ use crate::media::MediaChunk;
 use crate::overlay::interface::{OverlayError, OverlayEvent};
 use crate::overlay::libp2p::behavior::OverlayBehaviorEvent;
 use crate::overlay::libp2p::impl_core::Libp2pOverlay;
+use crate::discovery::stream_discovery::STREAM_ANNOUNCE_TOPIC;
 use crate::overlay::libp2p::topics;
 use crate::overlay::libp2p::types::{from_libp2p_peer_id, to_libp2p_peer_id};
 use crate::overlay::peer::Peer;
@@ -323,6 +324,41 @@ impl Libp2pOverlay {
                 } else if topic == topics::discovery() {
                     debug!("Received discovery message from {}", source_peer_id);
                     // Process discovery message (implementation omitted for brevity)
+                } else if topic == STREAM_ANNOUNCE_TOPIC {
+                    debug!(
+                        "Received stream announcement from {} ({} bytes)",
+                        source_peer_id,
+                        data.len()
+                    );
+
+                    // Try to extract stream_id from the announcement data
+                    let stream_id = match serde_json::from_slice::<serde_json::Value>(&data) {
+                        Ok(val) => {
+                            if let Some(sid) = val.get("stream_id") {
+                                // StreamId is serialized as bytes array
+                                if let Some(bytes) = sid.as_array() {
+                                    let id_bytes: Vec<u8> = bytes
+                                        .iter()
+                                        .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                        .collect();
+                                    crate::overlay::interface::StreamId::from_bytes(id_bytes)
+                                } else {
+                                    crate::overlay::interface::StreamId::from_string("unknown")
+                                }
+                            } else {
+                                crate::overlay::interface::StreamId::from_string("unknown")
+                            }
+                        }
+                        Err(_) => crate::overlay::interface::StreamId::from_string("unknown"),
+                    };
+
+                    let mut event_tx = self.event_tx.clone();
+                    let _ = event_tx
+                        .send(OverlayEvent::StreamAnnounced {
+                            stream_id,
+                            data,
+                        })
+                        .await;
                 }
             }
             GossipsubEvent::Subscribed { peer_id, topic } => {

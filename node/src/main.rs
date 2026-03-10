@@ -450,8 +450,10 @@ async fn run_web_viewer(
 ) -> Result<(), anyhow::Error> {
     info!("Starting web viewer server on {}:{}", host, port);
 
-    // Determine P2P mode: either subscribing to a stream_id or publishing a local video
-    let enable_p2p = stream_id.is_some() || (publish && video_file.is_some());
+    // Determine P2P mode: subscribing, publishing, or browse (bootstrap only)
+    let enable_p2p = stream_id.is_some()
+        || (publish && video_file.is_some())
+        || !bootstrap_nodes.is_empty();
 
     // Create web server configuration
     let config = WebServerConfig {
@@ -547,6 +549,43 @@ async fn run_web_viewer(
 
         let server = web_server::WebServer::new_with_state(config, app_state);
         (server, stream_manager, Some(node))
+    } else if !bootstrap_nodes.is_empty() {
+        // Browse mode: connect to P2P network for stream discovery,
+        // but don't subscribe to a specific stream yet.
+        info!("📡 P2P browse mode enabled — discover and pick a stream");
+
+        let node = RunningNode::new(
+            PeerRole::Consumer,
+            enable_dht,
+            false,
+            bootstrap_nodes.clone(),
+        )
+        .await?;
+        node.overlay.start().await?;
+
+        for bootstrap in &bootstrap_nodes {
+            info!("Connecting to bootstrap node: {}", bootstrap);
+            if let Err(e) =
+                Overlay::connect_peer(node.overlay.as_ref(), bootstrap.as_str()).await
+            {
+                warn!("Failed to connect to bootstrap {}: {}", bootstrap, e);
+            }
+        }
+
+        let stream_manager = Arc::new(
+            web_server::StreamManager::with_discovery(node.overlay.clone()),
+        );
+
+        let config_clone = config.clone();
+        let app_state = web_server::AppState {
+            config: config_clone,
+            stream_manager: stream_manager.clone(),
+            clients: Arc::new(RwLock::new(HashMap::new())),
+            signaling_state: Arc::new(web_server::SignalingState::default()),
+        };
+
+        let server = web_server::WebServer::new_with_state(config, app_state);
+        (server, stream_manager, Some(node))
     } else {
         // Regular mode without P2P
         let server = WebServer::new(config);
@@ -559,13 +598,6 @@ async fn run_web_viewer(
         "WebSocket streaming endpoint: ws://{}:{}/stream",
         host, port
     );
-
-    // If bootstrap nodes are provided, we can optionally create an overlay network
-    // for real P2P streaming (for future enhancement)
-    if !bootstrap_nodes.is_empty() {
-        info!("Bootstrap nodes provided: {:?}", bootstrap_nodes);
-        info!("P2P streaming functionality can be added here in future versions");
-    }
 
     // Load video file if provided (with fallback to synthetic streaming)
     let video_loaded = if let Some(video_path) = &video_file {
@@ -748,65 +780,6 @@ async fn run_web_viewer(
 
     info!("Web viewer server stopped successfully");
     Ok(())
-}
-
-/// Generate a demo H.264 frame (placeholder data)
-fn generate_demo_h264_frame(
-    width: u32,
-    height: u32,
-    frame_number: u64,
-    is_keyframe: bool,
-) -> Vec<u8> {
-    // This would normally come from the OpenH264 encoder
-    // For now, generate some placeholder data that resembles H.264 NAL units
-
-    let mut frame_data = Vec::new();
-
-    if is_keyframe {
-        // SPS (Sequence Parameter Set) NAL unit
-        frame_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x67]); // SPS start code
-        frame_data.extend_from_slice(&[0x42, 0x80, 0x20]); // Profile/level
-
-        // PPS (Picture Parameter Set) NAL unit
-        frame_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x68]); // PPS start code
-        frame_data.extend_from_slice(&[0xce, 0x3c, 0x80]); // PPS data
-    }
-
-    // IDR/P frame NAL unit
-    frame_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]); // Start code
-    if is_keyframe {
-        frame_data.push(0x65); // IDR frame
-    } else {
-        frame_data.push(0x41); // P frame
-    }
-
-    // Add some dummy frame data based on resolution and frame number
-    let frame_size = (width * height / 100) as usize; // Simulated compression
-    let pattern = ((frame_number % 256) as u8);
-    frame_data.extend(std::iter::repeat(pattern).take(frame_size));
-
-    frame_data
-}
-
-/// Generate a demo Opus audio frame (placeholder data)
-fn generate_demo_opus_frame(sample_rate: u32, channels: u16, frame_number: u64) -> Vec<u8> {
-    // This would normally come from the Opus encoder
-    // Generate some placeholder Opus packet data
-
-    let mut audio_data = Vec::new();
-
-    // Opus packet header (simplified)
-    audio_data.push(0x78); // Opus packet type
-
-    // Generate some dummy audio data
-    let frame_size = (sample_rate / 50) as usize; // 20ms frame
-    let total_samples = frame_size * channels as usize;
-    let pattern = ((frame_number % 256) as u8);
-
-    // Opus compressed data (placeholder)
-    audio_data.extend(std::iter::repeat(pattern).take(total_samples / 10)); // Simulated compression
-
-    audio_data
 }
 
 #[tokio::main]

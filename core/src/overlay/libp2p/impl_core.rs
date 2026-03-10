@@ -353,6 +353,19 @@ impl Libp2pOverlay {
             .subscribe(&discovery_topic)
             .map_err(|e| OverlayError::Other(format!("Failed to subscribe to discovery: {}", e)))?;
 
+        // Subscribe to stream announcement topic for stream discovery
+        let announce_topic = gossipsub::IdentTopic::new(
+            crate::discovery::stream_discovery::STREAM_ANNOUNCE_TOPIC,
+        );
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&announce_topic)
+            .map_err(|e| {
+                OverlayError::Other(format!("Failed to subscribe to announce topic: {}", e))
+            })?;
+        info!("Subscribed to stream announce topic");
+
         // Store the swarm
         *swarm_lock = Some(swarm);
 

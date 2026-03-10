@@ -271,6 +271,14 @@ pub enum OverlayEvent {
         data: Vec<u8>,
     },
 
+    /// A stream announcement was received via discovery
+    StreamAnnounced {
+        /// Stream ID from the announcement
+        stream_id: StreamId,
+        /// Raw announcement data (JSON-serialized StreamAnnouncement)
+        data: Vec<u8>,
+    },
+
     /// The topology has changed
     TopologyChanged {
         /// Number of peers

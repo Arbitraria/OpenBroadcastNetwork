@@ -76,6 +76,74 @@
             font-weight: bold;
             color: #333;
         }
+        .stream-browser {
+            margin: 20px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stream-browser h3 {
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .stream-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .stream-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .stream-card:hover {
+            background: #e3f2fd;
+            border-color: #2196F3;
+        }
+        .stream-card .stream-info {
+            flex: 1;
+        }
+        .stream-card .stream-title {
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .stream-card .stream-meta {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        .stream-card .stream-badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+        }
+        .stream-badge.local {
+            background: #4CAF50;
+            color: white;
+        }
+        .stream-badge.remote {
+            background: #2196F3;
+            color: white;
+        }
+        .stream-card .connect-btn {
+            padding: 6px 14px;
+            font-size: 13px;
+            margin: 0;
+        }
+        .stream-empty {
+            color: #999;
+            font-style: italic;
+            padding: 10px 0;
+        }
     </style>
 </head>
 <body>
@@ -95,6 +163,16 @@
             </select>
         </div>
         
+        <div class="stream-browser" id="streamBrowser">
+            <h3>
+                Browse Streams
+                <button id="refreshStreamsBtn" style="font-size:12px; padding:4px 10px;">Refresh</button>
+            </h3>
+            <div id="streamList" class="stream-list">
+                <div class="stream-empty">Click Refresh to discover streams...</div>
+            </div>
+        </div>
+
         <div id="status" class="status info">Ready to connect</div>
         
         <div class="status" id="connectionStatus">
@@ -159,6 +237,7 @@
         let currentAudioMimeType = null; // Currently used audio MIME type
         let serverCodecReceived = false; // Flag to track if we've received server codec info
         let initSegmentExpected = false; // Flag to track if init segment is coming
+        let selectedStreamId = null; // Stream ID selected from browser
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
@@ -284,10 +363,69 @@
                 });
                 logMessage('Mode select event listener attached', 'info');
             }
+
+            const refreshStreamsBtn = document.getElementById('refreshStreamsBtn');
+            if (refreshStreamsBtn) {
+                refreshStreamsBtn.addEventListener('click', fetchStreams);
+            }
+
+            // Auto-refresh streams every 10 seconds
+            fetchStreams();
+            setInterval(fetchStreams, 10000);
         }
 
-        function connectToStream() {
-            logMessage('🚀 connectToStream function called!', 'success');
+        // Stream discovery
+        let streamRefreshTimer = null;
+
+        async function fetchStreams() {
+            try {
+                const resp = await fetch('/api/streams');
+                const data = await resp.json();
+                renderStreams(data.streams || []);
+            } catch (e) {
+                // silently ignore fetch errors (server might not be ready)
+            }
+        }
+
+        function renderStreams(streams) {
+            const list = document.getElementById('streamList');
+            if (!streams.length) {
+                list.innerHTML = '<div class="stream-empty">No streams discovered yet</div>';
+                return;
+            }
+
+            list.innerHTML = streams.map(s => {
+                const badge = s.is_local
+                    ? '<span class="stream-badge local">Local</span>'
+                    : '<span class="stream-badge remote">P2P</span>';
+                const codec = [s.video_codec, s.audio_codec].filter(Boolean).join('/') || 'unknown';
+                const res = (s.video_width && s.video_height && s.video_width > 0)
+                    ? `${s.video_width}x${s.video_height}`
+                    : '';
+                const meta = [codec, res].filter(Boolean).join(' - ');
+
+                return `<div class="stream-card" data-stream-id="${s.stream_id}" onclick="connectToDiscoveredStream('${s.stream_id}')">
+                    <div class="stream-info">
+                        <div class="stream-title">${s.title || s.stream_id}${badge}</div>
+                        <div class="stream-meta">${meta}</div>
+                    </div>
+                    <button class="connect-btn" onclick="event.stopPropagation(); connectToDiscoveredStream('${s.stream_id}')">Connect</button>
+                </div>`;
+            }).join('');
+        }
+
+        function connectToDiscoveredStream(streamId) {
+            logMessage(`Connecting to discovered stream: ${streamId}`, 'info');
+            // Disconnect if already connected
+            if (connected) {
+                disconnectFromStream();
+            }
+            selectedStreamId = streamId;
+            connectToStream(streamId);
+        }
+
+        function connectToStream(streamId) {
+            logMessage('connectToStream function called!', 'success');
             
             if (connected || connecting) {
                 logMessage(`⚠️ Connection already in progress: connected=${connected}, connecting=${connecting}`, 'warning');
@@ -442,7 +580,10 @@
             // Connect to the OpenBroadcastNetwork streaming server
             // Use the current host to avoid CORS issues
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/stream`;
+            let wsUrl = `${protocol}//${window.location.host}/stream`;
+            if (selectedStreamId) {
+                wsUrl += `?stream_id=${encodeURIComponent(selectedStreamId)}`;
+            }
             
             logMessage(`Connecting to WebSocket: ${wsUrl}`);
             websocket = new WebSocket(wsUrl);

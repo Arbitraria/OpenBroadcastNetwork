@@ -7,10 +7,8 @@
 //! - Legacy JSON format via `MediaChunk` (for backward compatibility)
 //! - New bincode format via `WireSegment` (more efficient, preferred)
 
-use crate::media::segment::{
-    MediaType, SegmentBuilder, StreamId as UnifiedStreamId, StreamSegment,
-};
-use crate::media::wire_format::{ToWireFormat, WireSegment};
+use crate::media::segment::{StreamId as UnifiedStreamId, StreamSegment};
+use crate::media::wire_format::ToWireFormat;
 use crate::media::{ChunkBuilder, MediaChunk, Mp4Parser, StreamId, StreamMetadata};
 use crate::overlay::interface::{Overlay, OverlayError, StreamId as OverlayStreamId};
 use std::path::Path;
