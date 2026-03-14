@@ -8,58 +8,83 @@ use mp4parse::Status;
 use thiserror::Error;
 use tracing::{debug, info};
 
+/// Errors that can occur when reading video files
 #[derive(Error, Debug)]
 pub enum VideoReaderError {
+    /// File I/O error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// MP4 container parsing failure
     #[error("MP4 parsing error: {0:?}")]
     Mp4Parse(Status),
+    /// Input file contains no video track
     #[error("No video track found in file")]
     NoVideoTrack,
+    /// Input file contains no audio track
     #[error("No audio track found in file")]
     NoAudioTrack,
+    /// Codec is not supported for streaming
     #[error("Unsupported codec: {0}")]
     UnsupportedCodec(String),
+    /// Sample data is malformed or unreadable
     #[error("Invalid sample data")]
     InvalidSample,
 }
 
+/// Convenience Result alias for video reader operations.
 pub type Result<T> = std::result::Result<T, VideoReaderError>;
 
 /// Represents a media sample (video frame or audio frame)
 ///
-/// **DEPRECATED**: Use [`crate::media::segment::StreamSegment`] instead.
-/// Convert using `StreamSegment::from_media_sample()`.
-#[deprecated(since = "0.2.0", note = "Use media::segment::StreamSegment instead")]
+/// Internal type used by `VideoReader`. External consumers should use
+/// [`crate::media::segment::StreamSegment`] via `read_all_stream_segments()`.
 #[derive(Debug, Clone)]
 pub struct MediaSample {
+    /// Raw sample payload bytes
     pub data: Vec<u8>,
+    /// Presentation timestamp
     pub timestamp: Duration,
+    /// Duration of this sample
     pub duration: Duration,
-    pub is_sync: bool, // Keyframe for video, always true for audio
+    /// Whether this is a sync point (keyframe for video, always true for audio)
+    pub is_sync: bool,
+    /// Track this sample belongs to
     pub track_id: u32,
 }
 
 /// Information about a video track
 #[derive(Debug, Clone)]
 pub struct VideoTrackInfo {
+    /// Numeric track identifier within the container
     pub track_id: u32,
+    /// Codec name (e.g. "H.264", "H.265")
     pub codec: String,
+    /// Video width in pixels
     pub width: u16,
+    /// Video height in pixels
     pub height: u16,
+    /// Frames per second
     pub fps: f64,
+    /// Total track duration
     pub duration: Duration,
+    /// Average bitrate in bits per second
     pub bitrate: u32,
 }
 
 /// Information about an audio track
 #[derive(Debug, Clone)]
 pub struct AudioTrackInfo {
+    /// Numeric track identifier within the container
     pub track_id: u32,
+    /// Audio codec name (e.g. "AAC", "MP3")
     pub codec: String,
+    /// Sample rate in Hz
     pub sample_rate: u32,
+    /// Number of audio channels
     pub channels: u16,
+    /// Total track duration
     pub duration: Duration,
+    /// Average bitrate in bits per second
     pub bitrate: u32,
 }
 

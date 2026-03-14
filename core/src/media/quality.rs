@@ -47,6 +47,7 @@ impl Default for QualityConfig {
 }
 
 /// Tracks bandwidth usage for quality adaptation
+#[allow(dead_code)]
 pub struct BandwidthMonitor {
     /// Configuration for quality adaptation
     config: QualityConfig,

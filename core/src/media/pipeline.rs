@@ -93,6 +93,7 @@ impl PipelineStage for PassThroughStage {
 /// composition of different processing stages. It can be connected to media sources
 /// and sinks to form a complete media processing chain.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct MediaPipeline {
     stages: Vec<Box<dyn PipelineStage>>,
     buffer: Arc<Mutex<VecDeque<Vec<u8>>>>,

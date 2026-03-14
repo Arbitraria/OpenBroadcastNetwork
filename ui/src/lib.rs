@@ -1,3 +1,7 @@
+//! Web-based viewer interface (WASM) for OpenBroadcastNetwork.
+#![allow(non_snake_case)]
+
+/// Add two numbers (placeholder utility).
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

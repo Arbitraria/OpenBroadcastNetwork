@@ -20,14 +20,6 @@ use std::time::{Duration, Instant};
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, warn};
 
-/// Connection timeout for bootstrap nodes
-const BOOTSTRAP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Time between bootstrap refresh attempts
-const BOOTSTRAP_REFRESH_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
-
-/// Peer expiration time
-const PEER_EXPIRATION: Duration = Duration::from_secs(3600); // 1 hour
 
 /// Configuration for bootstrap discovery
 #[derive(Debug, Clone)]
@@ -69,6 +61,7 @@ impl Default for BootstrapDiscoveryConfig {
 }
 
 /// Bootstrap-based peer discovery
+#[allow(dead_code)]
 pub struct BootstrapDiscovery {
     /// Configuration
     config: BootstrapDiscoveryConfig,
@@ -110,6 +103,7 @@ impl BootstrapDiscovery {
     }
 
     /// Get the local peer ID if available
+    #[allow(dead_code)]
     fn get_local_peer_id(&self) -> Option<Vec<u8>> {
         self.own_info.as_ref().map(|info| info.id.clone())
     }
@@ -180,6 +174,7 @@ impl BootstrapDiscovery {
     }
 
     /// Generate a simple peer ID from a socket address
+    #[allow(dead_code)]
     fn generate_peer_id(addr: &SocketAddr) -> Vec<u8> {
         let mut bytes = Vec::new();
         match addr {

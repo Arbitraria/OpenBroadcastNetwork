@@ -111,7 +111,7 @@ impl Network {
         info!("Local peer id: {}", local_peer_id);
 
         // Create a transport with Noise for encryption and Yamux for multiplexing
-        let transport = tcp::tokio::Transport::new(tcp::Config::default())
+        let _transport = tcp::tokio::Transport::new(tcp::Config::default())
             .upgrade(upgrade::Version::V1)
             .authenticate(noise::Config::new(&local_key)?)
             .multiplex(libp2p::yamux::Config::default())
@@ -127,7 +127,7 @@ impl Network {
             .expect("Valid GossipSub configuration");
 
         // Create a GossipSub behaviour
-        let mut gossipsub = Gossipsub::new(
+        let gossipsub = Gossipsub::new(
             MessageAuthenticity::Signed(local_key.clone()),
             gossipsub_config,
         )?;

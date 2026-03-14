@@ -71,12 +71,19 @@ impl GeoIP {
 /// Geographic region codes (simplified)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Region {
+    /// North America (US, CA, MX)
     NorthAmerica,
+    /// South America (BR, AR, CL, etc.)
     SouthAmerica,
+    /// Europe (GB, DE, FR, etc.)
     Europe,
+    /// Asia (CN, JP, KR, etc.)
     Asia,
+    /// Africa (ZA, NG, EG, etc.)
     Africa,
+    /// Oceania (AU, NZ)
     Oceania,
+    /// Region could not be determined
     Unknown,
 }
 

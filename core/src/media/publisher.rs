@@ -3,13 +3,13 @@
 //! This module provides the `StreamPublisher` which reads media from a source
 //! and publishes it to the P2P overlay network.
 //!
-//! The publisher supports two serialization formats:
-//! - Legacy JSON format via `MediaChunk` (for backward compatibility)
-//! - New bincode format via `WireSegment` (more efficient, preferred)
+//! Uses the unified `StreamSegment` type with efficient bincode wire format
+//! via `WireSegment` for P2P transmission.
 
-use crate::media::segment::{StreamId as UnifiedStreamId, StreamSegment};
+use crate::media::segment::{SegmentBuilder, StreamId, StreamSegment};
+use crate::media::StreamMetadata;
 use crate::media::wire_format::ToWireFormat;
-use crate::media::{ChunkBuilder, MediaChunk, Mp4Parser, StreamId, StreamMetadata};
+use crate::media::Mp4Parser;
 use crate::overlay::interface::{Overlay, OverlayError, StreamId as OverlayStreamId};
 use std::path::Path;
 use std::sync::Arc;
@@ -18,47 +18,57 @@ use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{debug, error, info};
 
+/// Errors that can occur during stream publishing
 #[derive(Debug, thiserror::Error)]
 pub enum PublisherError {
+    /// Media parsing or encoding error
     #[error("Media error: {0}")]
     Media(String),
+    /// Overlay network communication error
     #[error("Overlay error: {0}")]
     Overlay(#[from] OverlayError),
+    /// File I/O error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// JSON serialization error for metadata
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 }
 
+/// Publishes media streams to the P2P overlay network
 pub struct StreamPublisher<O: Overlay + Send + Sync> {
     overlay: Arc<O>,
     stream_id: StreamId,
     overlay_stream_id: OverlayStreamId,
-    chunk_builder: ChunkBuilder,
+    segment_builder: SegmentBuilder,
     stop_signal: broadcast::Sender<()>,
 }
 
 impl<O: Overlay + Send + Sync> StreamPublisher<O> {
+    /// Create a new publisher that will stream to the given overlay network
     pub fn new(overlay: Arc<O>, _title: String) -> Self {
         let stream_id = StreamId::generate();
-        // Use from_string directly for cleaner conversion
-        let overlay_stream_id = OverlayStreamId::from_string(stream_id.as_str());
-        let chunk_builder = ChunkBuilder::new(stream_id.clone());
+        let overlay_stream_id = OverlayStreamId::from_string(
+            stream_id.as_str().unwrap_or_default(),
+        );
+        let segment_builder = SegmentBuilder::new(stream_id.clone());
         let (stop_signal, _) = broadcast::channel(1);
 
         Self {
             overlay,
             stream_id,
             overlay_stream_id,
-            chunk_builder,
+            segment_builder,
             stop_signal,
         }
     }
 
+    /// Get the stream identifier for this publisher
     pub fn stream_id(&self) -> &StreamId {
         &self.stream_id
     }
 
+    /// Parse an MP4 file and publish its segments to the overlay in real time
     pub async fn publish_from_file(&mut self, path: &Path) -> Result<(), PublisherError> {
         info!("Starting stream {} from file: {:?}", self.stream_id, path);
 
@@ -97,37 +107,37 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
                 .unwrap_or_else(|| "aac".to_string()),
         };
 
-        let metadata_chunk = self.chunk_builder.metadata_chunk(metadata)?;
-        self.publish_chunk(&metadata_chunk).await?;
-        info!("Published metadata chunk");
+        let metadata_segment = self.segment_builder.metadata(
+            serde_json::to_vec(&metadata)?,
+        );
+        self.publish_segment(&metadata_segment).await?;
+        info!("Published metadata segment");
 
-        // Generate all MSE segments (init segment is first, media segments follow)
+        // Generate all StreamSegments (init segment is first, media segments follow)
         let segments = parser
-            .generate_mse_segments()
+            .generate_stream_segments(self.stream_id.clone())
             .map_err(|e| PublisherError::Media(format!("Failed to generate segments: {:?}", e)))?;
 
         if segments.is_empty() {
             return Err(PublisherError::Media("No segments generated".to_string()));
         }
 
-        // First segment is the initialization segment
-        let init_segment = &segments[0];
-        let init_chunk = MediaChunk::new_video(
-            self.stream_id.clone(),
-            0,
-            init_segment.data.clone(),
-            0,
-            true,
-        );
-        self.publish_chunk(&init_chunk).await?;
-        info!(
-            "Published initialization segment ({} bytes)",
-            init_chunk.size()
-        );
+        // Publish initialization segment(s) first
+        let init_count = segments.iter().filter(|s| s.is_init()).count();
+        for segment in segments.iter().filter(|s| s.is_init()) {
+            self.publish_segment(segment).await?;
+            info!(
+                "Published initialization segment ({} bytes)",
+                segment.size()
+            );
+        }
 
         // Remaining segments are media segments
-        let media_segments = &segments[1..];
-        info!("Publishing {} media segments", media_segments.len());
+        let media_segments: Vec<_> = segments.iter().filter(|s| !s.is_init()).collect();
+        info!(
+            "Publishing {} media segments ({} init segments sent)",
+            media_segments.len(), init_count
+        );
 
         let start_time = Instant::now();
         let mut stop_rx = self.stop_signal.subscribe();
@@ -139,23 +149,17 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
                     break;
                 }
                 _ = async {
-                    let timestamp_ms = segment.timestamp.unwrap_or(0);
-                    let duration_ms = segment.duration.unwrap_or(1000);
-
-                    let chunk = self.chunk_builder.next_video_chunk(
-                        segment.data.clone(),
-                        duration_ms,
-                        segment.is_keyframe,
-                    );
-
-                    if let Err(e) = self.publish_chunk(&chunk).await {
-                        error!("Failed to publish chunk {}: {}", i, e);
+                    if let Err(e) = self.publish_segment(segment).await {
+                        error!("Failed to publish segment {}: {}", i, e);
                     } else if i % 30 == 0 {
-                        debug!("Published segment {}/{} ({} bytes)", i + 1, media_segments.len(), chunk.size());
+                        debug!(
+                            "Published segment {}/{} ({} bytes)",
+                            i + 1, media_segments.len(), segment.size()
+                        );
                     }
 
                     // Real-time pacing based on timestamp
-                    let target_time = Duration::from_millis(timestamp_ms);
+                    let target_time = Duration::from_micros(segment.pts_us);
                     let elapsed = start_time.elapsed();
                     if target_time > elapsed {
                         tokio::time::sleep(target_time - elapsed).await;
@@ -170,18 +174,7 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
         Ok(())
     }
 
-    async fn publish_chunk(&self, chunk: &MediaChunk) -> Result<(), PublisherError> {
-        let data = chunk.to_bytes()?;
-        self.overlay
-            .publish_stream_data(&self.overlay_stream_id, data)
-            .await?;
-        Ok(())
-    }
-
     /// Publish a unified StreamSegment using the efficient bincode wire format
-    ///
-    /// This is the preferred method for new code. It uses the `WireSegment`
-    /// format which is 30-40% smaller than JSON.
     pub async fn publish_segment(&self, segment: &StreamSegment) -> Result<(), PublisherError> {
         let wire_bytes = segment
             .to_wire_bytes()
@@ -192,11 +185,7 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
         Ok(())
     }
 
-    /// Get a unified stream ID for use with the new segment types
-    pub fn unified_stream_id(&self) -> UnifiedStreamId {
-        UnifiedStreamId::new(self.stream_id.as_str())
-    }
-
+    /// Signal the publisher to stop streaming
     pub fn stop(&self) {
         let _ = self.stop_signal.send(());
     }
@@ -209,6 +198,6 @@ mod tests {
     #[test]
     fn test_stream_id_generation() {
         let id = StreamId::generate();
-        assert!(id.as_str().starts_with("stream_"));
+        assert!(id.as_str().unwrap_or("").starts_with("stream_"));
     }
 }

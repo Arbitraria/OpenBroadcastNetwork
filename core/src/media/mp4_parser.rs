@@ -49,7 +49,7 @@
 //! 2. AC-3 audio is not supported in most browser MediaSource implementations
 //! 3. Large initialization segments may need WebSocket chunking
 
-use crate::media::fmp4_converter::{FragmentedMp4Converter, FrameData, Sample};
+use crate::media::fmp4_converter::{FragmentedMp4Converter, FrameData};
 use std::io::{self, Read, Seek, SeekFrom};
 use tracing::{debug, error, info, warn};
 
@@ -69,22 +69,32 @@ pub struct BoxHeader {
 pub enum BoxContent {
     /// File type box - contains compatibility information
     FileType {
+        /// Primary brand identifier (e.g. "isom", "mp41")
         major_brand: String,
+        /// Minor version of the major brand
         minor_version: u32,
+        /// List of compatible brand identifiers
         compatible_brands: Vec<String>,
     },
     /// Movie header box - contains global metadata
     MovieHeader {
+        /// File creation timestamp (seconds since 1904-01-01)
         creation_time: u64,
+        /// Last modification timestamp (seconds since 1904-01-01)
         modification_time: u64,
+        /// Time units per second for this movie
         timescale: u32,
+        /// Total duration in timescale units
         duration: u64,
     },
     /// Track information
     Track {
+        /// Numeric track identifier
         track_id: u32,
+        /// Track duration in timescale units
         duration: u64,
-        media_type: String, // "vide", "soun", etc.
+        /// Four-character media handler type ("vide", "soun", etc.)
+        media_type: String,
     },
     /// Raw box data for boxes we don't parse in detail
     Raw(Vec<u8>),
@@ -93,7 +103,9 @@ pub enum BoxContent {
 /// Parsed MP4 box with header and content
 #[derive(Debug, Clone)]
 pub struct Mp4Box {
+    /// Box header with type, size, and content offset
     pub header: BoxHeader,
+    /// Parsed or raw box content
     pub content: BoxContent,
 }
 
@@ -226,22 +238,28 @@ impl SampleTable {
 /// MP4 track information extracted from parsing
 #[derive(Debug, Clone)]
 pub struct Mp4Track {
+    /// Numeric track identifier
     pub track_id: u32,
-    pub media_type: String, // "vide" for video, "soun" for audio
+    /// Four-character media type ("vide" for video, "soun" for audio)
+    pub media_type: String,
+    /// Time units per second for this track
     pub timescale: u32,
+    /// Total duration in timescale units
     pub duration: u64,
+    /// Short codec name (e.g. "H.264", "AAC")
     pub codec: String,
-    pub codec_mime_type: String,      // MSE-compatible MIME type
-    pub codec_params: Option<String>, // Additional codec parameters
+    /// MSE-compatible MIME type (e.g. `video/mp4; codecs="avc1.42E01E"`)
+    pub codec_mime_type: String,
+    /// Additional codec parameters for MSE codec string
+    pub codec_params: Option<String>,
     /// Sample table data for frame-accurate fragmentation
     pub sample_table: Option<SampleTable>,
 }
 
-/// MSE-compatible segment that can be sent to browsers
+/// MSE-compatible segment used internally by the MP4 parser.
 ///
-/// **DEPRECATED**: Use [`crate::media::segment::StreamSegment`] instead.
-/// Convert using `StreamSegment::from_mse_segment()`.
-#[deprecated(since = "0.2.0", note = "Use media::segment::StreamSegment instead")]
+/// External consumers should use [`crate::media::segment::StreamSegment`]
+/// via `Mp4Parser::generate_stream_segments()`.
 #[derive(Debug, Clone)]
 pub struct MseSegment {
     /// Segment type - either "initialization" or "media"
@@ -422,7 +440,7 @@ impl Mp4Parser {
 
         // Parse child boxes within moov
         while cursor.position() < data.len() as u64 {
-            let pos_before = cursor.position();
+            let _pos_before = cursor.position();
 
             // Read box header
             let mut size_bytes = [0u8; 4];
@@ -2179,13 +2197,14 @@ impl Mp4Parser {
                 mdat_data.chunks(chunk_size).enumerate()
             {
                 let timestamp_ms = (chunk_index as u64) * 1000;
-                let sample = Sample::new(
+                let frame = FrameData::new(
                     chunk.to_vec(),
                     timescale,
                     chunk_index == 0,
+                    0,
                 );
                 let fragment_data = self.fmp4_converter.create_fragment(
-                    &[sample],
+                    &[frame],
                     track_id,
                     timescale,
                 )?;
@@ -2366,113 +2385,6 @@ impl Mp4Parser {
             }
         }
         false
-    }
-
-    /// Create a minimal moof (movie fragment) box with timing
-    ///
-    /// This creates the most basic moof box structure needed for MSE.
-    /// Includes tfdt (Track Fragment Decode Time) which is required by MSE.
-    fn create_minimal_moof(&self, data_size: u32) -> Result<Vec<u8>, io::Error> {
-        // Default to sequence 1 and decode time 0
-        self.create_minimal_moof_with_timing(data_size, 1, 0, 1000)
-    }
-
-    /// Create a minimal moof (movie fragment) box with timing information
-    ///
-    /// This creates the most basic moof box structure needed for MSE.
-    /// Includes tfdt (Track Fragment Decode Time) which is required by MSE to know
-    /// when each fragment should be decoded/presented.
-    ///
-    /// # Arguments
-    /// * `data_size` - Size of the mdat content that follows
-    /// * `sequence_number` - Fragment sequence number (1-based)
-    /// * `base_media_decode_time` - Decode time in media timescale units
-    /// * `sample_duration` - Duration of this sample in timescale units
-    fn create_minimal_moof_with_timing(
-        &self,
-        data_size: u32,
-        sequence_number: u32,
-        base_media_decode_time: u64,
-        sample_duration: u32,
-    ) -> Result<Vec<u8>, io::Error> {
-        let mut moof_data = Vec::new();
-
-        // moof box header will be added at the end
-        let mut moof_content = Vec::new();
-
-        // Add mfhd (movie fragment header)
-        let mut mfhd_content = vec![0, 0, 0, 0]; // version + flags
-        mfhd_content.extend_from_slice(&sequence_number.to_be_bytes()); // sequence number
-        let mfhd_size = 8 + mfhd_content.len() as u32;
-        moof_content.extend_from_slice(&mfhd_size.to_be_bytes());
-        moof_content.extend_from_slice(b"mfhd");
-        moof_content.extend_from_slice(&mfhd_content);
-
-        // Add traf (track fragment)
-        let mut traf_content = Vec::new();
-
-        // tfhd (track fragment header) with MSE-compatible flags
-        // flags = 0x020038: default-base-is-moof + default-sample-duration-present + default-sample-size-present
-        let mut tfhd_content = vec![
-            0, // version
-            0x02, 0x00,
-            0x38, // flags = 0x020038 (MSE-compatible: default-base-is-moof + other required flags)
-            0, 0, 0, 1, // track_id = 1
-        ];
-        let tfhd_size = 8 + tfhd_content.len() as u32;
-        traf_content.extend_from_slice(&tfhd_size.to_be_bytes());
-        traf_content.extend_from_slice(b"tfhd");
-        traf_content.extend_from_slice(&tfhd_content);
-
-        // tfdt (track fragment decode time) - REQUIRED for MSE!
-        // This tells MSE when this fragment should be presented
-        // Version 1 uses 64-bit baseMediaDecodeTime
-        let mut tfdt_content = vec![
-            1, // version = 1 (64-bit time)
-            0, 0, 0, // flags
-        ];
-        tfdt_content.extend_from_slice(&base_media_decode_time.to_be_bytes()); // 64-bit baseMediaDecodeTime
-        let tfdt_size = 8 + tfdt_content.len() as u32;
-        traf_content.extend_from_slice(&tfdt_size.to_be_bytes());
-        traf_content.extend_from_slice(b"tfdt");
-        traf_content.extend_from_slice(&tfdt_content);
-
-        // trun (track run)
-        // flags: 0x000301 = data-offset-present + sample-duration-present + sample-size-present
-        let moof_size_estimate = 8 + 16 + 8 + 12 + 8 + 20 + 8 + 20; // rough estimate for data_offset
-        let data_offset = moof_size_estimate + 8; // offset to mdat content (after moof + mdat header)
-        let mut trun_content = vec![
-            0, // version
-            0, 0x03, 0x01, // flags: data-offset-present + sample-duration-present + sample-size-present
-        ];
-        trun_content.extend_from_slice(&1u32.to_be_bytes()); // sample_count = 1
-        trun_content.extend_from_slice(&(data_offset as i32).to_be_bytes()); // data_offset (signed)
-        trun_content.extend_from_slice(&sample_duration.to_be_bytes()); // sample_duration
-        trun_content.extend_from_slice(&data_size.to_be_bytes()); // sample_size
-        let trun_size = 8 + trun_content.len() as u32;
-        traf_content.extend_from_slice(&trun_size.to_be_bytes());
-        traf_content.extend_from_slice(b"trun");
-        traf_content.extend_from_slice(&trun_content);
-
-        // Complete traf box
-        let traf_size = 8 + traf_content.len() as u32;
-        moof_content.extend_from_slice(&traf_size.to_be_bytes());
-        moof_content.extend_from_slice(b"traf");
-        moof_content.extend_from_slice(&traf_content);
-
-        // Complete moof box
-        let moof_size = 8 + moof_content.len() as u32;
-        moof_data.extend_from_slice(&moof_size.to_be_bytes());
-        moof_data.extend_from_slice(b"moof");
-        moof_data.extend_from_slice(&moof_content);
-
-        debug!(
-            "Created minimal moof box with tfdt ({} bytes, decode_time={}, duration={})",
-            moof_data.len(),
-            base_media_decode_time,
-            sample_duration
-        );
-        Ok(moof_data)
     }
 
     /// Create MSE-compatible moov box with mvex structure

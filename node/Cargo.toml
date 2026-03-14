@@ -33,6 +33,7 @@ uuid = { version = "1.0", features = ["v4"] }
 default = ["visualization"]
 visualization = ["colored", "term-table"]
 metrics = []
+ffmpeg = []
 
 [[bin]]
 name = "relay-node"

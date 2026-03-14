@@ -138,7 +138,7 @@ impl TopologyManager {
     /// Periodically rebalance all streams
     async fn periodic_rebalance(
         trees: Arc<RwLock<HashMap<StreamId, crate::overlay::tree::StreamTree>>>,
-        peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
+        _peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
         config: TopologyConfig,
     ) {
         let mut interval = tokio::time::interval(config.rebalance_interval);
@@ -418,7 +418,7 @@ impl TopologyManager {
     /// Rebalance a stream's topology with geo-awareness
     pub async fn rebalance_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         let mut trees = self.trees.write().await;
-        let peers = self.peers.read().await;
+        let _peers = self.peers.read().await;
 
         if let Some(tree) = trees.get_mut(stream_id) {
             tree.rebalance();

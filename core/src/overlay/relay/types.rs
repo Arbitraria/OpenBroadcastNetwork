@@ -88,6 +88,7 @@ impl StreamChunk {
 
 /// A message for the relay manager
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum RelayMessage {
     /// A new chunk to relay
     Chunk(StreamChunk),

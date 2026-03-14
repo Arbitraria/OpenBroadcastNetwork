@@ -1,20 +1,18 @@
 //! Streaming demo application showcasing H.264 + Opus encoding over P2P network
 //!
 //! This demo creates a simple video stream using our OpenH264 and Opus codecs,
-//! then distributes the chunks over the libp2p network using GossipSub.
+//! then distributes the segments over the libp2p network using GossipSub.
 
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info};
 
-use OpenBroadcastNetwork_core::media::{
-    ChunkBuilder, MediaChunk, OpenH264Codec, OpusCodec, StreamId, StreamMetadata,
-};
-// Unified segment types for more efficient wire format
+use OpenBroadcastNetwork_core::media::{OpenH264Codec, OpusCodec};
 use OpenBroadcastNetwork_core::media::segment::{
-    MediaType, SegmentBuilder, StreamId as UnifiedStreamId, StreamSegment,
+    SegmentBuilder, StreamId, StreamSegment,
 };
+use OpenBroadcastNetwork_core::media::StreamMetadata;
 use OpenBroadcastNetwork_core::media::wire_format::ToWireFormat;
 use OpenBroadcastNetwork_core::overlay::interface::{
     Overlay, OverlayError, StreamId as OverlayStreamId,
@@ -28,7 +26,7 @@ pub struct StreamingDemoConfig {
     pub title: String,
     /// Video resolution width
     pub video_width: u32,
-    /// Video resolution height  
+    /// Video resolution height
     pub video_height: u32,
     /// Video framerate (fps)
     pub video_fps: u32,
@@ -60,7 +58,7 @@ pub struct StreamingDemo {
     stream_id: StreamId,
     video_codec: Arc<OpenH264Codec>,
     audio_codec: Arc<OpusCodec>,
-    chunk_builder: ChunkBuilder,
+    segment_builder: SegmentBuilder,
     overlay: Arc<Libp2pOverlay>,
 }
 
@@ -94,7 +92,7 @@ impl StreamingDemo {
             .await
             .map_err(|e| OverlayError::General(format!("Audio codec init failed: {}", e)))?;
 
-        let chunk_builder = ChunkBuilder::new(stream_id.clone());
+        let segment_builder = SegmentBuilder::new(stream_id.clone());
 
         info!("Created streaming demo for stream: {}", stream_id);
 
@@ -103,7 +101,7 @@ impl StreamingDemo {
             stream_id,
             video_codec,
             audio_codec,
-            chunk_builder,
+            segment_builder,
             overlay,
         })
     }
@@ -112,8 +110,9 @@ impl StreamingDemo {
     pub async fn start(&mut self) -> Result<(), OverlayError> {
         info!("Starting streaming demo: '{}'", self.config.title);
 
-        // Convert media StreamId to overlay StreamId and set up GossipSub topic
-        let overlay_stream_id: OverlayStreamId = (&self.stream_id).into();
+        // Convert segment StreamId to overlay StreamId
+        let overlay_stream_id =
+            OverlayStreamId::from_bytes(self.stream_id.to_vec());
 
         // Publish and subscribe to the stream topic to enable GossipSub routing
         self.overlay.publish_stream(&overlay_stream_id).await?;
@@ -133,11 +132,13 @@ impl StreamingDemo {
             self.config.audio_channels,
         );
 
-        let metadata_chunk = self.chunk_builder.metadata_chunk(metadata).map_err(|e| {
-            OverlayError::General(format!("Failed to create metadata chunk: {}", e))
-        })?;
+        let metadata_segment = self.segment_builder.metadata(
+            serde_json::to_vec(&metadata).map_err(|e| {
+                OverlayError::General(format!("Failed to serialize metadata: {}", e))
+            })?,
+        );
 
-        self.send_chunk(metadata_chunk).await?;
+        send_segment_to_network(&self.overlay, &metadata_segment).await?;
 
         // Start video and audio generation loops
         let _video_handle = self.start_video_generation();
@@ -152,8 +153,9 @@ impl StreamingDemo {
 
     /// Start video frame generation and encoding
     fn start_video_generation(&mut self) -> tokio::task::JoinHandle<()> {
-        let video_codec = Arc::clone(&self.video_codec);
+        let _video_codec = Arc::clone(&self.video_codec);
         let frame_duration_ms = 1000 / self.config.video_fps as u64;
+        let frame_duration_us = frame_duration_ms * 1000;
         let mut frame_interval = interval(Duration::from_millis(frame_duration_ms));
         let stream_id = self.stream_id.clone();
         let overlay = Arc::clone(&self.overlay);
@@ -167,25 +169,26 @@ impl StreamingDemo {
                 frame_interval.tick().await;
 
                 // Generate a synthetic video frame (colored pattern)
-                let frame_data = generate_test_video_frame(width, height, frame_count);
+                let _frame_data = generate_test_video_frame(width, height, frame_count);
 
-                // Encode the frame (this is a placeholder - real encoding would need proper setup)
-                // For now, we'll create a dummy encoded frame
+                // Encode the frame (placeholder - real encoding would need proper setup)
                 let encoded_frame = format!("h264_frame_{}", frame_count).into_bytes();
 
-                // Create video chunk
+                // Create video segment
                 let is_keyframe = frame_count % 30 == 0;
-                let chunk = MediaChunk::new_video(
+                let pts_us = frame_count * frame_duration_us;
+                let segment = StreamSegment::video(
                     stream_id.clone(),
                     frame_count,
+                    pts_us,
+                    frame_duration_us,
                     encoded_frame,
-                    frame_duration_ms,
                     is_keyframe,
                 );
 
-                // Send chunk over P2P network via GossipSub
-                if let Err(e) = send_chunk_to_network(&overlay, chunk).await {
-                    error!("Failed to send video chunk: {}", e);
+                // Send segment over P2P network via GossipSub
+                if let Err(e) = send_segment_to_network(&overlay, &segment).await {
+                    error!("Failed to send video segment: {}", e);
                     break;
                 }
 
@@ -204,14 +207,15 @@ impl StreamingDemo {
 
     /// Start audio generation and encoding
     fn start_audio_generation(&mut self) -> tokio::task::JoinHandle<()> {
-        let audio_codec = Arc::clone(&self.audio_codec);
+        let _audio_codec = Arc::clone(&self.audio_codec);
         let sample_rate = self.config.audio_sample_rate;
         let channels = self.config.audio_channels;
         let stream_id = self.stream_id.clone();
         let overlay = Arc::clone(&self.overlay);
 
         // Opus typically uses 20ms frames
-        let frame_duration_ms = 20;
+        let frame_duration_ms: u64 = 20;
+        let frame_duration_us = frame_duration_ms * 1000;
         let mut audio_interval = interval(Duration::from_millis(frame_duration_ms));
 
         tokio::spawn(async move {
@@ -221,7 +225,7 @@ impl StreamingDemo {
                 audio_interval.tick().await;
 
                 // Generate synthetic audio (sine wave)
-                let audio_data = generate_test_audio_frame(
+                let _audio_data = generate_test_audio_frame(
                     sample_rate,
                     channels,
                     frame_duration_ms,
@@ -231,17 +235,19 @@ impl StreamingDemo {
                 // Encode the audio (placeholder - real encoding would need proper setup)
                 let encoded_audio = format!("opus_frame_{}", audio_sequence).into_bytes();
 
-                // Create audio chunk
-                let chunk = MediaChunk::new_audio(
+                // Create audio segment
+                let pts_us = audio_sequence * frame_duration_us;
+                let segment = StreamSegment::audio(
                     stream_id.clone(),
                     audio_sequence,
+                    pts_us,
+                    frame_duration_us,
                     encoded_audio,
-                    frame_duration_ms,
                 );
 
-                // Send chunk over P2P network via GossipSub
-                if let Err(e) = send_chunk_to_network(&overlay, chunk).await {
-                    error!("Failed to send audio chunk: {}", e);
+                // Send segment over P2P network via GossipSub
+                if let Err(e) = send_segment_to_network(&overlay, &segment).await {
+                    error!("Failed to send audio segment: {}", e);
                     break;
                 }
 
@@ -256,60 +262,9 @@ impl StreamingDemo {
             info!("Audio generation completed");
         })
     }
-
-    /// Send a media chunk over the P2P network
-    async fn send_chunk(&self, chunk: MediaChunk) -> Result<(), OverlayError> {
-        send_chunk_to_network(&self.overlay, chunk).await
-    }
-}
-
-/// Send a chunk to the P2P network via GossipSub (legacy JSON format)
-async fn send_chunk_to_network(
-    overlay: &Libp2pOverlay,
-    chunk: MediaChunk,
-) -> Result<(), OverlayError> {
-    // Serialize chunk for transmission (JSON format)
-    let chunk_data = chunk
-        .to_bytes()
-        .map_err(|e| OverlayError::General(format!("Failed to serialize chunk: {}", e)))?;
-
-    let chunk_type_str = match chunk.chunk_type {
-        OpenBroadcastNetwork_core::media::ChunkType::Video => "video",
-        OpenBroadcastNetwork_core::media::ChunkType::Audio => "audio",
-        OpenBroadcastNetwork_core::media::ChunkType::Metadata => "metadata",
-    };
-
-    debug!(
-        "Publishing {} chunk {} ({} bytes) to stream {}",
-        chunk_type_str,
-        chunk.sequence,
-        chunk_data.len(),
-        chunk.stream_id
-    );
-
-    // Convert media StreamId to overlay StreamId
-    let overlay_stream_id: OverlayStreamId = (&chunk.stream_id).into();
-
-    // Publish to GossipSub via the Overlay trait
-    overlay
-        .publish_stream_data(&overlay_stream_id, chunk_data)
-        .await?;
-
-    info!(
-        "Published {} chunk {} ({} bytes) to stream {}",
-        chunk_type_str,
-        chunk.sequence,
-        chunk.data.len(),
-        chunk.stream_id
-    );
-
-    Ok(())
 }
 
 /// Send a unified segment to the P2P network via GossipSub (efficient bincode format)
-///
-/// This is the preferred method for new code - it uses ~30-40% less bandwidth than JSON.
-#[allow(dead_code)]
 async fn send_segment_to_network(
     overlay: &Libp2pOverlay,
     segment: &StreamSegment,

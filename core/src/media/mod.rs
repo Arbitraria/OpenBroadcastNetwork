@@ -51,8 +51,6 @@ pub mod sink;
 pub mod source;
 /// Stream management and metadata handling
 pub mod stream;
-/// Streaming chunk format for P2P media distribution (legacy, use segment module)
-pub mod stream_chunk;
 /// Video file reading and MP4 parsing for real media content
 pub mod video_reader;
 /// Compact wire format for P2P segment transmission
@@ -70,32 +68,22 @@ pub use codec::{
 pub use ffmpeg_reader::{
     FFmpegAudioTrack, FFmpegReaderError, FFmpegSample, FFmpegVideoReader, FFmpegVideoTrack,
 };
-// Deprecated: use StreamSegment::from_sample() instead
-#[allow(deprecated)]
-pub use fmp4_converter::{FragmentedMp4Converter, FrameData, Sample};
+pub use fmp4_converter::{FragmentedMp4Converter, FrameData};
 pub use fragment_parser::FragmentParser;
 pub use fragment_writer::FragmentWriter;
 pub use interface::{MediaError, MediaFormat, MediaSink, MediaSource, MediaStream};
-// Deprecated: use generate_stream_segments() and StreamSegment instead
-#[allow(deprecated)]
-pub use mp4_parser::{BoxHeader, Mp4Parser, Mp4Track, MseSegment, SampleEntry, SampleTable};
+pub use mp4_parser::{BoxHeader, Mp4Parser, Mp4Track, SampleEntry, SampleTable};
 pub use pipeline::{MediaPipeline, PassThroughStage, PipelineStage};
 pub use publisher::{PublisherError, StreamPublisher};
 pub use quality::{BandwidthMonitor, QualityConfig, QualityLevel, QualityManager};
-// Unified segment types (new, preferred)
-pub use segment::{MediaType, SegmentBuilder, StreamId as UnifiedStreamId, StreamSegment};
+// Unified segment types
+pub use segment::{
+    MediaType, SegmentBuilder, StreamId, StreamMetadata, StreamSegment,
+};
 pub use sink::{FileSink, MemorySink, NullSink};
 pub use source::{FileSource, MemorySource, NetworkSource};
 pub use stream::MediaStreamImpl;
-// Legacy types (deprecated, use segment module instead)
-// These will be removed in a future version
-#[allow(deprecated)]
-pub use stream_chunk::{ChunkBuilder, ChunkType, MediaChunk, StreamId, StreamMetadata};
-// Deprecated: use read_all_stream_segments() and StreamSegment instead
-#[allow(deprecated)]
-pub use video_reader::{
-    AudioTrackInfo, MediaSample, VideoReader, VideoReaderError, VideoTrackInfo,
-};
+pub use video_reader::{AudioTrackInfo, VideoReader, VideoReaderError, VideoTrackInfo};
 // Wire format for P2P transmission
 pub use wire_format::{ToWireFormat, WireSegment, WireSegmentBatch, WIRE_FORMAT_VERSION};
 // P2P bridge

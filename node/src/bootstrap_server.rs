@@ -87,14 +87,8 @@ impl Default for BootstrapServerConfig {
 
 /// Information about a tracked peer
 struct TrackedPeer {
-    /// The peer's advertised listen addresses
-    listen_addrs: Vec<Multiaddr>,
     /// When this peer was last seen
     last_seen: Instant,
-    /// The peer's protocol version
-    protocol_version: String,
-    /// The peer's agent version
-    agent_version: String,
 }
 
 /// Bootstrap server for peer discovery with optional relay server functionality
@@ -293,10 +287,7 @@ impl BootstrapServer {
                     self.peers.insert(
                         peer_id,
                         TrackedPeer {
-                            listen_addrs: info.listen_addrs,
                             last_seen: Instant::now(),
-                            protocol_version: info.protocol_version,
-                            agent_version: info.agent_version,
                         },
                     );
                     info!("📊 Tracking {} peers", self.peers.len());

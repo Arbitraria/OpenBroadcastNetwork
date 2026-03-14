@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 //! Decentralized Streaming Core Library
 //!
 //! This crate provides the core functionality for a decentralized streaming CDN.

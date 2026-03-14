@@ -1,13 +1,19 @@
-// Publish-Subscribe module for decentralized streaming
-//
-// This module implements topic-based publish-subscribe functionality
-// using libp2p GossipSub for efficient message propagation.
+//! Publish-Subscribe module for decentralized streaming
+//!
+//! This module implements topic-based publish-subscribe functionality
+//! using libp2p GossipSub for efficient message propagation.
 
+/// GossipSub protocol configuration and service
 pub mod gossipsub;
+/// Core pub/sub trait definitions
 pub mod interface;
+/// Message types and serialization
 pub mod message;
+/// Pub/sub performance metrics
 pub mod metrics;
+/// Topic management and stream topic helpers
 pub mod topic;
+/// Message validation pipeline
 pub mod validation;
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 //! - `MediaType` - Type of media content (video, audio, metadata, initialization)
 //!
 //! These types replace the fragmented type system that previously existed across:
-//! - `MediaChunk` (stream_chunk.rs)
+//! - Legacy `MediaChunk` (removed)
 //! - `MseSegment` (mp4_parser.rs)
 //! - `Sample` (fmp4_converter.rs)
 //! - `MediaSample` (video_reader.rs)
@@ -417,68 +417,56 @@ impl SegmentBuilder {
     }
 }
 
-// =============================================================================
-// Conversion traits from legacy types
-// =============================================================================
-//
-// These conversions allow gradual migration from the old type system.
-// They are implemented as From traits for ergonomic use during the transition.
-
-/// Conversion context providing stream_id and sequence for types that don't have them
-pub struct ConversionContext {
-    /// Stream ID to use when converting types that lack one
-    pub stream_id: StreamId,
-    /// Sequence number to use (typically auto-incremented)
-    pub sequence: u64,
+/// Stream metadata for initialization
+///
+/// Contains codec and format information sent before streaming begins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamMetadata {
+    /// Stream title/name
+    pub title: String,
+    /// Video width in pixels
+    pub video_width: u32,
+    /// Video height in pixels
+    pub video_height: u32,
+    /// Video framerate (fps)
+    pub video_fps: u32,
+    /// Audio sample rate (Hz)
+    pub audio_sample_rate: u32,
+    /// Number of audio channels
+    pub audio_channels: u16,
+    /// Video codec used
+    pub video_codec: String,
+    /// Audio codec used
+    pub audio_codec: String,
 }
 
-impl ConversionContext {
-    /// Create a new conversion context
-    pub fn new(stream_id: StreamId, sequence: u64) -> Self {
+impl StreamMetadata {
+    /// Create metadata for H.264 + Opus stream
+    pub fn new_h264_opus(
+        title: String,
+        video_width: u32,
+        video_height: u32,
+        video_fps: u32,
+        audio_sample_rate: u32,
+        audio_channels: u16,
+    ) -> Self {
         Self {
-            stream_id,
-            sequence,
+            title,
+            video_width,
+            video_height,
+            video_fps,
+            audio_sample_rate,
+            audio_channels,
+            video_codec: "openh264".to_string(),
+            audio_codec: "opus".to_string(),
         }
     }
 }
 
-// Conversion from MediaChunk (stream_chunk.rs)
-impl From<&crate::media::stream_chunk::MediaChunk> for StreamSegment {
-    fn from(chunk: &crate::media::stream_chunk::MediaChunk) -> Self {
-        let media_type = match chunk.chunk_type {
-            crate::media::stream_chunk::ChunkType::Video => MediaType::Video,
-            crate::media::stream_chunk::ChunkType::Audio => MediaType::Audio,
-            crate::media::stream_chunk::ChunkType::Metadata => MediaType::Metadata,
-        };
+// =============================================================================
+// Conversion methods from internal types
+// =============================================================================
 
-        let track_id = match chunk.chunk_type {
-            crate::media::stream_chunk::ChunkType::Video => 1,
-            crate::media::stream_chunk::ChunkType::Audio => 2,
-            crate::media::stream_chunk::ChunkType::Metadata => 0,
-        };
-
-        Self {
-            stream_id: StreamId::new(chunk.stream_id.as_str()),
-            sequence: chunk.sequence,
-            pts_us: chunk.timestamp * 1000, // ms to us
-            duration_us: chunk.duration_ms * 1000,
-            media_type,
-            data: Bytes::from(chunk.data.clone()),
-            is_keyframe: chunk.is_keyframe,
-            track_id,
-        }
-    }
-}
-
-impl From<crate::media::stream_chunk::MediaChunk> for StreamSegment {
-    fn from(chunk: crate::media::stream_chunk::MediaChunk) -> Self {
-        StreamSegment::from(&chunk)
-    }
-}
-
-// Conversion from MseSegment (mp4_parser.rs)
-// Note: MseSegment doesn't have stream_id or sequence, so we provide a conversion
-// that takes additional context
 impl StreamSegment {
     /// Create a StreamSegment from an MseSegment with additional context
     pub fn from_mse_segment(
@@ -505,12 +493,8 @@ impl StreamSegment {
             track_id: mse.track_id as u8,
         }
     }
-}
 
-// Conversion from Sample (fmp4_converter.rs)
-// Sample doesn't have timing info in microseconds, so we need context
-impl StreamSegment {
-    /// Create a StreamSegment from a Sample with additional context
+    /// Create a StreamSegment from an fmp4 Sample with additional context
     ///
     /// The `timescale` parameter converts duration to microseconds.
     /// Typical values: 90000 for video (90kHz), 48000 for audio.
@@ -522,11 +506,10 @@ impl StreamSegment {
         timescale: u32,
         media_type: MediaType,
     ) -> Self {
-        // Convert duration from timescale units to microseconds
         let duration_us = if timescale > 0 {
             (sample.duration as u64 * 1_000_000) / timescale as u64
         } else {
-            sample.duration as u64 * 1000 // assume ms if no timescale
+            sample.duration as u64 * 1000
         };
 
         Self {
@@ -544,17 +527,13 @@ impl StreamSegment {
             },
         }
     }
-}
 
-// Conversion from MediaSample (video_reader.rs)
-impl StreamSegment {
     /// Create a StreamSegment from a MediaSample with additional context
     pub fn from_media_sample(
         sample: &crate::media::video_reader::MediaSample,
         stream_id: StreamId,
         sequence: u64,
     ) -> Self {
-        // Determine media type from track_id (track 1 = video, track 2 = audio typically)
         let media_type = if sample.track_id == 2 {
             MediaType::Audio
         } else {
@@ -662,40 +641,6 @@ impl From<crate::overlay::relay::StreamChunk> for StreamSegment {
     }
 }
 
-// =============================================================================
-// Conversions TO legacy types (for backwards compatibility during migration)
-// =============================================================================
-
-impl From<&StreamSegment> for crate::media::stream_chunk::MediaChunk {
-    fn from(segment: &StreamSegment) -> Self {
-        let chunk_type = match segment.media_type {
-            MediaType::Video => crate::media::stream_chunk::ChunkType::Video,
-            MediaType::Audio => crate::media::stream_chunk::ChunkType::Audio,
-            MediaType::Metadata | MediaType::Initialization => {
-                crate::media::stream_chunk::ChunkType::Metadata
-            }
-        };
-
-        Self {
-            stream_id: crate::media::stream_chunk::StreamId::new(
-                segment.stream_id.to_string_lossy(),
-            ),
-            sequence: segment.sequence,
-            timestamp: segment.pts_us / 1000, // us to ms
-            chunk_type,
-            data: segment.data.to_vec(),
-            duration_ms: segment.duration_us / 1000,
-            is_keyframe: segment.is_keyframe,
-        }
-    }
-}
-
-impl From<StreamSegment> for crate::media::stream_chunk::MediaChunk {
-    fn from(segment: StreamSegment) -> Self {
-        crate::media::stream_chunk::MediaChunk::from(&segment)
-    }
-}
-
 // Conversion to overlay StreamChunk
 impl StreamSegment {
     /// Convert to overlay StreamChunk with the given chunk ID
@@ -733,11 +678,9 @@ mod tests {
 
     #[test]
     fn test_stream_id_from_bytes() {
-        // Use bytes that are definitely not valid UTF-8
         let bytes = vec![0x80, 0x81, 0x82, 0x83];
         let id = StreamId::from_vec(bytes.clone());
         assert_eq!(id.to_vec(), bytes);
-        // Non-UTF8 bytes should display as hex
         assert_eq!(id.to_string(), "80818283");
     }
 
@@ -753,7 +696,6 @@ mod tests {
     fn test_stream_id_zero_copy() {
         let id = StreamId::new("test");
         let cloned = id.clone();
-        // Both should point to same underlying data (Bytes is reference-counted)
         assert_eq!(id.as_bytes().as_ptr(), cloned.as_bytes().as_ptr());
     }
 
@@ -839,56 +781,6 @@ mod tests {
         let serialized = serde_json::to_string(&id).unwrap();
         let deserialized: StreamId = serde_json::from_str(&serialized).unwrap();
         assert_eq!(id, deserialized);
-    }
-
-    // Conversion tests
-
-    #[test]
-    fn test_from_media_chunk() {
-        use crate::media::stream_chunk::{ChunkType, MediaChunk, StreamId as LegacyStreamId};
-
-        let chunk = MediaChunk {
-            stream_id: LegacyStreamId::new("test_stream".to_string()),
-            sequence: 42,
-            timestamp: 1000, // ms
-            chunk_type: ChunkType::Video,
-            data: vec![1, 2, 3, 4, 5],
-            duration_ms: 33,
-            is_keyframe: true,
-        };
-
-        let segment: StreamSegment = chunk.into();
-
-        assert_eq!(segment.stream_id.to_string(), "test_stream");
-        assert_eq!(segment.sequence, 42);
-        assert_eq!(segment.pts_us, 1_000_000); // converted from ms
-        assert_eq!(segment.duration_us, 33_000);
-        assert_eq!(segment.media_type, MediaType::Video);
-        assert!(segment.is_keyframe);
-        assert_eq!(segment.track_id, 1);
-    }
-
-    #[test]
-    fn test_to_media_chunk() {
-        use crate::media::stream_chunk::{ChunkType, MediaChunk};
-
-        let segment = StreamSegment::video(
-            StreamId::new("test_stream"),
-            42,
-            1_000_000, // us
-            33_000,    // us
-            vec![1, 2, 3, 4, 5],
-            true,
-        );
-
-        let chunk: MediaChunk = segment.into();
-
-        assert_eq!(chunk.stream_id.as_str(), "test_stream");
-        assert_eq!(chunk.sequence, 42);
-        assert_eq!(chunk.timestamp, 1000); // converted to ms
-        assert_eq!(chunk.duration_ms, 33);
-        assert_eq!(chunk.chunk_type, ChunkType::Video);
-        assert!(chunk.is_keyframe);
     }
 
     #[test]

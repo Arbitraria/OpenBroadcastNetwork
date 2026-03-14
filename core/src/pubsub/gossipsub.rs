@@ -98,6 +98,7 @@ impl PubSubConfig for GossipSubConfig {
 use std::fmt;
 
 /// GossipSub service implementation
+#[allow(dead_code)]
 pub struct GossipSubService {
     /// Configuration
     config: GossipSubConfig,
@@ -163,6 +164,7 @@ impl GossipSubService {
     }
 
     /// Create a new gossipsub protocol with current configuration
+    #[allow(dead_code)]
     fn create_gossipsub(&self) -> Gossipsub {
         // Use the ConfigBuilder pattern to configure Gossipsub
         let gossipsub_config = ConfigBuilder::default()
@@ -185,23 +187,27 @@ impl GossipSubService {
     }
 
     /// Convert our Topic to libp2p Topic
+    #[allow(dead_code)]
     fn to_libp2p_topic(topic_id: &TopicId) -> LibP2PTopic {
         LibP2PTopic::new(topic_id.0.clone())
     }
 
     /// Convert libp2p PeerId to SerializablePeerId for Message compatibility
+    #[allow(dead_code)]
     fn from_libp2p_peer_id(peer_id: &libp2p::PeerId) -> crate::pubsub::message::SerializablePeerId {
         // Convert to string representation for serialization
         crate::pubsub::message::SerializablePeerId(peer_id.to_string())
     }
 
     /// Convert our LocalPeerId to libp2p PeerId
+    #[allow(dead_code)]
     fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<libp2p::PeerId, PubSubError> {
         // Use the TryFrom trait implementation
         libp2p::PeerId::try_from(peer_id).map_err(|e| PubSubError::PeerIdError(e.to_string()))
     }
 
     /// Convert Message to GossipsubMessage
+    #[allow(dead_code)]
     fn to_gossipsub_message(
         &self,
         message: &Message,
@@ -232,6 +238,7 @@ impl GossipSubService {
     }
 
     /// Convert GossipsubMessage to our Message
+    #[allow(dead_code)]
     fn from_gossipsub_message(
         &self,
         topic_id: TopicId,

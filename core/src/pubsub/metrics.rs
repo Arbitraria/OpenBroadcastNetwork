@@ -350,6 +350,7 @@ impl TopicMetrics {
 
 /// Metrics for a specific peer
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PeerMetrics {
     /// Messages received from this peer
     messages_received: AtomicUsize,
@@ -383,12 +384,6 @@ impl PeerMetrics {
         }
     }
 
-    /// Update the last seen timestamp
-    fn update_last_seen(&self) {
-        if let Ok(mut last_seen) = self.last_seen.write() {
-            *last_seen = Instant::now();
-        }
-    }
 }
 
 /// Time-series data for calculating rates

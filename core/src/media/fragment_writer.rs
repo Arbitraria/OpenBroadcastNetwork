@@ -306,7 +306,7 @@ impl FragmentWriter {
     }
 
     /// Create a minimal traf (track fragment) box
-    fn create_minimal_traf(&self, data_size: u32) -> Result<Vec<u8>, io::Error> {
+    fn create_minimal_traf(&self, _data_size: u32) -> Result<Vec<u8>, io::Error> {
         let mut traf_content = Vec::new();
 
         // Add tfhd (track fragment header)

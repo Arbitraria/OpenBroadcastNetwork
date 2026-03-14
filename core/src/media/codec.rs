@@ -531,8 +531,8 @@ impl Codec for OpenH264Codec {
         match decoder.decoder.decode(data) {
             Ok(Some(decoded_yuv)) => {
                 // Convert decoded YUV back to raw YUV420P format
-                let width = decoded_yuv.width();
-                let height = decoded_yuv.height();
+                let _width = decoded_yuv.width();
+                let _height = decoded_yuv.height();
 
                 // Get YUV plane data using YUVSource trait methods
                 let y_plane = decoded_yuv.y();

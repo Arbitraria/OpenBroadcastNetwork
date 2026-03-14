@@ -53,6 +53,7 @@ use super::config::RelayConfig;
 use super::node::RelayNode;
 
 /// A manager for handling multiple relay nodes
+#[allow(dead_code)]
 pub struct RelayManager {
     /// Local peer ID
     local_peer_id: PeerId,

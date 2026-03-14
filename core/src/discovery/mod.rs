@@ -69,6 +69,7 @@ impl Default for DiscoveryManagerConfig {
 }
 
 /// A unified discovery manager that integrates multiple discovery mechanisms
+#[allow(dead_code)]
 pub struct DiscoveryManager {
     /// Configuration
     config: DiscoveryManagerConfig,
@@ -218,6 +219,7 @@ impl DiscoveryManager {
     }
 
     /// Handle a discovery event
+    #[allow(dead_code)]
     async fn handle_discovery_event(
         &self,
         event: DiscoveryEvent,

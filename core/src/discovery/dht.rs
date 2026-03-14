@@ -37,15 +37,6 @@ pub struct DhtConfig {
     pub replication_factor: u8,
 }
 
-/// Time between periodic DHT refreshes
-const DHT_REFRESH_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
-
-/// Time between provider announcements
-const PROVIDER_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(120); // 2 minutes
-
-/// Expiration time for DHT records
-const RECORD_TTL: Duration = Duration::from_secs(7200); // 2 hours
-
 /// Peer expiration time
 const PEER_EXPIRATION: Duration = Duration::from_secs(3600); // 1 hour
 
@@ -110,12 +101,11 @@ pub struct DhtDiscovery {
     /// Task handle for background discovery
     task_handle: Option<tokio::task::JoinHandle<()>>,
 
-    /// Keypair for authentication
-    keypair: Option<Keypair>,
 }
 
 /// Types of DHT queries we can perform
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum QueryType {
     /// Searching for a specific peer
     FindPeer(Vec<u8>),
@@ -150,17 +140,13 @@ impl DhtDiscovery {
             local_peer_id: None,
             swarm: Arc::new(Mutex::new(None)),
             task_handle: None,
-            keypair: None,
         }
     }
 
     /// Initialize the libp2p swarm with Kademlia behavior
     async fn init_swarm(&mut self) -> Result<(), DiscoveryError> {
-        // Generate or use existing keypair
-        let keypair = self
-            .keypair
-            .take()
-            .unwrap_or_else(|| Keypair::generate_ed25519());
+        // Generate keypair
+        let keypair = Keypair::generate_ed25519();
         let peer_id = keypair.public().to_peer_id();
         self.local_peer_id = Some(peer_id);
 
@@ -215,7 +201,7 @@ impl DhtDiscovery {
             }
 
             // Get the swarm
-            let mut swarm_opt = {
+            let swarm_opt = {
                 let mut swarm_lock = swarm.lock().await;
                 swarm_lock.take()
             };
@@ -251,7 +237,7 @@ impl DhtDiscovery {
                             debug!("Listening on: {}", address);
                         }
                         SwarmEvent::ConnectionEstablished {
-                            peer_id, endpoint, ..
+                            peer_id, endpoint: _endpoint, ..
                         } => {
                             debug!("Connected to peer: {}", peer_id);
 

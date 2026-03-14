@@ -39,6 +39,7 @@ pub struct HybridOverlay {
     event_tx: mpsc::Sender<OverlayEvent>,
 
     /// Event receiver
+    #[allow(dead_code)]
     event_rx: Option<mpsc::Receiver<OverlayEvent>>,
 
     /// Whether the overlay is running
@@ -119,8 +120,6 @@ impl HybridOverlay {
             NetworkEvent::Error(error) => {
                 error!("Network error: {:?}", error);
             }
-            // Other event types
-            _ => {}
         }
     }
 
@@ -162,24 +161,18 @@ impl HybridOverlay {
             // Update tree
             if let Some(tree) = self.trees.blocking_write().get_mut(&stream_id) {
                 // Remove the peer from the tree
-                if let Ok(peer_id) = libp2p::PeerId::try_from(peer_id.clone()) {
-                    if !tree.remove_peer(&peer_id) {
-                        warn!("Failed to remove peer from tree: {:?}", peer_id);
-                    }
-                } else {
-                    warn!("Could not convert LocalPeerId to PeerId for remove_peer");
+                let peer_id: libp2p::PeerId = peer_id.clone().into();
+                if !tree.remove_peer(&peer_id) {
+                    warn!("Failed to remove peer from tree: {:?}", peer_id);
                 }
             }
 
             // Update mesh
             if let Some(mesh) = self.meshes.blocking_write().get_mut(&stream_id) {
                 // Remove the peer from the mesh
-                if let Ok(peer_id) = libp2p::PeerId::try_from(peer_id.clone()) {
-                    if !mesh.remove_peer(&peer_id) {
-                        warn!("Failed to remove peer from mesh: {:?}", peer_id);
-                    }
-                } else {
-                    warn!("Could not convert LocalPeerId to PeerId for remove_peer");
+                let peer_id: libp2p::PeerId = peer_id.clone().into();
+                if !mesh.remove_peer(&peer_id) {
+                    warn!("Failed to remove peer from mesh: {:?}", peer_id);
                 }
             }
         }
@@ -243,19 +236,16 @@ impl HybridOverlay {
 
             // Forward the data to our tree children
             if let Some(tree) = self.trees.blocking_read().get(&stream_id) {
-                if let Ok(peer_id) = libp2p::PeerId::try_from(
-                    self.local_peer_id
-                        .clone()
-                        .unwrap_or_else(LocalPeerId::new_random),
-                ) {
-                    if let Some(children) = tree.get_children(&peer_id) {
-                        for child in children {
-                            // In a real implementation, we'd send the data to the child
-                            debug!("Forwarding data to child: {:?}", child);
-                        }
+                let peer_id: libp2p::PeerId = self
+                    .local_peer_id
+                    .clone()
+                    .unwrap_or_else(LocalPeerId::new_random)
+                    .into();
+                if let Some(children) = tree.get_children(&peer_id) {
+                    for child in children {
+                        // In a real implementation, we'd send the data to the child
+                        debug!("Forwarding data to child: {:?}", child);
                     }
-                } else {
-                    warn!("Could not convert LocalPeerId to PeerId for tree.get_children()");
                 }
             }
 
@@ -443,7 +433,7 @@ impl Overlay for HybridOverlay {
             .unwrap_or_else(LocalPeerId::new_random)
     }
 
-    async fn connect_peer(&self, addr: &str) -> Result<PeerInfo, OverlayError> {
+    async fn connect_peer(&self, _addr: &str) -> Result<PeerInfo, OverlayError> {
         // Connect to the peer using the network layer
         // Network doesn't have connect method, need to implement peer connection logic
         // For now, create a dummy peer ID
@@ -664,6 +654,7 @@ impl HybridOverlay {
     }
 
     // Not part of Overlay trait, but kept for internal use
+    #[allow(dead_code)]
     async fn publish_stream_data(
         &self,
         stream_id: StreamId,
@@ -686,15 +677,12 @@ impl HybridOverlay {
         // Forward the data to our tree children
         if let Some(tree) = self.trees.read().await.get(&stream_id) {
             if let Some(local_peer_id) = &self.local_peer_id {
-                if let Ok(peer_id) = libp2p::PeerId::try_from(local_peer_id.clone()) {
-                    if let Some(children) = tree.get_children(&peer_id) {
-                        for child in children {
-                            // In a real implementation, we'd send the data to the child
-                            debug!("Forwarding data to child: {:?}", child);
-                        }
+                let peer_id: libp2p::PeerId = local_peer_id.clone().into();
+                if let Some(children) = tree.get_children(&peer_id) {
+                    for child in children {
+                        // In a real implementation, we'd send the data to the child
+                        debug!("Forwarding data to child: {:?}", child);
                     }
-                } else {
-                    warn!("Could not convert LocalPeerId to PeerId for tree.get_children()");
                 }
             } else {
                 warn!("No local_peer_id set; cannot forward to tree children");
@@ -713,6 +701,7 @@ impl HybridOverlay {
     }
 
     // Not part of Overlay trait, but kept for internal use
+    #[allow(dead_code)]
     async fn publish_stream_control(
         &self,
         stream_id: StreamId,

@@ -2,8 +2,7 @@
 //!
 //! This module contains handlers for libp2p network events used by the overlay implementation.
 //!
-//! Supports both legacy JSON-serialized `MediaChunk` and new bincode `WireSegment` formats,
-//! with automatic format detection for backward compatibility.
+//! Supports the bincode `WireSegment` format for P2P media transmission.
 
 // Core library imports
 use futures::SinkExt;
@@ -13,7 +12,6 @@ use tracing::{debug, info, warn};
 // Local imports
 use crate::media::segment::MediaType;
 use crate::media::wire_format::WireSegment;
-use crate::media::MediaChunk;
 use crate::overlay::interface::{OverlayError, OverlayEvent};
 use crate::overlay::libp2p::behavior::OverlayBehaviorEvent;
 use crate::overlay::libp2p::impl_core::Libp2pOverlay;
@@ -52,7 +50,7 @@ impl Libp2pOverlay {
                     self.handle_behavior_event(behavior_event).await?
                 }
                 SwarmEvent::ConnectionEstablished {
-                    peer_id, endpoint, ..
+                    peer_id, endpoint: _endpoint, ..
                 } => {
                     let peer_id = from_libp2p_peer_id(&peer_id);
                     info!("Connection established with peer: {}", peer_id);
@@ -210,7 +208,7 @@ impl Libp2pOverlay {
         match event {
             GossipsubEvent::Message {
                 propagation_source,
-                message_id,
+                message_id: _message_id,
                 message,
                 ..
             } => {
@@ -227,14 +225,10 @@ impl Libp2pOverlay {
                             data.len()
                         );
 
-                        // Try to deserialize - first try bincode WireSegment (new format),
-                        // then fall back to JSON MediaChunk (legacy format)
-                        let (sequence, timestamp, is_keyframe, content_type) = if let Ok(
-                            wire_segment,
-                        ) =
-                            WireSegment::from_bytes(&data)
+                        // Deserialize as bincode WireSegment format
+                        let (sequence, timestamp, is_keyframe, content_type) =
+                            if let Ok(wire_segment) = WireSegment::from_bytes(&data)
                         {
-                            // New bincode format
                             debug!(
                                 "Deserialized WireSegment: type={}, seq={}, keyframe={}",
                                 wire_segment.media_type,
@@ -254,27 +248,8 @@ impl Libp2pOverlay {
                                 wire_segment.is_keyframe,
                                 content_type.to_string(),
                             )
-                        } else if let Ok(media_chunk) = MediaChunk::from_bytes(&data) {
-                            // Legacy JSON format
-                            debug!(
-                                "Deserialized MediaChunk (legacy): type={:?}, seq={}, keyframe={}",
-                                media_chunk.chunk_type,
-                                media_chunk.sequence,
-                                media_chunk.is_keyframe
-                            );
-                            let content_type = match media_chunk.chunk_type {
-                                crate::media::ChunkType::Video => "video/h264",
-                                crate::media::ChunkType::Audio => "audio/opus",
-                                crate::media::ChunkType::Metadata => "application/json",
-                            };
-                            (
-                                media_chunk.sequence,
-                                media_chunk.timestamp,
-                                media_chunk.is_keyframe,
-                                content_type.to_string(),
-                            )
                         } else {
-                            warn!("Failed to deserialize as WireSegment or MediaChunk, using defaults");
+                            warn!("Failed to deserialize as WireSegment, using defaults");
                             (
                                 0,
                                 std::time::SystemTime::now()
@@ -546,7 +521,7 @@ impl Libp2pOverlay {
     /// Helper to rebalance topology after network changes
     pub async fn rebalance_topology(&self) -> Result<(), OverlayError> {
         let streams = self.streams.read().await;
-        for stream_id in streams.iter() {
+        for _stream_id in streams.iter() {
             // In a real implementation, we'd rebalance the tree and mesh for this stream
         }
         Ok(())

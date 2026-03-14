@@ -1,6 +1,7 @@
 use std::io;
 
 /// Proper fragmented MP4 converter for MSE compatibility
+#[allow(dead_code)]
 pub struct FragmentedMp4Converter {
     sequence_number: u32,
     base_media_decode_time: u64,
@@ -8,6 +9,7 @@ pub struct FragmentedMp4Converter {
 }
 
 impl FragmentedMp4Converter {
+    /// Create a new converter with initial sequence number 1
     pub fn new() -> Self {
         Self {
             sequence_number: 1,
@@ -19,25 +21,26 @@ impl FragmentedMp4Converter {
     /// Create a proper fMP4 segment with moof + mdat structure
     pub fn create_fragment(
         &mut self,
-        samples: &[Sample],
+        frames: &[FrameData],
         track_id: u32,
         timescale: u32,
     ) -> Result<Vec<u8>, io::Error> {
         let mut fragment = Vec::new();
 
         // Create moof (movie fragment)
-        let moof = self.create_moof(samples, track_id, timescale)?;
+        let moof = self.create_moof(frames, track_id, timescale)?;
         fragment.extend_from_slice(&moof);
 
         // Create mdat (media data)
-        let mdat = self.create_mdat(samples)?;
+        let mdat = self.create_mdat(frames)?;
         fragment.extend_from_slice(&mdat);
 
         // Update sequence number and decode time for next fragment
         self.sequence_number += 1;
 
         // Update base decode time for proper timestamp continuity
-        let total_duration: u64 = samples.iter().map(|s| s.duration as u64).sum();
+        let total_duration: u64 =
+            frames.iter().map(|f| f.duration as u64).sum();
         self.base_media_decode_time += total_duration;
 
         Ok(fragment)
@@ -225,7 +228,7 @@ impl FragmentedMp4Converter {
     /// Create moof (movie fragment) box
     fn create_moof(
         &self,
-        samples: &[Sample],
+        frames: &[FrameData],
         track_id: u32,
         timescale: u32,
     ) -> Result<Vec<u8>, io::Error> {
@@ -236,12 +239,14 @@ impl FragmentedMp4Converter {
         moof_content.extend_from_slice(&mfhd);
 
         // traf (track fragment)
-        let traf = self.create_traf(samples, track_id, timescale)?;
+        let traf = self.create_traf(frames, track_id, timescale)?;
         moof_content.extend_from_slice(&traf);
 
         // Wrap in moof box
         let mut moof = Vec::new();
-        moof.extend_from_slice(&(8 + moof_content.len() as u32).to_be_bytes());
+        moof.extend_from_slice(
+            &(8 + moof_content.len() as u32).to_be_bytes(),
+        );
         moof.extend_from_slice(b"moof");
         moof.extend_from_slice(&moof_content);
 
@@ -269,9 +274,9 @@ impl FragmentedMp4Converter {
     /// Create traf (track fragment) box
     fn create_traf(
         &self,
-        samples: &[Sample],
+        frames: &[FrameData],
         track_id: u32,
-        timescale: u32,
+        _timescale: u32,
     ) -> Result<Vec<u8>, io::Error> {
         let mut traf_content = Vec::new();
 
@@ -284,12 +289,14 @@ impl FragmentedMp4Converter {
         traf_content.extend_from_slice(&tfdt);
 
         // trun (track run)
-        let trun = self.create_trun(samples)?;
+        let trun = self.create_trun(frames)?;
         traf_content.extend_from_slice(&trun);
 
         // Wrap in traf box
         let mut traf = Vec::new();
-        traf.extend_from_slice(&(8 + traf_content.len() as u32).to_be_bytes());
+        traf.extend_from_slice(
+            &(8 + traf_content.len() as u32).to_be_bytes(),
+        );
         traf.extend_from_slice(b"traf");
         traf.extend_from_slice(&traf_content);
 
@@ -334,33 +341,45 @@ impl FragmentedMp4Converter {
     }
 
     /// Create trun (track run) box
-    fn create_trun(&self, samples: &[Sample]) -> Result<Vec<u8>, io::Error> {
+    fn create_trun(
+        &self,
+        frames: &[FrameData],
+    ) -> Result<Vec<u8>, io::Error> {
         let mut trun_content = Vec::new();
 
         // Version and flags
         trun_content.push(1); // version 1
-                              // Flags: 0x000301 = data-offset-present | sample-duration-present | sample-size-present
+        // Flags: 0x000301 = data-offset-present
+        //   | sample-duration-present | sample-size-present
         trun_content.extend_from_slice(&[0x00, 0x03, 0x01]);
 
         // Sample count
-        trun_content.extend_from_slice(&(samples.len() as u32).to_be_bytes());
+        trun_content.extend_from_slice(
+            &(frames.len() as u32).to_be_bytes(),
+        );
 
         // Data offset (offset from moof start to mdat payload)
         // This will be: moof_size + 8 (mdat header)
-        let data_offset = self.calculate_moof_size(samples) + 8;
-        trun_content.extend_from_slice(&(data_offset as i32).to_be_bytes());
+        let data_offset = self.calculate_moof_size(frames) + 8;
+        trun_content.extend_from_slice(
+            &(data_offset as i32).to_be_bytes(),
+        );
 
-        // Sample entries
-        for sample in samples {
+        // Sample entries (composition_offset ignored in v1 path)
+        for frame in frames {
             // Sample duration
-            trun_content.extend_from_slice(&sample.duration.to_be_bytes());
+            trun_content.extend_from_slice(
+                &frame.duration.to_be_bytes(),
+            );
             // Sample size
-            trun_content.extend_from_slice(&sample.size.to_be_bytes());
+            trun_content.extend_from_slice(&frame.size.to_be_bytes());
         }
 
         // Wrap in trun box
         let mut trun = Vec::new();
-        trun.extend_from_slice(&(8 + trun_content.len() as u32).to_be_bytes());
+        trun.extend_from_slice(
+            &(8 + trun_content.len() as u32).to_be_bytes(),
+        );
         trun.extend_from_slice(b"trun");
         trun.extend_from_slice(&trun_content);
 
@@ -368,30 +387,33 @@ impl FragmentedMp4Converter {
     }
 
     /// Create mdat (media data) box
-    fn create_mdat(&self, samples: &[Sample]) -> Result<Vec<u8>, io::Error> {
+    fn create_mdat(
+        &self,
+        frames: &[FrameData],
+    ) -> Result<Vec<u8>, io::Error> {
         let mut mdat = Vec::new();
 
         // Calculate total size
-        let data_size: u32 = samples.iter().map(|s| s.size).sum();
+        let data_size: u32 = frames.iter().map(|f| f.size).sum();
         let box_size = 8 + data_size;
 
         // Box header
         mdat.extend_from_slice(&box_size.to_be_bytes());
         mdat.extend_from_slice(b"mdat");
 
-        // Sample data
-        for sample in samples {
-            mdat.extend_from_slice(&sample.data);
+        // Frame data
+        for frame in frames {
+            mdat.extend_from_slice(&frame.data);
         }
 
         Ok(mdat)
     }
 
     /// Calculate moof size for data offset
-    fn calculate_moof_size(&self, samples: &[Sample]) -> u32 {
-        // moof header (8) + mfhd (16) + traf header (8) + tfhd (16) + tfdt (16) +
-        // trun header (8) + trun content (12 + samples.len() * 8)
-        8 + 16 + 8 + 16 + 16 + 8 + 12 + (samples.len() as u32 * 8)
+    fn calculate_moof_size(&self, frames: &[FrameData]) -> u32 {
+        // moof header (8) + mfhd (16) + traf header (8) + tfhd (16)
+        // + tfdt (16) + trun header (8) + trun content (12 + N * 8)
+        8 + 16 + 8 + 16 + 16 + 8 + 12 + (frames.len() as u32 * 8)
     }
 
     /// Create a proper MSE initialization segment with ftyp + moov
@@ -535,19 +557,35 @@ impl FrameData {
     }
 }
 
+impl From<Sample> for FrameData {
+    fn from(sample: Sample) -> Self {
+        Self {
+            size: sample.size,
+            duration: sample.duration,
+            is_keyframe: sample.is_keyframe,
+            data: sample.data,
+            composition_offset: 0,
+        }
+    }
+}
+
 /// Sample data for fragmentation
 ///
-/// **DEPRECATED**: Use [`FrameData`] or
-/// [`crate::media::segment::StreamSegment`] instead.
-#[deprecated(since = "0.2.0", note = "Use FrameData or StreamSegment instead")]
+/// Internal type. External consumers should use [`FrameData`] or
+/// [`crate::media::segment::StreamSegment`].
 pub struct Sample {
+    /// Raw sample payload bytes
     pub data: Vec<u8>,
+    /// Duration in timescale units
     pub duration: u32,
+    /// Size in bytes
     pub size: u32,
+    /// Whether this is a sync/key sample
     pub is_keyframe: bool,
 }
 
 impl Sample {
+    /// Create a new sample; size is derived from data length
     pub fn new(data: Vec<u8>, duration: u32, is_keyframe: bool) -> Self {
         let size = data.len() as u32;
         Self {
@@ -598,8 +636,8 @@ mod tests {
         let mut converter = FragmentedMp4Converter::new();
 
         let samples = vec![
-            Sample::new(vec![0x00, 0x01, 0x02, 0x03], 1000, true),
-            Sample::new(vec![0x04, 0x05, 0x06, 0x07], 1000, false),
+            FrameData::new(vec![0x00, 0x01, 0x02, 0x03], 1000, true, 0),
+            FrameData::new(vec![0x04, 0x05, 0x06, 0x07], 1000, false, 0),
         ];
 
         let fragment = converter.create_fragment(&samples, 1, 1000).unwrap();

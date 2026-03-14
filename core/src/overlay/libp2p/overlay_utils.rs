@@ -325,7 +325,7 @@ pub async fn connect_peer_impl(
 
 /// Disconnect from a peer implementation
 pub async fn disconnect_peer_impl(
-    overlay: &crate::overlay::libp2p::impl_core::Libp2pOverlay,
+    _overlay: &crate::overlay::libp2p::impl_core::Libp2pOverlay,
     peer_id: &LocalPeerId,
 ) -> Result<(), OverlayError> {
     debug!("Disconnecting from peer: {}", peer_id);

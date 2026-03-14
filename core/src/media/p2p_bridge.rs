@@ -242,12 +242,10 @@ impl<O: Overlay + Send + Sync + 'static> P2PBridge<O> {
                         }
                     }
                     Err(e) => {
-                        // Try legacy JSON format (MediaChunk)
                         debug!(
-                            "Failed to deserialize WireSegment ({}), data may be legacy format",
+                            "Failed to deserialize WireSegment: {}",
                             e
                         );
-                        // Legacy handling is done in event_handlers.rs
                     }
                 }
             }

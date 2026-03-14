@@ -1,3 +1,6 @@
+//! CLI relay node library for OpenBroadcastNetwork.
+#![allow(non_snake_case)]
+
 pub mod streaming_demo;
 pub mod visualization;
 
@@ -21,6 +24,7 @@ pub fn has_feature(feature: &str) -> bool {
     }
 }
 
+/// Add two numbers (placeholder utility).
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

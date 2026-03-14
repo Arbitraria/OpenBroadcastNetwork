@@ -6,7 +6,7 @@
 use tracing::{debug, info, warn};
 
 /// Re-export core types from mp4_parser
-pub use super::mp4_parser::{BoxContent, BoxHeader, Mp4Parser, Mp4Track, MseSegment};
+pub use super::mp4_parser::{BoxContent, BoxHeader, Mp4Parser, Mp4Track};
 
 /// Alias for backward compatibility
 pub type TrackInfo = Mp4Track;
@@ -14,10 +14,13 @@ pub type TrackInfo = Mp4Track;
 /// Error type for MP4 parsing
 #[derive(Debug, thiserror::Error)]
 pub enum Mp4ParseError {
+    /// Data is malformed or does not conform to MP4 spec
     #[error("Invalid data: {0}")]
     InvalidData(String),
+    /// Box header declares an invalid size
     #[error("Invalid box size: {0}")]
     InvalidBoxSize(usize),
+    /// Underlying I/O read failure
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -25,16 +28,22 @@ pub enum Mp4ParseError {
 /// Stream type for tracks
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamType {
+    /// Video elementary stream
     Video,
+    /// Audio elementary stream
     Audio,
+    /// Subtitle/text stream
     Subtitle,
 }
 
 /// Box information structure
 #[derive(Debug, Clone)]
 pub struct BoxInfo {
+    /// Parsed box header (type, size, content offset)
     pub header: BoxHeader,
+    /// Parsed or raw box content
     pub content: BoxContent,
+    /// Byte offset of this box within the file
     pub offset: u64,
 }
 

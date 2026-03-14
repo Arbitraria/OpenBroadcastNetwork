@@ -226,7 +226,7 @@ impl Libp2pOverlay {
         // Disconnect from the peer
         // Note: In newer libp2p versions, we can use close_connection or disconnect_peer_id
         // For now, we'll try to close all connections to this peer
-        if let Some(connection_id) = swarm
+        if let Some(_connection_id) = swarm
             .connected_peers()
             .find(|p| **p == *peer_id)
             .map(|_| *peer_id)

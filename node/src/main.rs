@@ -1,3 +1,6 @@
+//! CLI relay node for OpenBroadcastNetwork.
+#![allow(non_snake_case)]
+
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -9,7 +12,7 @@ use tokio::time;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::fmt;
 use OpenBroadcastNetwork_core::media::publisher::StreamPublisher;
-use OpenBroadcastNetwork_core::media::StreamId;
+use OpenBroadcastNetwork_core::media::segment::StreamId;
 use OpenBroadcastNetwork_core::overlay::interface::{Overlay, OverlayConfig};
 use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
 use OpenBroadcastNetwork_core::overlay::peer::{LocalPeerId, PeerRole};
@@ -208,6 +211,7 @@ enum Commands {
 }
 
 /// Running node instance with overlay
+#[allow(dead_code)]
 struct RunningNode {
     /// When the node started
     start_time: SystemTime,
@@ -665,54 +669,51 @@ async fn run_web_viewer(
                         loop_count + 1
                     );
 
-                    for (index, sample) in samples.iter().enumerate() {
+                    for (index, segment) in samples.iter().enumerate() {
                         // Check if clients are still connected
                         if stream_manager_clone.segment_sender.receiver_count() == 0 {
                             warn!("All clients disconnected during streaming");
                             break; // Break inner loop to wait for new clients
                         }
 
+                        // Skip initialization segments — sent once per client connection
+                        if segment.is_init() {
+                            continue;
+                        }
+
                         // Calculate adjusted timestamp for looping
-                        let loop_duration = Duration::from_secs_f64(samples.len() as f64 / 30.0); // Assume 30fps
-                        let adjusted_timestamp = sample.timestamp + (loop_duration * loop_count);
+                        let loop_duration = Duration::from_secs_f64(samples.len() as f64 / 30.0);
+                        let segment_ts = Duration::from_micros(segment.pts_us);
+                        let adjusted_timestamp = segment_ts + (loop_duration * loop_count);
 
                         // Use precise timing with a deadline
                         let target_time = start_time + adjusted_timestamp;
                         tokio::time::sleep_until(tokio::time::Instant::from_std(target_time)).await;
 
-                        // Send the sample based on its track type
-                        // Skip initialization segment in the loop since it's sent once per client connection
-                        if sample.track_id == 99 {
-                            // Skip initialization segments during streaming loop
-                            // These are already sent when clients first connect
-                            continue;
-                        } else if sample.track_id == 0 {
-                            // Video track
+                        if segment.is_video() {
                             if let Err(e) = stream_manager_clone
-                                .send_video_segment(sample.data.clone(), sample.is_sync)
+                                .send_video_segment(segment.data.to_vec(), segment.is_keyframe)
                                 .await
                             {
-                                warn!("Failed to send video sample: {}", e);
+                                warn!("Failed to send video segment: {}", e);
                                 break;
                             }
 
                             if index % 10 == 0 {
-                                // Log every 10th sample
                                 debug!(
                                     "Sent video segment {} at {:?} ({} bytes, keyframe: {})",
                                     index,
                                     adjusted_timestamp,
-                                    sample.data.len(),
-                                    sample.is_sync
+                                    segment.data.len(),
+                                    segment.is_keyframe
                                 );
                             }
-                        } else {
-                            // Audio track
+                        } else if segment.is_audio() {
                             if let Err(e) = stream_manager_clone
-                                .send_audio_segment(sample.data.clone())
+                                .send_audio_segment(segment.data.to_vec())
                                 .await
                             {
-                                warn!("Failed to send audio sample: {}", e);
+                                warn!("Failed to send audio segment: {}", e);
                                 break;
                             }
                         }
@@ -874,9 +875,8 @@ async fn main() -> Result<(), anyhow::Error> {
             let mut peers = HashMap::new();
             for peer in connected_peers {
                 // Convert LocalPeerId to PeerId for the map
-                if let Ok(pid) = libp2p::PeerId::try_from(&peer.id) {
-                    peers.insert(pid, peer);
-                }
+                let pid: libp2p::PeerId = (&peer.id).into();
+                peers.insert(pid, peer);
             }
 
             let viz = match format.as_str() {
