@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 /// The configuration is organized into logical subsections for different aspects
 /// of the system, making it easier to manage and understand the available options.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CoreConfig {
     /// Network configuration
     pub network: NetworkConfig,
@@ -98,15 +99,6 @@ pub struct DiscoveryConfig {
     pub peer_refresh_interval_secs: u64,
 }
 
-impl Default for CoreConfig {
-    fn default() -> Self {
-        Self {
-            network: NetworkConfig::default(),
-            media: MediaConfig::default(),
-            discovery: DiscoveryConfig::default(),
-        }
-    }
-}
 
 impl Default for NetworkConfig {
     fn default() -> Self {

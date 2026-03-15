@@ -134,8 +134,10 @@ impl Libp2pOverlay {
         let (event_tx, event_rx) = mpsc::channel(100);
 
         // Topology configuration - propagate geo-aware setting from OverlayConfig
-        let mut topology_config = TopologyConfig::default();
-        topology_config.enable_geo_aware = config.enable_geo_aware;
+        let topology_config = TopologyConfig {
+            enable_geo_aware: config.enable_geo_aware,
+            ..TopologyConfig::default()
+        };
 
         let topology = Arc::new(TopologyManager::new(
             peer_id,
@@ -158,9 +160,11 @@ impl Libp2pOverlay {
         let mesh = Arc::new(MeshNetwork::new(peer_id, mesh_config));
 
         // Create discovery manager configuration
-        let mut discovery_config = DiscoveryManagerConfig::default();
-        discovery_config.enable_bootstrap = config.enable_bootstrap_discovery;
-        discovery_config.enable_dht = config.enable_dht_discovery;
+        let mut discovery_config = DiscoveryManagerConfig {
+            enable_bootstrap: config.enable_bootstrap_discovery,
+            enable_dht: config.enable_dht_discovery,
+            ..DiscoveryManagerConfig::default()
+        };
 
         // Parse bootstrap peers once upfront
         let parsed_bootstrap: Vec<Multiaddr> = config
@@ -179,16 +183,18 @@ impl Libp2pOverlay {
 
         // Configure bootstrap discovery if enabled
         if config.enable_bootstrap_discovery {
-            let mut bootstrap_config = BootstrapDiscoveryConfig::default();
-            bootstrap_config.bootstrap_nodes = parsed_bootstrap.clone();
-            discovery_config.bootstrap_config = Some(bootstrap_config);
+            discovery_config.bootstrap_config = Some(BootstrapDiscoveryConfig {
+                bootstrap_nodes: parsed_bootstrap.clone(),
+                ..BootstrapDiscoveryConfig::default()
+            });
         }
 
         // Configure DHT discovery if enabled
         if config.enable_dht_discovery {
-            let mut dht_config = DhtDiscoveryConfig::default();
-            dht_config.bootstrap_peers = parsed_bootstrap;
-            discovery_config.dht_config = Some(dht_config);
+            discovery_config.dht_config = Some(DhtDiscoveryConfig {
+                bootstrap_peers: parsed_bootstrap,
+                ..DhtDiscoveryConfig::default()
+            });
         }
 
         let discovery = Arc::new(Mutex::new(DiscoveryManager::new(discovery_config)));
@@ -249,6 +255,10 @@ impl Libp2pOverlay {
         let gossipsub_config = libp2p::gossipsub::ConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(1))
             .validation_mode(ValidationMode::Strict)
+            .mesh_n(2)
+            .mesh_n_low(1)
+            .mesh_n_high(4)
+            .mesh_outbound_min(1)
             .build()
             .map_err(|e| OverlayError::Other(format!("Invalid gossipsub config: {}", e)))?;
 
@@ -370,6 +380,15 @@ impl Libp2pOverlay {
         *swarm_lock = Some(swarm);
 
         Ok(())
+    }
+
+    /// Get the listen addresses from the swarm
+    pub async fn get_listen_addrs(&self) -> Vec<Multiaddr> {
+        let swarm_lock = self.swarm.lock().await;
+        match &*swarm_lock {
+            Some(swarm) => swarm.listeners().cloned().collect(),
+            None => Vec::new(),
+        }
     }
 
     /// Initialize the topology manager

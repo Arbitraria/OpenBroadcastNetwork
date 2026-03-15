@@ -14,7 +14,7 @@ This document serves as a quick reference for important types, structures, and p
 - `PeerInfo` - `/core/src/overlay/peer.rs` - Public-facing peer information structure
 
 ### Network Structures
-- `Libp2pOverlay` - `/core/src/overlay/libp2p_impl.rs` - Main implementation of the Overlay trait
+- `Libp2pOverlay` - `/core/src/overlay/libp2p/impl_core.rs` - Main implementation of the Overlay trait
 - `OverlayBehavior` - `/core/src/overlay/libp2p/behavior.rs` - Combined NetworkBehaviour implementation
 - `Swarm<OverlayBehavior>` - libp2p type - Central networking component
 
@@ -32,6 +32,19 @@ This document serves as a quick reference for important types, structures, and p
 ### Stream Types
 - `StreamId` - `/core/src/overlay/interface.rs` - Identifier for data streams
 - `StreamChunk` - `/core/src/overlay/relay/mod.rs` - Individual piece of stream data
+
+### Media & Streaming Types (Phase 2)
+- `StreamSegment` - `/core/src/media/segment.rs` - Unified media segment for pipeline processing
+- `WireSegment` - `/core/src/media/wire_format.rs` - Binary wire format for P2P segment transport
+- `StreamId` (media) - `/core/src/media/interface.rs` - Unique stream identifier for media streams
+- `MediaType` - `/core/src/media/interface.rs` - Enum: Video, Audio
+- `P2PBridge` - `/core/src/media/p2p_bridge.rs` - Overlay-to-local broadcast bridge
+- `StreamPublisher` - `/core/src/media/publisher.rs` - Publishes stream segments to overlay network
+- `Mp4Parser` - `/core/src/media/mp4_parser.rs` - Full MP4 box parsing and fMP4 generation
+- `FragmentedMp4Converter` - `/core/src/media/fmp4_converter.rs` - MSE-compatible fMP4 fragment converter
+- `OpenH264Codec` - `/core/src/media/codec.rs` - H.264 video encoding/decoding
+- `OpusCodec` - `/core/src/media/codec.rs` - Opus audio encoding/decoding
+- `QualityMonitor` - `/core/src/media/quality.rs` - Bandwidth monitoring and quality adaptation
 
 ## Concurrency Patterns
 
@@ -123,7 +136,7 @@ pub async fn connect_peer(
 The dependency flow in the overlay network is as follows:
 
 ```
-libp2p_impl.rs
+libp2p/impl_core.rs
 ├── Uses: libp2p::behavior
 ├── Uses: overlay::topology
 ├── Uses: overlay::relay
@@ -132,7 +145,6 @@ libp2p_impl.rs
 libp2p::behavior.rs
 ├── Uses: libp2p Gossipsub
 ├── Uses: libp2p Kademlia
-├── Uses: libp2p MDNS
 └── Uses: libp2p Identify
 
 topology::manager.rs

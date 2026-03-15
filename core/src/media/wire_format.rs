@@ -45,6 +45,7 @@ pub struct WireSegment {
 
 impl WireSegment {
     /// Create a new wire segment with current version
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         stream_id: Vec<u8>,
         sequence: u64,

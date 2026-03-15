@@ -97,9 +97,9 @@ fn yuv420p_to_rgb24(
             let b = y + (1.772 * u as f32) as i32;
 
             // Clamp values to 0-255 range
-            let r = r.max(0).min(255) as u8;
-            let g = g.max(0).min(255) as u8;
-            let b = b.max(0).min(255) as u8;
+            let r = r.clamp(0, 255) as u8;
+            let g = g.clamp(0, 255) as u8;
+            let b = b.clamp(0, 255) as u8;
 
             rgb_data.push(r);
             rgb_data.push(g);
@@ -162,6 +162,12 @@ impl std::fmt::Debug for OpusDecoder {
         f.debug_struct("OpusDecoder")
             .field("frame_count", &self.frame_count)
             .finish()
+    }
+}
+
+impl Default for OpusCodec {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -389,6 +395,12 @@ impl std::fmt::Debug for OpenH264Decoder {
         f.debug_struct("OpenH264Decoder")
             .field("frame_count", &self.frame_count)
             .finish()
+    }
+}
+
+impl Default for OpenH264Codec {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

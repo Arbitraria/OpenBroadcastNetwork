@@ -166,9 +166,10 @@ pub struct StreamMetadata {
 impl StreamMetadata {
     /// Create new metadata with a title
     pub fn new<S: Into<String>>(title: S) -> Self {
-        let mut metadata = Self::default();
-        metadata.title = Some(title.into());
-        metadata
+        Self {
+            title: Some(title.into()),
+            ..Self::default()
+        }
     }
 
     /// Add content type

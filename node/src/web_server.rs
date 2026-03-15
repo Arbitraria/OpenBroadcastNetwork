@@ -496,10 +496,8 @@ impl StreamManager {
                     }
 
                     // Send to local WebSocket clients
-                    if segment_sender.receiver_count() > 0 {
-                        if segment_sender.send(segment.clone()).is_err() {
-                            info!("All receivers dropped");
-                        }
+                    if segment_sender.receiver_count() > 0 && segment_sender.send(segment.clone()).is_err() {
+                        info!("All receivers dropped");
                     }
 
                     // Publish to P2P overlay network
@@ -540,16 +538,14 @@ impl StreamManager {
 
                 info!("Finished streaming all segments");
                 *is_streaming.lock().await = false;
+            } else if enable_p2p {
+                info!(
+                    "No video samples loaded — subscriber mode, \
+                     P2P listener stays active"
+                );
             } else {
-                if enable_p2p {
-                    info!(
-                        "No video samples loaded — subscriber mode, \
-                         P2P listener stays active"
-                    );
-                } else {
-                    warn!("No video samples loaded and P2P disabled");
-                    *is_streaming.lock().await = false;
-                }
+                warn!("No video samples loaded and P2P disabled");
+                *is_streaming.lock().await = false;
             }
         });
 
@@ -1351,14 +1347,12 @@ async fn handle_websocket(
                     }
                     offset = chunk_end;
                 }
-            } else {
-                if let Err(e) = sender
-                    .send(Message::Binary(video_init_data.clone()))
-                    .await
-                {
-                    error!("Failed to send video init segment: {}", e);
-                    return;
-                }
+            } else if let Err(e) = sender
+                .send(Message::Binary(video_init_data.clone()))
+                .await
+            {
+                error!("Failed to send video init segment: {}", e);
+                return;
             }
 
             info!(
@@ -1505,14 +1499,12 @@ async fn handle_websocket(
                         return;
                     }
                 }
-            } else {
-                if let Err(e) = sender
-                    .send(Message::Binary(init_segment.clone()))
-                    .await
-                {
-                    error!("Failed to send initialization segment: {}", e);
-                    return;
-                }
+            } else if let Err(e) = sender
+                .send(Message::Binary(init_segment.clone()))
+                .await
+            {
+                error!("Failed to send initialization segment: {}", e);
+                return;
             }
 
             info!(

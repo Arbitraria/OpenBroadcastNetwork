@@ -20,7 +20,7 @@ impl Overlay for Libp2pOverlay {
     /// Check if the overlay is running
     fn is_running(&self) -> bool {
         // Use try_read to avoid blocking in an async runtime
-        self.running.try_read().map_or(false, |r| *r)
+        self.running.try_read().is_ok_and(|r| *r)
     }
 
     /// Get the local peer ID (zero-cost conversion from peer_id)
@@ -47,12 +47,11 @@ impl Overlay for Libp2pOverlay {
         // Add the stream to the relay manager's node
         let relay_node = self.relay.relay_node();
         relay_node
-            .add_stream(stream_id.clone(), self.peer_id.clone())
+            .add_stream(stream_id.clone(), self.peer_id)
             .await?;
 
-        // Add to local streams set
-        let mut streams = self.streams.write().await;
-        streams.insert(stream_id.clone());
+        // Subscribe to GossipSub topic so we can publish to it
+        self.subscribe_stream(stream_id).await?;
 
         Ok(())
     }
@@ -263,7 +262,36 @@ impl Overlay for Libp2pOverlay {
             .behaviour_mut()
             .gossipsub
             .publish(topic, data)
-            .map_err(|e| OverlayError::RelayError(format!("Failed to publish: {:?}", e)))?;
+            .map_err(|e| {
+                OverlayError::RelayError(format!("Failed to publish: {:?}", e))
+            })?;
+
+        Ok(())
+    }
+
+    async fn publish_to_topic(
+        &self,
+        topic: &str,
+        data: Vec<u8>,
+    ) -> Result<(), OverlayError> {
+        debug!("Publishing {} bytes to topic {}", data.len(), topic);
+
+        let mut swarm_lock = self.swarm.lock().await;
+        let swarm = match &mut *swarm_lock {
+            Some(swarm) => swarm,
+            None => return Err(OverlayError::NotRunning),
+        };
+
+        let ident_topic = libp2p::gossipsub::IdentTopic::new(topic);
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(ident_topic, data)
+            .map_err(|e| {
+                OverlayError::RelayError(
+                    format!("Publish to topic failed: {:?}", e),
+                )
+            })?;
 
         Ok(())
     }

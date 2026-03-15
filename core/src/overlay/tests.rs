@@ -4,15 +4,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::overlay::interface::StreamId;
-    use libp2p::PeerId;
-    use std::collections::HashSet;
-
-    // Helper to create a random PeerId
-    fn random_peer_id() -> PeerId {
-        PeerId::random()
-    }
 
     // Helper to create a StreamId
     fn create_stream_id(id: &str) -> StreamId {

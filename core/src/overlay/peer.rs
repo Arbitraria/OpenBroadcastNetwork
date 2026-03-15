@@ -369,7 +369,7 @@ impl Peer {
     pub fn is_connected(&self) -> bool {
         self.connection
             .as_ref()
-            .map_or(false, |conn| conn.status == ConnectionStatus::Connected)
+            .is_some_and(|conn| conn.status == ConnectionStatus::Connected)
     }
 
     /// Set the peer as connecting

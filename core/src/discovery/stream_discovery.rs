@@ -195,13 +195,9 @@ impl<O: Overlay + Send + Sync + 'static> StreamDiscovery<O> {
             .to_bytes()
             .map_err(|e| OverlayError::Other(format!("Failed to serialize announcement: {}", e)))?;
 
-        // Create announce topic stream ID
-        let announce_topic = OverlayStreamId::from_string(STREAM_ANNOUNCE_TOPIC);
-
         // Publish to the announce topic
-        self.overlay.publish_stream(&announce_topic).await?;
         self.overlay
-            .publish_stream_data(&announce_topic, data)
+            .publish_to_topic(STREAM_ANNOUNCE_TOPIC, data)
             .await?;
 
         // Add to our own streams for re-announcement

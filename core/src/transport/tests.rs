@@ -5,8 +5,7 @@ mod tests {
     use super::super::interface::{
         Connection, ConnectionId, Transport, TransportError, TransportEvent,
     };
-    // use super::super::webrtc::{WebRtcTransport, WebRtcConfig, IceTransportPolicy}; // WebRTC disabled
-    use super::super::quic::{QuicConfig, QuicTransport};
+    use super::super::quic::QuicConfig;
     use std::net::SocketAddr;
     use std::str::FromStr;
 
@@ -115,51 +114,20 @@ mod tests {
         assert!(close_result.is_ok());
     }
 
-    // Placeholder for more detailed transport tests once actual implementations are complete
-    use crate::test_report::{TestReport, TestResult};
-    use std::time::{Instant, SystemTime};
-
-    // WebRTC test disabled due to module being commented out
-    // #[test]
-    // fn test_webrtc_config() {
-    //     // Test implementation would go here when WebRTC is re-enabled
-    // }
-
     #[test]
     fn test_quic_config() {
-        let test_start = Instant::now();
-        let mut report = TestReport::new();
-        let mut test_status = "pass".to_string();
-        let mut error_msg = None;
-        let test_result = std::panic::catch_unwind(|| {
-            let addr = SocketAddr::from_str("0.0.0.0:0").unwrap();
-            let config = QuicConfig {
-                bind_addr: addr,
-                cert_path: None,
-                key_path: None,
-                max_concurrent_streams: 100,
-                enable_hole_punching: true,
-            };
-            assert_eq!(config.bind_addr, addr);
-            assert_eq!(config.cert_path, None);
-            assert_eq!(config.key_path, None);
-            assert_eq!(config.max_concurrent_streams, 100);
-            assert!(config.enable_hole_punching);
-        });
-        if let Err(e) = test_result {
-            test_status = "fail".to_string();
-            error_msg = Some(format!("{e:?}"));
-        }
-        let duration_ms = test_start.elapsed().as_millis();
-        let result = TestResult {
-            name: "test_quic_config".to_string(),
-            module: "transport".to_string(),
-            status: test_status,
-            error: error_msg,
-            duration_ms,
-            timestamp: SystemTime::now(),
+        let addr = SocketAddr::from_str("0.0.0.0:0").unwrap();
+        let config = QuicConfig {
+            bind_addr: addr,
+            cert_path: None,
+            key_path: None,
+            max_concurrent_streams: 100,
+            enable_hole_punching: true,
         };
-        report.add_result(result);
-        let _ = report.save_to_file("test_report.json");
+        assert_eq!(config.bind_addr, addr);
+        assert_eq!(config.cert_path, None);
+        assert_eq!(config.key_path, None);
+        assert_eq!(config.max_concurrent_streams, 100);
+        assert!(config.enable_hole_punching);
     }
 }

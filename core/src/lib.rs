@@ -47,12 +47,6 @@ pub mod telemetry;
 /// with a unified interface for establishing connections and transmitting data.
 pub mod transport;
 
-/// Test reporting utilities for collecting and analyzing test results
-///
-/// Provides structures and utilities for generating comprehensive test reports
-/// with timing data, status tracking, and serialization support.
-pub mod test_report;
-
 /// Re-exports of commonly used types
 pub mod prelude {
     // Pub/Sub module re-exports

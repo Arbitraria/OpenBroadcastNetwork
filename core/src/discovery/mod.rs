@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time;
-use tracing::{debug, error, info};
+use tracing::info;
 
 /// Configuration for the discovery manager
 #[derive(Debug, Clone)]
@@ -69,7 +69,6 @@ impl Default for DiscoveryManagerConfig {
 }
 
 /// A unified discovery manager that integrates multiple discovery mechanisms
-#[allow(dead_code)]
 pub struct DiscoveryManager {
     /// Configuration
     config: DiscoveryManagerConfig,
@@ -218,73 +217,6 @@ impl DiscoveryManager {
         Ok(())
     }
 
-    /// Handle a discovery event
-    #[allow(dead_code)]
-    async fn handle_discovery_event(
-        &self,
-        event: DiscoveryEvent,
-        peers: &Arc<RwLock<HashMap<Vec<u8>, PeerInfo>>>,
-        event_tx: &mpsc::Sender<DiscoveryEvent>,
-    ) {
-        match &event {
-            DiscoveryEvent::PeerDiscovered(info) => {
-                // Add to known peers
-                let mut peers_lock = peers.write().await;
-                peers_lock.insert(info.id.clone(), info.clone());
-                debug!("Discovered peer: {:?}", info);
-            }
-            DiscoveryEvent::PeerUpdated(info) => {
-                // Update existing peer info
-                let mut peers_lock = peers.write().await;
-                if let Some(existing) = peers_lock.get_mut(&info.id) {
-                    *existing = info.clone();
-                    debug!("Updated peer: {:?}", info);
-                }
-            }
-            DiscoveryEvent::PeerExpired(peer_id) => {
-                // Remove expired peer
-                let mut peers_lock = peers.write().await;
-                if peers_lock.remove(peer_id).is_some() {
-                    debug!("Peer expired: {:?}", peer_id);
-                }
-            }
-            DiscoveryEvent::PeerConnectionStatusChanged {
-                peer_id,
-                status,
-                error,
-            } => {
-                // Update connection status for the peer
-                let mut peers_lock = peers.write().await;
-                if let Some(peer_info) = peers_lock.get_mut(peer_id) {
-                    peer_info.connection_status = status.clone();
-                    if let Some(err) = error {
-                        debug!(
-                            "Peer connection status changed: {:?} -> {:?} (error: {})",
-                            peer_id, status, err
-                        );
-                    } else {
-                        debug!(
-                            "Peer connection status changed: {:?} -> {:?}",
-                            peer_id, status
-                        );
-                    }
-                }
-            }
-            DiscoveryEvent::ServiceStarted => {
-                debug!("Discovery service started");
-            }
-            DiscoveryEvent::ServiceStopped => {
-                debug!("Discovery service stopped");
-            }
-            DiscoveryEvent::Error(e) => {
-                error!("Discovery error: {}", e);
-            }
-        }
-
-        // Forward the event
-        let _ = event_tx.send(event).await;
-    }
-
     /// Get the next discovery event
     pub async fn next_event(&self) -> Option<DiscoveryEvent> {
         let mut rx = self.event_rx.lock().await;
@@ -322,7 +254,3 @@ impl DiscoveryManager {
         *self.running.read().await
     }
 }
-
-// Will be exported once implemented
-// pub use bootstrap::BootstrapDiscovery;
-// pub use dht::DhtDiscovery;

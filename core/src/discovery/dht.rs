@@ -24,6 +24,12 @@ use libp2p::tcp::Config as GenTcpConfig;
 use libp2p::{PeerId, SwarmBuilder};
 use tracing::{debug, error, warn};
 
+/// Type alias for the peer cache: maps peer ID bytes to (PeerInfo, last-seen timestamp)
+type PeerCache = HashMap<Vec<u8>, (PeerInfo, Instant)>;
+
+/// Type alias for the Kademlia swarm
+type KademliaSwarm = Swarm<Kademlia<MemoryStore>>;
+
 /// Configuration for DHT discovery
 #[derive(Debug, Clone)]
 pub struct DhtConfig {
@@ -81,7 +87,7 @@ pub struct DhtDiscovery {
     event_receiver: Option<Receiver<DiscoveryEvent>>,
 
     /// Known peers
-    peers: Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
+    peers: Arc<Mutex<PeerCache>>,
 
     /// Is the discovery service running
     running: Arc<AtomicBool>,
@@ -96,7 +102,7 @@ pub struct DhtDiscovery {
     local_peer_id: Option<PeerId>,
 
     /// Libp2p swarm for network operations
-    swarm: Arc<Mutex<Option<Swarm<Kademlia<MemoryStore>>>>>,
+    swarm: Arc<Mutex<Option<KademliaSwarm>>>,
 
     /// Task handle for background discovery
     task_handle: Option<tokio::task::JoinHandle<()>>,
@@ -105,18 +111,14 @@ pub struct DhtDiscovery {
 
 /// Types of DHT queries we can perform
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields stored for future query result correlation
 enum QueryType {
     /// Searching for a specific peer
     FindPeer(Vec<u8>),
     /// Searching for closest peers to a key
     FindClosestPeers(String),
-    /// Getting a record from the DHT
-    GetRecord(String),
     /// Putting a record to the DHT
     PutRecord(String),
-    /// Refreshing the DHT routing table
-    Refresh,
 }
 
 impl DhtDiscovery {
@@ -187,9 +189,9 @@ impl DhtDiscovery {
 
     /// Run the swarm event loop
     async fn run_swarm_loop(
-        swarm: Arc<Mutex<Option<Swarm<Kademlia<MemoryStore>>>>>,
+        swarm: Arc<Mutex<Option<KademliaSwarm>>>,
         event_sender: Sender<DiscoveryEvent>,
-        peers: Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
+        peers: Arc<Mutex<PeerCache>>,
         active_queries: Arc<Mutex<HashMap<QueryId, QueryType>>>,
         running: Arc<AtomicBool>,
     ) {
@@ -275,11 +277,10 @@ impl DhtDiscovery {
                         }
                         SwarmEvent::IncomingConnection { .. } => {}
                         SwarmEvent::IncomingConnectionError { .. } => {}
-                        SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                            if let Some(peer_id) = peer_id {
-                                warn!("Failed to connect to peer {}: {}", peer_id, error);
-                            }
+                        SwarmEvent::OutgoingConnectionError { peer_id: Some(peer_id), error, .. } => {
+                            warn!("Failed to connect to peer {}: {}", peer_id, error);
                         }
+                        SwarmEvent::OutgoingConnectionError { .. } => {}
                         _ => {}
                     }
                 }
@@ -300,7 +301,7 @@ impl DhtDiscovery {
     async fn handle_kademlia_event(
         event: KademliaEvent,
         event_sender: &mut Sender<DiscoveryEvent>,
-        peers: &Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
+        peers: &Arc<Mutex<PeerCache>>,
         active_queries: &Arc<Mutex<HashMap<QueryId, QueryType>>>,
     ) {
         match event {
@@ -362,7 +363,7 @@ impl DhtDiscovery {
                 // Convert addresses to SocketAddr
                 let socket_addrs: Vec<SocketAddr> = addresses
                     .iter()
-                    .filter_map(|addr| extract_socket_addr_from_multiaddr(addr))
+                    .filter_map(extract_socket_addr_from_multiaddr)
                     .collect();
 
                 let peer_info = PeerInfo {

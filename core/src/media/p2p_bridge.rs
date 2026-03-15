@@ -364,6 +364,14 @@ mod tests {
         ) -> Result<(), OverlayError> {
             Ok(())
         }
+
+        async fn publish_to_topic(
+            &self,
+            _topic: &str,
+            _data: Vec<u8>,
+        ) -> Result<(), OverlayError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

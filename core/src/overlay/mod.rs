@@ -33,14 +33,10 @@ pub mod dynamic_tests;
 pub mod hybrid;
 /// Implementation of the overlay network using libp2p (modular version)
 pub mod libp2p;
-/// libp2p implementation of the overlay network
-pub mod libp2p_impl;
 /// Performance metrics collection and analysis for overlay optimization
 pub mod metrics;
 /// Relay functionality for forwarding streams between peers
 pub mod relay;
-/// Legacy relay exports for backward compatibility
-pub mod relay_redirector;
 /// Network topology management and organization (refactored into a modular structure)
 pub mod topology;
 
@@ -56,7 +52,7 @@ pub use topology::{TopologyConfig, TopologyManager};
 // Re-export PeerId from libp2p
 pub use ::libp2p::PeerId;
 // Re-export our overlay implementation
-pub use crate::overlay::libp2p_impl::Libp2pOverlay;
+pub use crate::overlay::libp2p::impl_core::Libp2pOverlay;
 
 /// Default overlay implementation (libp2p-based)
 pub type DefaultOverlay = Libp2pOverlay;

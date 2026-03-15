@@ -1,11 +1,17 @@
 use std::io;
 
 /// Proper fragmented MP4 converter for MSE compatibility
-#[allow(dead_code)]
 pub struct FragmentedMp4Converter {
     sequence_number: u32,
     base_media_decode_time: u64,
+    #[allow(dead_code)]
     track_id: u32,
+}
+
+impl Default for FragmentedMp4Converter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FragmentedMp4Converter {

@@ -116,8 +116,10 @@ pub async fn connect_peer(
     if let Some(peer) = peers_lock.get_mut(peer_id) {
         peer.set_connecting();
     } else {
-        let mut peer_info = PeerInfo::default();
-        peer_info.status = ConnectionStatus::Connecting;
+        let peer_info = PeerInfo {
+            status: ConnectionStatus::Connecting,
+            ..PeerInfo::default()
+        };
         let peer = Peer::new(peer_id.clone(), peer_info);
         peers_lock.insert(peer_id.clone(), peer);
     }
@@ -238,15 +240,15 @@ pub async fn handle_gossipsub_event(event: GossipsubEvent) -> Result<(), Overlay
 /// routing table updates, etc.
 pub async fn handle_kademlia_event(event: KademliaEvent) -> Result<(), OverlayError> {
     match event {
-        KademliaEvent::OutboundQueryProgressed { result, .. } => match result {
-            QueryResult::GetClosestPeers(Ok(closest)) => {
-                debug!("Found {} closest peers", closest.peers.len());
-                for peer in &closest.peers {
-                    debug!("Found closest peer: {}", peer);
-                }
+        KademliaEvent::OutboundQueryProgressed {
+            result: QueryResult::GetClosestPeers(Ok(closest)),
+            ..
+        } => {
+            debug!("Found {} closest peers", closest.peers.len());
+            for peer in &closest.peers {
+                debug!("Found closest peer: {}", peer);
             }
-            _ => {}
-        },
+        }
         KademliaEvent::RoutingUpdated { peer, .. } => {
             debug!("Kademlia routing updated for peer {}", peer);
         }
@@ -261,19 +263,16 @@ pub async fn handle_kademlia_event(event: KademliaEvent) -> Result<(), OverlayEr
 /// This function handles Identify protocol events such as receiving
 /// peer information and protocol support.
 pub async fn handle_identify_event(event: IdentifyEvent) -> Result<(), OverlayError> {
-    match event {
-        IdentifyEvent::Received { peer_id, info, .. } => {
-            debug!(
-                "Identified peer {} with protocol version {}",
-                peer_id, info.protocol_version
-            );
-            debug!("  Listening on {} addresses", info.listen_addrs.len());
-            debug!("  Supports {} protocols", info.protocols.len());
+    if let IdentifyEvent::Received { peer_id, info, .. } = event {
+        debug!(
+            "Identified peer {} with protocol version {}",
+            peer_id, info.protocol_version
+        );
+        debug!("  Listening on {} addresses", info.listen_addrs.len());
+        debug!("  Supports {} protocols", info.protocols.len());
 
-            // Here we would normally update peer information in our peers map
-            // Since this is a utility function we just log it
-        }
-        _ => {}
+        // Here we would normally update peer information in our peers map
+        // Since this is a utility function we just log it
     }
 
     Ok(())
@@ -303,9 +302,20 @@ pub async fn connect_peer_impl(
         }
     }
 
-    // For now, create a placeholder peer info
+    // Extract peer ID from /p2p/<peer-id> suffix if present
+    let peer_id = multiaddr
+        .iter()
+        .find_map(|proto| {
+            if let libp2p::multiaddr::Protocol::P2p(hash) = proto {
+                Some(LocalPeerId::from(hash))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(LocalPeerId::new_random);
+
     let peer_info = PeerInfo {
-        id: LocalPeerId::new_random(),
+        id: peer_id.clone(),
         addresses: vec![multiaddr.to_string()],
         role: crate::overlay::peer::PeerRole::Unknown,
         status: ConnectionStatus::Connecting,
@@ -320,24 +330,38 @@ pub async fn connect_peer_impl(
         bandwidth_capacity: None,
     };
 
+    // Insert into peers map
+    {
+        let mut peers = overlay.peers.write().await;
+        let peer = Peer::new(peer_id, peer_info.clone());
+        peers.insert(peer_info.id.clone(), peer);
+    }
+
     Ok(peer_info)
 }
 
 /// Disconnect from a peer implementation
 pub async fn disconnect_peer_impl(
-    _overlay: &crate::overlay::libp2p::impl_core::Libp2pOverlay,
+    overlay: &crate::overlay::libp2p::impl_core::Libp2pOverlay,
     peer_id: &LocalPeerId,
 ) -> Result<(), OverlayError> {
     debug!("Disconnecting from peer: {}", peer_id);
 
-    // Convert to libp2p peer ID (zero-cost)
-    let _libp2p_peer_id = to_libp2p_peer_id(peer_id);
+    let libp2p_peer_id = to_libp2p_peer_id(peer_id);
 
-    // For now, this is a placeholder implementation
-    // In a full implementation, this would:
-    // 1. Use the swarm to disconnect from the peer
-    // 2. Update the peer status in our peers map
-    // 3. Clean up any associated resources
+    // Disconnect via swarm
+    {
+        let mut swarm_lock = overlay.swarm.lock().await;
+        if let Some(swarm) = &mut *swarm_lock {
+            let _ = swarm.disconnect_peer_id(libp2p_peer_id);
+        }
+    }
+
+    // Remove from peers map
+    {
+        let mut peers = overlay.peers.write().await;
+        peers.remove(peer_id);
+    }
 
     Ok(())
 }

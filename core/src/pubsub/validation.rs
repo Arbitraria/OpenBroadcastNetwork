@@ -65,6 +65,12 @@ pub struct TopicValidationRules {
     pub validation_required: bool,
 }
 
+impl Default for BasicValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BasicValidator {
     /// Create a new validator with default settings
     pub fn new() -> Self {
@@ -210,7 +216,7 @@ impl MessageValidator for CompositeValidator {
                 _ => {
                     // Continue with async validation for this validator
                     let result = validator
-                        .async_validate(message.clone(), source.clone())
+                        .async_validate(message.clone(), source)
                         .await;
                     match result {
                         ValidationResult::Reject => return ValidationResult::Reject,

@@ -213,6 +213,7 @@ pub struct StreamSegment {
 
 impl StreamSegment {
     /// Create a new stream segment
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         stream_id: StreamId,
         sequence: u64,

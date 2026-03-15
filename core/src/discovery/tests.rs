@@ -5,8 +5,6 @@ mod tests {
     use crate::discovery::interface::{
         ConnectionStatus, Discovery, DiscoveryError, DiscoveryEvent, PeerInfo,
     };
-    use async_trait::async_trait;
-    use std::str::FromStr;
     use std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -42,13 +40,6 @@ mod tests {
                 peers: Arc::new(Mutex::new(HashMap::new())),
                 running: false,
             }
-        }
-
-        /// Add a peer to the mock discovery
-        pub async fn add_peer(&mut self, info: PeerInfo) -> Result<(), DiscoveryError> {
-            let mut peers = self.peers.lock().await;
-            peers.insert(info.id.clone(), info);
-            Ok(())
         }
 
         /// Helper to create a test peer
@@ -143,88 +134,32 @@ mod tests {
         create_test_peer_info(vec![id], addr)
     }
 
-    /// Helper function to create a socket address from IP and port
-    fn create_socket_addr(ip: &str, port: u16) -> SocketAddr {
-        format!("{}:{}", ip, port).parse().unwrap()
-    }
-
-    // Commenting out mDNS tests since they require mDNS service
-    // #[tokio::test]
-    // async fn test_mdns_discovery_integration() -> Result<(), DiscoveryError> {
-    //     // This test requires an mDNS service to be running
-    //     // and is therefore excluded from normal test runs
-    //     Ok(())
-    // }
-
-    use crate::test_report::{TestReport, TestResult};
-    use std::time::Instant;
-
     #[tokio::test]
     async fn test_mock_discovery_announce_lookup() {
-        use futures::FutureExt;
-        use std::panic::AssertUnwindSafe;
-        let test_start = Instant::now();
-        let mut report = TestReport::new();
-        let mut test_status = "pass".to_string();
-        let mut error_msg = None;
-        let test_result = AssertUnwindSafe(async {
-            let mut discovery = MockDiscovery::new();
-            // Test announce
-            let peer = create_test_peer(1, 1234);
-            discovery.start().await.expect("Failed to start discovery");
-            discovery
-                .announce(peer.clone())
-                .await
-                .expect("Failed to announce peer");
-            // Test lookup
-            let found = discovery
-                .lookup_peer(&peer.id)
-                .await
-                .expect("Lookup failed");
-            assert!(found.is_some());
-            let found = found.unwrap();
-            assert_eq!(found.id, peer.id);
-            assert_eq!(found.addresses, peer.addresses);
-            // Test non-existent peer
-            let not_found = discovery.lookup_peer(&[99]).await.expect("Lookup failed");
-            assert!(not_found.is_none());
-            // Test stop
-            discovery.stop().await.expect("Failed to stop discovery");
-            assert!(!discovery.is_running());
-        })
-        .catch_unwind()
-        .await;
-        if let Err(e) = test_result {
-            test_status = "fail".to_string();
-            error_msg = Some(format!("{e:?}"));
-        }
-        let duration_ms = test_start.elapsed().as_millis();
-        let result = TestResult {
-            name: "test_mock_discovery_announce_lookup".to_string(),
-            module: "discovery".to_string(),
-            status: test_status,
-            error: error_msg,
-            duration_ms,
-            timestamp: SystemTime::now(),
-        };
-        report.add_result(result);
-        let _ = report.save_to_file("test_report.json");
+        let mut discovery = MockDiscovery::new();
+        // Test announce
+        let peer = create_test_peer(1, 1234);
+        discovery.start().await.expect("Failed to start discovery");
+        discovery
+            .announce(peer.clone())
+            .await
+            .expect("Failed to announce peer");
+        // Test lookup
+        let found = discovery
+            .lookup_peer(&peer.id)
+            .await
+            .expect("Lookup failed");
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.id, peer.id);
+        assert_eq!(found.addresses, peer.addresses);
+        // Test non-existent peer
+        let not_found = discovery.lookup_peer(&[99]).await.expect("Lookup failed");
+        assert!(not_found.is_none());
+        // Test stop
+        discovery.stop().await.expect("Failed to stop discovery");
+        assert!(!discovery.is_running());
     }
-
-    // Commenting out mDNS lifecycle test since it requires mDNS service
-    // #[tokio::test]
-    // async fn test_mdns_discovery_lifecycle() -> Result<(), DiscoveryError> {
-    //     // This test requires an mDNS service to be running
-    //     // and is therefore excluded from normal test runs
-    //     Ok(())
-    // }
-
-    // Commenting out mDNS creation test since it requires mDNS module
-    // #[test]
-    // fn test_mdns_discovery_creation() {
-    //     // This test requires the mDNS module
-    //     // and is therefore excluded from normal test runs
-    // }
 
     #[test]
     fn test_socket_addr_parsing() {

@@ -53,6 +53,9 @@ use crate::media::fmp4_converter::{FragmentedMp4Converter, FrameData};
 use std::io::{self, Read, Seek, SeekFrom};
 use tracing::{debug, error, info, warn};
 
+/// Return type for media box parsing: (media_type, timescale, duration, codec, mime_type, codec_params)
+type MdiaBoxResult = (String, u32, u64, String, String, Option<String>);
+
 /// MP4 box header information
 #[derive(Debug, Clone)]
 pub struct BoxHeader {
@@ -163,8 +166,8 @@ impl SampleTable {
             } else {
                 num_chunks
             };
-            for chunk_idx in start..end.min(num_chunks) {
-                samples_per_chunk[chunk_idx] = spc;
+            for item in &mut samples_per_chunk[start..end.min(num_chunks)] {
+                *item = spc;
             }
         }
 
@@ -297,6 +300,12 @@ pub struct Mp4Parser {
     mdat_payload_offset: u64,
     /// Temporary sample table accumulated during stbl parsing
     pending_sample_table: Option<SampleTable>,
+}
+
+impl Default for Mp4Parser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Mp4Parser {
@@ -623,7 +632,7 @@ impl Mp4Parser {
     fn parse_mdia_box(
         &mut self,
         data: &[u8],
-    ) -> Result<(String, u32, u64, String, String, Option<String>), io::Error> {
+    ) -> Result<MdiaBoxResult, io::Error> {
         let mut cursor = std::io::Cursor::new(data);
         let mut media_type = String::new();
         let mut timescale = 1000;
@@ -1498,7 +1507,7 @@ impl Mp4Parser {
         let asc_hex: Vec<String> = asc_data.iter().map(|b| format!("{:02x}", b)).collect();
         info!("AudioSpecificConfig bytes: {}", asc_hex.join(" "));
 
-        if asc_data.len() >= 1 {
+        if !asc_data.is_empty() {
             let first_byte = asc_data[0];
 
             // Extract AAC profile from first 5 bits
@@ -1590,10 +1599,10 @@ impl Mp4Parser {
 
         if self.is_fragmented {
             // File is already fragmented, we can use segments directly
-            return self.extract_fragmented_segments();
+            self.extract_fragmented_segments()
         } else {
             // File is not fragmented, we need to create segments
-            return self.create_fragments_from_regular_mp4();
+            self.create_fragments_from_regular_mp4()
         }
     }
 
@@ -3569,7 +3578,7 @@ mod tests {
 
     #[test]
     fn test_ftyp_parsing() {
-        let mut parser = Mp4Parser::new();
+        let parser = Mp4Parser::new();
 
         // Create minimal ftyp box data
         let ftyp_data = b"mp41\x00\x00\x00\x00mp41isom";
@@ -3972,7 +3981,7 @@ mod tests {
         mp4.extend_from_slice(&moov_content);
 
         // Now we know where mdat starts
-        let mdat_payload_start = mp4.len() as u64 + 8; // +8 for mdat header
+        let _mdat_payload_start = mp4.len() as u64 + 8; // +8 for mdat header
 
         // Go back and add stco with the correct offset
         // We need to patch the stbl: add stco pointing to mdat_payload_start

@@ -37,7 +37,7 @@ where
 {
     struct PeerIdVisitor;
 
-    impl<'de> Visitor<'de> for PeerIdVisitor {
+    impl Visitor<'_> for PeerIdVisitor {
         type Value = Libp2pPeerId;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -103,7 +103,7 @@ where
 
     struct PeerIdVisitor;
 
-    impl<'de> Visitor<'de> for PeerIdVisitor {
+    impl Visitor<'_> for PeerIdVisitor {
         type Value = Libp2pPeerId;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

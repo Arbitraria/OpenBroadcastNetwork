@@ -332,6 +332,7 @@ async fn run_relay_node(
 }
 
 /// Run streaming demo with synthetic content
+#[allow(clippy::too_many_arguments)]
 async fn run_streaming_demo(
     bootstrap_nodes: Vec<String>,
     listen_addr: String,
@@ -441,6 +442,7 @@ async fn run_video_stream(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_web_viewer(
     host: String,
     port: u16,
@@ -465,7 +467,7 @@ async fn run_web_viewer(
         port,
         web_root: PathBuf::from(web_root),
         enable_cors,
-        video_file: video_file.as_ref().map(|v| PathBuf::from(v)),
+        video_file: video_file.as_ref().map(PathBuf::from),
         enable_p2p,
         p2p_fallback: true,
     };
@@ -891,7 +893,7 @@ async fn main() -> Result<(), anyhow::Error> {
                                 .unwrap_or_default(),
                         ));
                     }
-                    output_text.push_str("\n");
+                    output_text.push('\n');
                     output_text.push_str(&create_peer_table(&peers, true));
                     output_text
                 }

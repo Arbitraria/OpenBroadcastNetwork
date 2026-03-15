@@ -303,14 +303,10 @@ impl StreamTree {
         let mut best_bandwidth = 0;
 
         for (candidate_id, node) in &self.nodes {
-            if node.can_accept_children() && *candidate_id != peer_id {
-                if node.depth < best_depth
-                    || (node.depth == best_depth && node.bandwidth > best_bandwidth)
-                {
-                    best_parent = Some(*candidate_id);
-                    best_depth = node.depth;
-                    best_bandwidth = node.bandwidth;
-                }
+            if node.can_accept_children() && *candidate_id != peer_id && (node.depth < best_depth || (node.depth == best_depth && node.bandwidth > best_bandwidth)) {
+                best_parent = Some(*candidate_id);
+                best_depth = node.depth;
+                best_bandwidth = node.bandwidth;
             }
         }
 
@@ -682,8 +678,7 @@ impl StreamTree {
                     children.len().max(1) / 3
                 };
 
-                for i in 0..to_move.min(children.len()) {
-                    let child_id = children[i];
+                for child_id in children.iter().take(to_move.min(children.len())).copied() {
 
                     // Get child node info for scoring
                     let child_node = match self.nodes.get(&child_id) {
@@ -756,7 +751,7 @@ impl StreamTree {
             .nodes
             .iter()
             .filter(|(id, node)| {
-                node.parent.is_none() && self.source.map_or(false, |src| **id != src)
+                node.parent.is_none() && self.source.is_some_and(|src| **id != src)
                 // Not the source
             })
             .map(|(id, _)| *id)
@@ -788,7 +783,6 @@ pub struct TreeStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::overlay::topology::Region;
 
     fn create_stream_id(id: &str) -> StreamId {
         StreamId::from_string(id)

@@ -1,100 +1,87 @@
-OpenBroadcastNetwork
+# OpenBroadcastNetwork
 
-A decentralized peer-to-peer live streaming prototype exploring resilient infrastructure design, distributed peer discovery, and hybrid overlay topologies.
+A decentralized peer-to-peer live streaming CDN built in Rust, exploring resilient infrastructure design, distributed peer discovery, and hybrid overlay topologies.
 
-This project investigates how live media distribution can function without centralized CDN infrastructure by leveraging modern peer-to-peer networking primitives.
+## Overview
 
-🚀 Overview
+OpenBroadcastNetwork (OBN) is a distributed streaming system built on libp2p that investigates how live media distribution can function without centralized CDN infrastructure. It supports peer discovery via Kademlia DHT and bootstrap servers, pub/sub messaging via GossipSub, and real-time media delivery through WebSocket/MSE with P2P relay forwarding. The system simulates publisher, relay, and consumer roles in a decentralized network.
 
-OpenBroadcastNetwork (OBN) is a Rust-based distributed streaming system built using libp2p. It supports peer discovery, pub/sub messaging, and real-time transport options suitable for browser and CLI-based clients.
+## Architecture
 
-The project is structured to simulate publisher, relay, and consumer roles in a decentralized network, allowing experimentation with scalable overlay topologies and fault tolerance strategies.
+<img width="1536" height="1024" alt="OpenBroadcastNetwork Architecture" src="https://github.com/user-attachments/assets/398e7892-5405-4a90-9d1c-8eaf6d3e0e34" />
 
-🏗 Architecture
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/398e7892-5405-4a90-9d1c-8eaf6d3e0e34" />
+### Workspace Structure
 
-Core technologies:
+| Directory | Description |
+|-----------|-------------|
+| `core/` | Core networking, streaming protocols, and media pipeline |
+| `node/` | CLI relay node and web viewer server |
+| `proto/` | Protocol definitions and shared types |
+| `ui/` | Web-based viewer interface (WASM) |
+| `web_viewer/` | Browser-based stream viewer (HTML/JS/CSS) |
+| `docs/` | Architecture specs, type references, dependency docs |
+| `test_utils/` | Python test scripts for WebSocket and codec testing |
 
-Rust
+### Core Technologies
 
-libp2p
+- **Rust** with **tokio** async runtime
+- **libp2p** 0.53 (Kademlia DHT, GossipSub, Identify, Noise, Yamux, Relay, AutoNAT, DCUtR)
+- **Hybrid tree-mesh overlay** topology for stream distribution
+- **MP4 parsing and fMP4 fragmentation** for MSE-compatible streaming
+- **WebSocket + Media Source Extensions** for browser playback
 
-Kademlia DHT (peer discovery)
+## Quick Start
 
-GossipSub (pub/sub messaging)
+```bash
+# 1. Start a bootstrap server for peer discovery
+cargo run -p OpenBroadcastNetwork-node -- bootstrap-server --port 9000
 
-WebRTC transport
+# 2. Start a publisher (streams an MP4 file to the P2P network)
+cargo run -p OpenBroadcastNetwork-node -- web-viewer \
+  --port 9080 --video test_simple.mp4 --publish \
+  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<BOOTSTRAP_PEER_ID>
 
-QUIC transport
+# 3. Open http://127.0.0.1:9080/ in a browser to view the stream
 
-Network Model:
+# For local-only playback (no P2P):
+cargo run -p OpenBroadcastNetwork-node -- web-viewer --port 8080 --video sample.mp4
+```
 
-Hybrid tree-mesh overlay topology
+## CLI Reference
 
-DHT-based peer bootstrapping
+```
+OpenBroadcastNetwork-node <COMMAND>
 
-Pub/sub content propagation
+Commands:
+  run               Run a relay node with optional DHT/geo-aware rebalancing
+  status            View network status and topology of a running node
+  list-streams      List active streams on a running node
+  visualize         Visualize the network topology (text, JSON, or DOT output)
+  stream            Run streaming demo with synthetic content or a real MP4 file
+  web-viewer        Start web viewer server for browser-based stream playback
+  bootstrap-server  Start a bootstrap server for DHT-based peer discovery
+```
 
-CLI-based relay and node roles
+## Build & Test
 
-The hybrid overlay design explores tradeoffs between:
+```bash
+cargo build                  # Build entire workspace
+cargo test                   # Run all tests
+cargo clippy                 # Run lints
+cargo fmt --check            # Check formatting
 
-Bandwidth efficiency
+# Build specific packages
+cargo build -p OpenBroadcastNetwork-core
+cargo build -p OpenBroadcastNetwork-node
+```
 
-Latency
+## Project Status
 
-Redundancy
+- **Phase 1 (Complete):** Core P2P protocol - peer discovery, GossipSub pub/sub, tree-mesh hybrid relay, geo-aware rebalancing, relay node CLI
+- **Phase 2 (In Progress):** Streaming pipeline - MP4 parsing and fMP4 fragmentation working, WebSocket/MSE web viewer functional, P2P stream forwarding implemented. WebRTC transport and WASM integration are next.
+- **Phase 3 (Planned):** UI and tooling - CLI broadcasting, web UI, stream registry
 
-Resilience under peer churn
+## Author
 
-🎯 Goals
-
-Investigate decentralized CDN-like media routing
-
-Explore fault-tolerant peer discovery mechanisms
-
-Evaluate WebRTC and QUIC transport suitability
-
-Prototype scalable relay hierarchies
-
-Develop reproducible build and test workflows
-
-🛠 Engineering Highlights
-
-Modular repository structure separating protocol, core networking, and node logic
-
-CLI tooling for different network roles (publisher / relay / consumer)
-
-Automated test scripts validating peer discovery and messaging flow
-
-Structured version control workflow
-
-Documentation of architecture tradeoffs
-
-📦 Build & Test
-cargo build
-cargo test
-
-Additional integration scripts available in /scripts.
-
-🔍 Why This Project Matters
-
-OpenBroadcastNetwork serves as a research and engineering exploration of:
-
-Distributed systems design
-
-Infrastructure resilience
-
-Peer-to-peer architecture
-
-Real-time media transport
-
-Deployment-ready networking components
-
-While currently a prototype, the architecture is structured to support incremental evolution toward a production-ready decentralized streaming layer.
-
-📌 Author
-
-Ian Glenn
-Infrastructure & Systems Deployment Engineer
-github.com/Arbitraria
+**Ian Glenn** - Infrastructure & Systems Deployment Engineer
+[github.com/Arbitraria](https://github.com/Arbitraria)

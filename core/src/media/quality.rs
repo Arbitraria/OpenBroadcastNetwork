@@ -47,9 +47,9 @@ impl Default for QualityConfig {
 }
 
 /// Tracks bandwidth usage for quality adaptation
-#[allow(dead_code)]
 pub struct BandwidthMonitor {
     /// Configuration for quality adaptation
+    #[allow(dead_code)]
     config: QualityConfig,
     /// Timestamp and size of recent downloads
     samples: VecDeque<(Instant, u64)>,

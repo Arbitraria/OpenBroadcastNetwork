@@ -3,9 +3,9 @@
 //! This module provides functionality for managing mesh network connections
 //! between peers in the overlay network.
 
-mod mesh;
+mod network;
 
-pub use mesh::{MeshNode, MeshStats, StreamMesh};
+pub use network::{MeshNode, MeshStats, StreamMesh};
 
 use crate::overlay::interface::StreamId;
 use crate::overlay::peer::PeerRole;

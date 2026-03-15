@@ -36,6 +36,7 @@ impl From<String> for MediaError {
 
 /// Represents a media format (e.g., HLS, DASH, WebRTC)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum MediaFormat {
     /// HTTP Live Streaming
     Hls,
@@ -44,16 +45,12 @@ pub enum MediaFormat {
     /// WebRTC
     WebRtc,
     /// Raw media data
+    #[default]
     Raw,
     /// Custom format
     Custom(String),
 }
 
-impl Default for MediaFormat {
-    fn default() -> Self {
-        MediaFormat::Raw
-    }
-}
 
 /// Represents a media stream with metadata
 #[derive(Debug, Clone)]

@@ -103,17 +103,18 @@ impl FromStr for Region {
     }
 }
 
-impl ToString for Region {
-    fn to_string(&self) -> String {
-        match self {
-            Region::NorthAmerica => "north_america".to_string(),
-            Region::SouthAmerica => "south_america".to_string(),
-            Region::Europe => "europe".to_string(),
-            Region::Asia => "asia".to_string(),
-            Region::Africa => "africa".to_string(),
-            Region::Oceania => "oceania".to_string(),
-            Region::Unknown => "unknown".to_string(),
-        }
+impl std::fmt::Display for Region {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Region::NorthAmerica => "north_america",
+            Region::SouthAmerica => "south_america",
+            Region::Europe => "europe",
+            Region::Asia => "asia",
+            Region::Africa => "africa",
+            Region::Oceania => "oceania",
+            Region::Unknown => "unknown",
+        };
+        write!(f, "{}", s)
     }
 }
 

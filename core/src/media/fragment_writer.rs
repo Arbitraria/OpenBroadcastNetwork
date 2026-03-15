@@ -203,7 +203,7 @@ impl FragmentWriter {
         if !mdat_data.is_empty() {
             // Split mdat into smaller chunks for streaming
             let chunk_size = 64 * 1024; // 64KB chunks
-            let num_chunks = (mdat_data.len() + chunk_size - 1) / chunk_size;
+            let num_chunks = mdat_data.len().div_ceil(chunk_size);
 
             for (chunk_index, chunk) in mdat_data.chunks(chunk_size).enumerate() {
                 let timestamp = Some((chunk_index as u64) * 1000); // 1 second per chunk
@@ -348,7 +348,7 @@ impl FragmentWriter {
         data.extend_from_slice(box_info.header.box_type.as_bytes());
 
         if let BoxContent::Raw(content) = &box_info.content {
-            data.extend_from_slice(&content);
+            data.extend_from_slice(content);
         }
 
         data

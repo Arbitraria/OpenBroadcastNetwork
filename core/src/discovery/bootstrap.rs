@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, warn};
 
+/// Type alias for the peer cache: maps peer ID bytes to (PeerInfo, last-seen timestamp)
+type PeerCache = HashMap<Vec<u8>, (PeerInfo, Instant)>;
 
 /// Configuration for bootstrap discovery
 #[derive(Debug, Clone)]
@@ -61,7 +63,6 @@ impl Default for BootstrapDiscoveryConfig {
 }
 
 /// Bootstrap-based peer discovery
-#[allow(dead_code)]
 pub struct BootstrapDiscovery {
     /// Configuration
     config: BootstrapDiscoveryConfig,
@@ -71,12 +72,13 @@ pub struct BootstrapDiscovery {
     event_receiver: Option<Receiver<DiscoveryEvent>>,
 
     /// Known peers
-    peers: Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
+    peers: Arc<Mutex<PeerCache>>,
 
     /// Is the discovery service running
     running: bool,
 
     /// Our own peer info for announcements
+    #[allow(dead_code)]
     own_info: Option<PeerInfo>,
 
     /// Task handle for background discovery
@@ -96,16 +98,16 @@ pub struct BootstrapDiscovery {
     local_peer_id: Option<PeerId>,
 }
 
+impl Default for BootstrapDiscovery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BootstrapDiscovery {
     /// Create a new bootstrap discovery service with default configuration
     pub fn new() -> Self {
         Self::with_config(BootstrapDiscoveryConfig::default())
-    }
-
-    /// Get the local peer ID if available
-    #[allow(dead_code)]
-    fn get_local_peer_id(&self) -> Option<Vec<u8>> {
-        self.own_info.as_ref().map(|info| info.id.clone())
     }
 
     /// Create a new bootstrap discovery service with custom configuration
@@ -142,7 +144,7 @@ impl BootstrapDiscovery {
         let keypair = self
             .keypair
             .take()
-            .unwrap_or_else(|| Keypair::generate_ed25519());
+            .unwrap_or_else(Keypair::generate_ed25519);
         let peer_id = keypair.public().to_peer_id();
         self.local_peer_id = Some(peer_id);
 
@@ -171,25 +173,6 @@ impl BootstrapDiscovery {
         *swarm_lock = Some(swarm);
 
         Ok(())
-    }
-
-    /// Generate a simple peer ID from a socket address
-    #[allow(dead_code)]
-    fn generate_peer_id(addr: &SocketAddr) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        match addr {
-            SocketAddr::V4(addr_v4) => {
-                bytes.extend_from_slice(&[0]);
-                bytes.extend_from_slice(&addr_v4.ip().octets());
-                bytes.extend_from_slice(&addr_v4.port().to_be_bytes());
-            }
-            SocketAddr::V6(addr_v6) => {
-                bytes.extend_from_slice(&[1]);
-                bytes.extend_from_slice(&addr_v6.ip().octets());
-                bytes.extend_from_slice(&addr_v6.port().to_be_bytes());
-            }
-        }
-        bytes
     }
 
     /// Connect to a bootstrap node using libp2p and discover peers
@@ -237,7 +220,7 @@ impl BootstrapDiscovery {
                                 // Extract address from endpoint
                                 let mut addresses = vec![];
                                 if let Some(socket_addr) = extract_socket_addr_from_multiaddr(
-                                    &endpoint.get_remote_address(),
+                                    endpoint.get_remote_address(),
                                 ) {
                                     addresses.push(socket_addr);
                                 }
@@ -265,7 +248,7 @@ impl BootstrapDiscovery {
                                 let addresses: Vec<SocketAddr> = info
                                     .listen_addrs
                                     .iter()
-                                    .filter_map(|addr| extract_socket_addr_from_multiaddr(addr))
+                                    .filter_map(extract_socket_addr_from_multiaddr)
                                     .collect();
 
                                 let peer_info = PeerInfo {
@@ -331,7 +314,7 @@ impl BootstrapDiscovery {
 
     /// Start the background discovery task
     async fn start_discovery_task(
-        peers: Arc<Mutex<HashMap<Vec<u8>, (PeerInfo, Instant)>>>,
+        peers: Arc<Mutex<PeerCache>>,
         event_sender: Sender<DiscoveryEvent>,
         config: BootstrapDiscoveryConfig,
         swarm: Arc<tokio::sync::Mutex<Option<Swarm<Identify>>>>,
@@ -543,7 +526,7 @@ impl Discovery for BootstrapDiscovery {
             .values()
             .filter(|(info, last_seen)| {
                 let not_expired = now.duration_since(*last_seen)
-                    < Duration::from_secs(self.config.peer_expiration as u64);
+                    < Duration::from_secs(self.config.peer_expiration);
                 let matches_criteria = criteria.is_empty()
                     || info.protocols.iter().any(|proto| proto.contains(criteria));
                 not_expired && matches_criteria
@@ -597,7 +580,7 @@ impl Discovery for BootstrapDiscovery {
             .values()
             .filter(|(_, last_seen)| {
                 now.duration_since(*last_seen)
-                    < Duration::from_secs(self.config.peer_expiration as u64)
+                    < Duration::from_secs(self.config.peer_expiration)
             })
             .map(|(info, _)| info.clone())
             .collect();

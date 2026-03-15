@@ -5,7 +5,6 @@
 //! Supports the bincode `WireSegment` format for P2P media transmission.
 
 // Core library imports
-use futures::SinkExt;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -127,13 +126,14 @@ impl Libp2pOverlay {
                                 bandwidth_capacity: None,
                             })
                     };
-                    let mut event_tx = self.event_tx.clone();
-                    let _ = event_tx
-                        .send(OverlayEvent::PeerConnected {
+                    if let Err(e) = self.event_tx.clone().try_send(
+                        OverlayEvent::PeerConnected {
                             peer_id: peer_id.clone(),
                             info: peer_info,
-                        })
-                        .await;
+                        },
+                    ) {
+                        warn!("Event channel full, dropping PeerConnected: {:?}", e);
+                    }
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
                     let peer_id = from_libp2p_peer_id(&peer_id);
@@ -148,13 +148,14 @@ impl Libp2pOverlay {
                     }
 
                     // Emit event
-                    let mut event_tx = self.event_tx.clone();
-                    let _ = event_tx
-                        .send(OverlayEvent::PeerDisconnected {
+                    if let Err(e) = self.event_tx.clone().try_send(
+                        OverlayEvent::PeerDisconnected {
                             peer_id: peer_id.clone(),
                             reason: "Connection closed".to_string(),
-                        })
-                        .await;
+                        },
+                    ) {
+                        warn!("Event channel full, dropping PeerDisconnected: {:?}", e);
+                    }
                 }
                 SwarmEvent::NewListenAddr { address, .. } => {
                     info!("Listening on {}", address);
@@ -288,14 +289,15 @@ impl Libp2pOverlay {
                     }
 
                     // Emit event
-                    let mut event_tx = self.event_tx.clone();
-                    let _ = event_tx
-                        .send(OverlayEvent::StreamData {
+                    if let Err(e) = self.event_tx.clone().try_send(
+                        OverlayEvent::StreamData {
                             stream_id: stream_id.clone(),
                             source: source_peer_id,
-                            data: data, // Use data directly since we cloned for chunk
-                        })
-                        .await;
+                            data,
+                        },
+                    ) {
+                        warn!("Event channel full, dropping StreamData: {:?}", e);
+                    }
                 } else if topic == topics::discovery() {
                     debug!("Received discovery message from {}", source_peer_id);
                     // Process discovery message (implementation omitted for brevity)
@@ -327,13 +329,14 @@ impl Libp2pOverlay {
                         Err(_) => crate::overlay::interface::StreamId::from_string("unknown"),
                     };
 
-                    let mut event_tx = self.event_tx.clone();
-                    let _ = event_tx
-                        .send(OverlayEvent::StreamAnnounced {
+                    if let Err(e) = self.event_tx.clone().try_send(
+                        OverlayEvent::StreamAnnounced {
                             stream_id,
                             data,
-                        })
-                        .await;
+                        },
+                    ) {
+                        warn!("Event channel full, dropping StreamAnnounced: {:?}", e);
+                    }
                 }
             }
             GossipsubEvent::Subscribed { peer_id, topic } => {
@@ -380,16 +383,14 @@ impl Libp2pOverlay {
 
     /// Handle Kademlia events
     pub async fn handle_kademlia_event(&self, event: KademliaEvent) -> Result<(), OverlayError> {
-        match event {
-            KademliaEvent::OutboundQueryProgressed { result, .. } => match result {
-                libp2p::kad::QueryResult::GetClosestPeers(Ok(closest)) => {
-                    for peer in closest.peers {
-                        debug!("Found closest peer: {}", peer);
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
+        if let KademliaEvent::OutboundQueryProgressed {
+            result: libp2p::kad::QueryResult::GetClosestPeers(Ok(closest)),
+            ..
+        } = event
+        {
+            for peer in closest.peers {
+                debug!("Found closest peer: {}", peer);
+            }
         }
 
         Ok(())
@@ -397,39 +398,36 @@ impl Libp2pOverlay {
 
     /// Handle Identify events
     pub async fn handle_identify_event(&self, event: IdentifyEvent) -> Result<(), OverlayError> {
-        match event {
-            IdentifyEvent::Received { peer_id, info, .. } => {
-                debug!(
-                    "Identified peer {} with protocol version {}",
-                    peer_id, info.protocol_version
-                );
+        if let IdentifyEvent::Received { peer_id, info, .. } = event {
+            debug!(
+                "Identified peer {} with protocol version {}",
+                peer_id, info.protocol_version
+            );
 
-                let peer_id = from_libp2p_peer_id(&peer_id);
+            let peer_id = from_libp2p_peer_id(&peer_id);
 
-                // Update peer information
-                {
-                    let mut peers = self.peers.write().await;
-                    if let Some(peer) = peers.get_mut(&peer_id) {
-                        // Add addresses
-                        for addr in info.listen_addrs {
-                            peer.info.addresses.push(addr.to_string());
-                        }
-
-                        // Add protocols
-                        peer.info.protocols =
-                            info.protocols.iter().map(|p| p.to_string()).collect();
-
-                        // Update metadata
-                        peer.info
-                            .metadata
-                            .insert("agent_version".to_string(), info.agent_version);
-                        peer.info
-                            .metadata
-                            .insert("protocol_version".to_string(), info.protocol_version);
+            // Update peer information
+            {
+                let mut peers = self.peers.write().await;
+                if let Some(peer) = peers.get_mut(&peer_id) {
+                    // Add addresses
+                    for addr in info.listen_addrs {
+                        peer.info.addresses.push(addr.to_string());
                     }
+
+                    // Add protocols
+                    peer.info.protocols =
+                        info.protocols.iter().map(|p| p.to_string()).collect();
+
+                    // Update metadata
+                    peer.info
+                        .metadata
+                        .insert("agent_version".to_string(), info.agent_version);
+                    peer.info
+                        .metadata
+                        .insert("protocol_version".to_string(), info.protocol_version);
                 }
             }
-            _ => {}
         }
 
         Ok(())

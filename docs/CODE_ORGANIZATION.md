@@ -50,11 +50,19 @@ modular_structure:
     - metrics.rs: PubSub metrics
 
   media:
-    - interface.rs: Media streaming interfaces
-    - pipeline.rs: Media processing pipeline
-    - codec.rs: Codec management
-    - quality.rs: Quality adaptation
-    - stream.rs: Stream abstractions
+    - mod.rs, interface.rs: Core traits and types
+    - segment.rs: Unified StreamSegment type
+    - wire_format.rs: Binary wire format for P2P
+    - mp4_parser.rs: Full MP4 box parsing and fMP4 generation
+    - fmp4_converter.rs: MSE-compatible fMP4 fragments
+    - fragment_parser.rs, fragment_writer.rs: fMP4 fragment I/O
+    - pipeline.rs: Processing pipeline (skeleton)
+    - codec.rs: OpenH264 video + Opus audio codecs
+    - quality.rs: Bandwidth monitoring and quality adaptation
+    - publisher.rs: Stream publishing to overlay
+    - p2p_bridge.rs: Overlay-to-local broadcast bridge
+    - video_reader.rs: Raw MP4 sample extraction
+    - source.rs, sink.rs, stream.rs: I/O abstractions
 
   visualization:
     - node/src/visualization.rs: CLI visualization utilities
@@ -135,6 +143,9 @@ cli_features:
     - status: Network status with Unicode formatting
     - list-streams: Active stream monitoring
     - visualize: Multi-format topology visualization
+    - stream: Publish or subscribe to P2P media streams
+    - web-viewer: Launch web-based viewer with WebSocket/MSE playback
+    - bootstrap-server: Start DHT bootstrap server for peer discovery
 
   output_formats:
     - text: Human-readable tables with Unicode box drawing

@@ -179,7 +179,7 @@ pub fn generate_dot_graph(
     )
     .unwrap();
     writeln!(output, "  edge [fontname=\"Arial\"];").unwrap();
-    writeln!(output, "").unwrap();
+    writeln!(output).unwrap();
 
     if let Some(stream) = stream_id {
         writeln!(
@@ -192,7 +192,7 @@ pub fn generate_dot_graph(
         writeln!(output, "  label=\"Global Network Topology\";").unwrap();
     }
     writeln!(output, "  labelloc=\"t\";").unwrap();
-    writeln!(output, "").unwrap();
+    writeln!(output).unwrap();
 
     // Add nodes
     for (peer_id, peer_info) in peers {
@@ -214,7 +214,7 @@ pub fn generate_dot_graph(
         .unwrap();
     }
 
-    writeln!(output, "").unwrap();
+    writeln!(output).unwrap();
 
     // Add edges (simplified - connect all peers for now)
     let peer_ids: Vec<_> = peers.keys().collect();
@@ -233,7 +233,7 @@ pub fn generate_dot_graph(
 /// Visualize a tree structure for streaming topology
 pub fn visualize_tree(root: &PeerInfo, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     writeln!(writer, "Tree Topology:")?;
-    writeln!(writer, "")?;
+    writeln!(writer)?;
     writeln!(writer, "Root: {:?}", root.role)?;
     writeln!(writer, "├── Child nodes would be displayed here")?;
     writeln!(

@@ -6,10 +6,9 @@
 #[cfg(test)]
 mod dynamic_tests {
     use crate::overlay::interface::StreamId;
-    use crate::overlay::peer::{Peer, PeerInfo, PeerRole};
-    use crate::overlay::tree::{StreamTree, TreeNode, TreeStats};
-    // Now that we've implemented TopologyManager, let's use it in our tests
-    use crate::overlay::topology::{ConnectionHealth, TopologyConfig, TopologyManager};
+    use crate::overlay::peer::PeerRole;
+    use crate::overlay::tree::{StreamTree, TreeNode};
+    use crate::overlay::topology::TopologyConfig;
     use libp2p::PeerId;
     use std::time::Duration;
 
@@ -21,21 +20,6 @@ mod dynamic_tests {
     // Helper to create a StreamId
     fn create_stream_id(id: &str) -> StreamId {
         StreamId::from_string(id)
-    }
-
-    // Helper to create a peer with basic info
-    fn create_test_peer(role: PeerRole, bandwidth: u64) -> Peer {
-        let peer_id = random_peer_id();
-        // Convert PeerId to LocalPeerId
-        let local_peer_id = peer_id.into();
-
-        // Create a new PeerInfo with the desired properties
-        let mut info = crate::overlay::peer::PeerInfo::default();
-        info.role = role;
-        info.bandwidth_capacity = Some(bandwidth);
-
-        // Create the peer with the proper constructor signature
-        Peer::new(local_peer_id, info)
     }
 
     #[tokio::test]
@@ -297,67 +281,16 @@ mod dynamic_tests {
         assert!(tree.get_path_to_peer(&nonexistent).is_none());
     }
 
-    // Commenting out the topology manager test until we fix the implementation
-    /*
     #[tokio::test]
+    #[ignore = "Requires OverlayMetrics implementation — see topology manager refactoring"]
     async fn test_topology_manager() {
         // Create topology manager
-        let local_id = random_peer_id();
-        let config = TopologyConfig::default();
-        let mut manager = TopologyManager::new(local_id, config);
-
-        // Create metrics
-        let metrics = Arc::new(OverlayMetrics::new().await);
-        manager.set_metrics(metrics);
-
-        // Create stream
-        let stream_id = create_stream_id("test_topology");
-        let publisher_id = random_peer_id();
-
-        // Add stream
-        assert!(manager.add_stream(stream_id.clone(), publisher_id).await.is_ok());
-
-        // Add peers
-        let relay1 = random_peer_id();
-        let relay2 = random_peer_id();
-        let consumer1 = random_peer_id();
-        let consumer2 = random_peer_id();
-
-        assert!(manager.add_peer_to_stream(&stream_id, relay1, PeerRole::Relay, 5_000_000).await.is_ok());
-        assert!(manager.add_peer_to_stream(&stream_id, relay2, PeerRole::Relay, 3_000_000).await.is_ok());
-        assert!(manager.add_peer_to_stream(&stream_id, consumer1, PeerRole::Consumer, 1_000_000).await.is_ok());
-        assert!(manager.add_peer_to_stream(&stream_id, consumer2, PeerRole::Consumer, 1_000_000).await.is_ok());
-
-        // Update connection stats with success
-        assert!(manager.record_connection_stats(&relay1, 50, 5_000_000, true).await.is_ok());
-        assert!(manager.record_connection_stats(&relay2, 80, 3_000_000, true).await.is_ok());
-
-        // Simulate connection failure
-        assert!(manager.record_connection_stats(&relay2, 300, 1_000_000, false).await.is_ok());
-
-        // Check connection health for relay2
-        let health = manager.connection_health.read().await;
-        assert!(health.contains_key(&relay2));
-        if let Some(health_info) = health.get(&relay2) {
-            assert!(health_info.consecutive_failures > 0);
-            assert!(health_info.success_rate < 1.0);
-        }
-
-        // Handle temporary disconnect
-        assert!(manager.handle_temporary_disconnect(&stream_id, &relay2).await.is_ok());
-
-        // Test reconnection
-        assert!(manager.handle_reconnection(&stream_id, &relay2).await.is_ok());
-
-        // Get active streams
-        let trees = manager.trees.read().await;
-        assert_eq!(trees.len(), 1);
-
-        // Start the manager
-        assert!(manager.start().await.is_ok());
-
-        // Let it run for a short time to test the background tasks
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _local_id = random_peer_id();
+        let _config = TopologyConfig::default();
+        // TODO: Implement once OverlayMetrics is available
+        // let mut manager = TopologyManager::new(local_id, config);
+        // let metrics = Arc::new(OverlayMetrics::new().await);
+        // manager.set_metrics(metrics);
+        // ...
     }
-    */
 }

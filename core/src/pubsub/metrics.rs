@@ -153,7 +153,7 @@ impl PubSubMetrics {
         if let Some(peer_id) = peer_id {
             if let Ok(mut peer_metrics) = self.peer_metrics.write() {
                 let metrics = peer_metrics
-                    .entry(peer_id.clone())
+                    .entry(*peer_id)
                     .or_insert_with(PeerMetrics::new);
 
                 metrics.messages_received.fetch_add(1, Ordering::Relaxed);
@@ -186,7 +186,7 @@ impl PubSubMetrics {
         if let Some(peer_id) = peer_id {
             if let Ok(mut peer_metrics) = self.peer_metrics.write() {
                 let metrics = peer_metrics
-                    .entry(peer_id.clone())
+                    .entry(*peer_id)
                     .or_insert_with(PeerMetrics::new);
 
                 metrics.messages_sent.fetch_add(1, Ordering::Relaxed);

@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::convert::TryFrom;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -98,7 +97,6 @@ impl PubSubConfig for GossipSubConfig {
 use std::fmt;
 
 /// GossipSub service implementation
-#[allow(dead_code)]
 pub struct GossipSubService {
     /// Configuration
     config: GossipSubConfig,
@@ -202,8 +200,7 @@ impl GossipSubService {
     /// Convert our LocalPeerId to libp2p PeerId
     #[allow(dead_code)]
     fn to_libp2p_peer_id(peer_id: &LocalPeerId) -> Result<libp2p::PeerId, PubSubError> {
-        // Use the TryFrom trait implementation
-        libp2p::PeerId::try_from(peer_id).map_err(|e| PubSubError::PeerIdError(e.to_string()))
+        Ok(libp2p::PeerId::from(peer_id))
     }
 
     /// Convert Message to GossipsubMessage
@@ -239,7 +236,7 @@ impl GossipSubService {
 
     /// Convert GossipsubMessage to our Message
     #[allow(dead_code)]
-    fn from_gossipsub_message(
+    fn parse_gossipsub_message(
         &self,
         topic_id: TopicId,
         gossipsub_msg: &GossipsubMessage,

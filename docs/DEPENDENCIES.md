@@ -38,9 +38,10 @@ This document outlines the dependencies used in the OpenBroadcastNetwork project
 - **Purpose**: Error handling
 - **Rationale**: thiserror for defining error types, anyhow for propagation
 
-### webrtc (0.7)
-- **Purpose**: WebRTC support for browser compatibility
-- **Rationale**: Required for browser-to-peer communication
+### webrtc (0.7) — optional, feature-gated
+- **Purpose**: WebRTC support for native peer communication
+- **Feature flag**: `native-webrtc` (disabled by default)
+- **Rationale**: Heavy compile-time cost; browser WebRTC is handled via signaling, not this crate
 
 ## Additional Dependencies
 
@@ -94,12 +95,30 @@ This document outlines the dependencies used in the OpenBroadcastNetwork project
 ### Removed Dependencies
 1. **mDNS support**: Removed mdns feature from libp2p to reduce complexity
 2. **async-std**: Migrated to tokio for runtime consistency  
-3. **External CLI formatting**: Removed term-table and colored for reduced footprint
+3. **CLI formatting**: `term-table` and `colored` remain available under the `visualization` feature flag
 
 ### Updated Dependencies
 1. **libp2p**: Updated to 0.53.0 with streamlined feature set
 2. **tokio**: Standardized on tokio runtime throughout the project
 3. **Custom visualization**: Built beautiful Unicode tables without external dependencies
+
+### Media & Codec Dependencies
+
+- **openh264 (0.4)**: Pure Rust H.264 video encoding/decoding
+- **opus (0.3)**: Opus audio codec bindings
+- **mp4parse (0.17)**: MP4 container parsing
+- **bytes (1.4)**: Efficient byte buffer manipulation (with serde support)
+- **bincode (1.3)**: Binary serialization for wire format
+- **byteorder (1.4)**: Reading/writing bytes in specific endianness
+- **reqwest (0.11)**: HTTP client (used for bootstrap discovery)
+
+### Undocumented libp2p Features in Use
+The following libp2p features are enabled but were not previously documented:
+- `yamux`: Stream multiplexing protocol
+- `relay`: Circuit relay for NAT traversal
+- `autonat`: Automatic NAT detection
+- `dcutr`: Direct Connection Upgrade through Relay
+- `macros`: Convenience macros for NetworkBehaviour
 
 ## Known Dependency Issues
 

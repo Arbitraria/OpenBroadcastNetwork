@@ -571,6 +571,22 @@ impl Overlay for HybridOverlay {
 
         Ok(())
     }
+
+    async fn publish_to_topic(
+        &self,
+        topic: &str,
+        data: Vec<u8>,
+    ) -> Result<(), OverlayError> {
+        let mut network = self.network.lock().await;
+        network
+            .publish(topic, data)
+            .map_err(|e| {
+                OverlayError::RelayError(
+                    format!("Failed to publish to topic: {}", e),
+                )
+            })?;
+        Ok(())
+    }
 }
 
 // Additional methods for HybridOverlay (not part of the Overlay trait)
@@ -627,19 +643,19 @@ impl HybridOverlay {
     async fn stop_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         // Check if the stream exists
         let mut streams = self.streams.write().await;
-        if !streams.contains_key(&stream_id) {
+        if !streams.contains_key(stream_id) {
             return Err(OverlayError::StreamNotFound(stream_id.clone()));
         }
 
         // Remove the stream
-        streams.remove(&stream_id);
+        streams.remove(stream_id);
 
         // Remove tree and mesh for the stream
         let mut trees = self.trees.write().await;
         let mut meshes = self.meshes.write().await;
 
-        trees.remove(&stream_id);
-        meshes.remove(&stream_id);
+        trees.remove(stream_id);
+        meshes.remove(stream_id);
 
         // Emit event
         let _ = self

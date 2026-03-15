@@ -53,13 +53,15 @@ use super::config::RelayConfig;
 use super::node::RelayNode;
 
 /// A manager for handling multiple relay nodes
-#[allow(dead_code)]
 pub struct RelayManager {
     /// Local peer ID
+    #[allow(dead_code)]
     local_peer_id: PeerId,
     /// Configuration
+    #[allow(dead_code)]
     config: RelayConfig,
     /// Topology manager for overlay network management
+    #[allow(dead_code)]
     topology: Arc<TopologyManager>,
     /// Local relay node
     relay_node: Arc<RelayNode>,
@@ -69,7 +71,7 @@ impl RelayManager {
     /// Create a new relay manager
     pub fn new(local_peer_id: PeerId, config: RelayConfig, topology: Arc<TopologyManager>) -> Self {
         let relay_node = Arc::new(RelayNode::new(
-            local_peer_id.clone(),
+            local_peer_id,
             config.clone(),
             topology.clone(),
         ));

@@ -19,6 +19,16 @@ use super::stats::RelayStats;
 use super::stream::StreamRelay;
 use super::types::{RelayMessage, StreamChunk, TaskHandles};
 
+/// Type alias for the async chunk handler callback
+type ChunkHandlerFn = Box<
+    dyn Fn(
+            PeerId,
+            StreamChunk,
+        ) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// A relay node that handles stream data distribution
 pub struct RelayNode {
     /// Local peer ID
@@ -36,21 +46,7 @@ pub struct RelayNode {
     /// Running flag
     running: Arc<AtomicBool>,
     /// Chunk handler function - excluded from Debug
-    chunk_handler: Arc<
-        RwLock<
-            Option<
-                Box<
-                    dyn Fn(
-                            PeerId,
-                            StreamChunk,
-                        )
-                            -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>
-                        + Send
-                        + Sync,
-                >,
-            >,
-        >,
-    >,
+    chunk_handler: Arc<RwLock<Option<ChunkHandlerFn>>>,
     /// Channel for sending chunks
     chunk_tx: Mutex<Option<mpsc::Sender<StreamChunk>>>,
     /// Channel for receiving chunks
@@ -391,21 +387,7 @@ impl RelayNode {
         streams: &RwLock<HashMap<StreamId, StreamRelay>>,
         chunk: StreamChunk,
         max_buffer_size: usize,
-        chunk_handler: &Arc<
-            RwLock<
-                Option<
-                    Box<
-                        dyn Fn(
-                                PeerId,
-                                StreamChunk,
-                            )
-                                -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>
-                            + Send
-                            + Sync,
-                    >,
-                >,
-            >,
-        >,
+        chunk_handler: &Arc<RwLock<Option<ChunkHandlerFn>>>,
         stats: &Arc<RwLock<RelayStats>>,
     ) -> Result<(), OverlayError> {
         let stream_id = chunk.stream_id.clone();
@@ -562,21 +544,7 @@ impl RelayNode {
         stream_id: StreamId,
         peer_id: PeerId,
         sequence: u64,
-        chunk_handler: &Arc<
-            RwLock<
-                Option<
-                    Box<
-                        dyn Fn(
-                                PeerId,
-                                StreamChunk,
-                            )
-                                -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>
-                            + Send
-                            + Sync,
-                    >,
-                >,
-            >,
-        >,
+        chunk_handler: &Arc<RwLock<Option<ChunkHandlerFn>>>,
     ) -> Result<(), OverlayError> {
         let chunks = {
             let streams_guard = streams.read().await;
@@ -592,7 +560,7 @@ impl RelayNode {
         // Send chunks to the peer
         if let Some(handler) = &*chunk_handler.read().await {
             for chunk in chunks {
-                if let Err(e) = handler(peer_id.clone(), chunk).await {
+                if let Err(e) = handler(peer_id, chunk).await {
                     error!("Failed to send requested chunk to {}: {}", peer_id, e);
                     return Err(e);
                 }
@@ -701,7 +669,7 @@ impl RelayNode {
             if let Err(e) = tx
                 .send(RelayMessage::RemoveSubscriber(
                     stream_id.clone(),
-                    peer_id.clone(),
+                    *peer_id,
                 ))
                 .await
             {
@@ -728,7 +696,7 @@ impl RelayNode {
             if let Err(e) = tx
                 .send(RelayMessage::RequestChunks(
                     stream_id.clone(),
-                    peer_id.clone(),
+                    *peer_id,
                     sequence,
                 ))
                 .await
@@ -763,6 +731,6 @@ impl RelayNode {
 
         streams
             .get(stream_id)
-            .map(|stream| (stream.publisher.clone(), stream.subscribers.clone()))
+            .map(|stream| (stream.publisher, stream.subscribers.clone()))
     }
 }

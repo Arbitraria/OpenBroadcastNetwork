@@ -188,7 +188,7 @@ impl TopologyManager {
                 // Get or create health record
                 let health = health_lock
                     .entry(peer_id)
-                    .or_insert_with(|| ConnectionHealth::default());
+                    .or_insert_with(ConnectionHealth::default);
 
                 // Update last checked time and degraded status
                 health.update_degraded_status(
@@ -240,7 +240,7 @@ impl TopologyManager {
 
         // If this is the publisher and no source exists yet, set it
         if role == PeerRole::Publisher && tree.source.is_none() {
-            tree.source = Some(peer_id.clone());
+            tree.source = Some(peer_id);
         }
 
         // Add the peer to the tree
@@ -324,16 +324,9 @@ impl TopologyManager {
     pub async fn update_peer(&self, peer: Peer) -> Result<(), OverlayError> {
         let mut peers = self.peers.write().await;
         // Convert LocalPeerId to PeerId for map key
-        match (&peer.id).try_into() {
-            Ok(peer_id) => {
-                peers.insert(peer_id, peer);
-                Ok(())
-            }
-            Err(e) => Err(OverlayError::InvalidPeerId(format!(
-                "Failed to convert peer ID: {}",
-                e
-            ))),
-        }
+        let peer_id: PeerId = (&peer.id).into();
+        peers.insert(peer_id, peer);
+        Ok(())
     }
 
     /// Remove a peer
@@ -400,7 +393,7 @@ impl TopologyManager {
 
         if let Some(tree) = trees.get(stream_id) {
             if let Some(source) = &tree.source {
-                Ok(source.clone())
+                Ok(*source)
             } else {
                 Err(OverlayError::TopologyError(format!(
                     "No source found for stream: {:?}",

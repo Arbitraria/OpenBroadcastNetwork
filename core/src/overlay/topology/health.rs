@@ -60,7 +60,7 @@ impl ConnectionHealth {
     /// Record a failed connection
     pub fn record_failure(&mut self) {
         self.consecutive_failures += 1;
-        self.success_rate = self.success_rate * 0.9; // Weighted average, no success contribution
+        self.success_rate *= 0.9; // Weighted average, no success contribution
 
         // Add to history
         self.add_to_history(0.0);

@@ -13,7 +13,7 @@ use OpenBroadcastNetwork_core::discovery::{
 };
 use OpenBroadcastNetwork_core::overlay::{
     interface::{Overlay, OverlayConfig},
-    libp2p_impl::Libp2pOverlay,
+    libp2p::impl_core::Libp2pOverlay,
     peer::LocalPeerId,
 };
 

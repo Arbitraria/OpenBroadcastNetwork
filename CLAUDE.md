@@ -180,7 +180,7 @@ ls -la logs/server*.log
 
 ### Dependency Management (Critical)
 - **libp2p version**: Standardize on 0.53.0 across all crates
-- **Features**: Only use compatible features: `["tokio", "tcp", "dns", "gossipsub", "identify", "kad", "noise"]`
+- **Features**: Only use compatible features: `["tokio", "tcp", "dns", "gossipsub", "identify", "kad", "noise", "yamux", "relay", "autonat", "dcutr", "macros"]`
 - **Avoid**: `async-io`, `quic` (dependency conflicts), `async-std`
 - **Runtime**: Use tokio exclusively (not async-std)
 - **Documentation**: Update `docs/DEPENDENCIES.md` for any dependency changes
@@ -209,25 +209,26 @@ ls -la logs/server*.log
 
 ## Current State
 
-The project is in active refactoring on the `feature/libp2p-refactoring` branch, migrating from a monolithic overlay implementation to a modular libp2p-based architecture. Key changes include:
+The libp2p refactoring has landed on `main`. The codebase uses a modular libp2p-based architecture with:
 
-- Removal of mDNS dependency
+- No mDNS dependency (DHT + bootstrap discovery)
 - Modular peer and relay management
 - Standardized type system
-- Improved test coverage
+- WebSocket/MSE-based web viewer for streaming
 
 ## Development Phases
 
-### Phase 1 (Current): Core P2P Protocol
+### Phase 1 (Complete): Core P2P Protocol
 - [x] Basic peer discovery and connection
 - [x] Pub/sub topic creation (GossipSub)
 - [x] Tree-mesh hybrid relay logic
 - [x] Geo-aware rebalancing
 - [x] Relay node CLI with logging
 
-### Phase 2: Streaming Pipeline
-- [ ] Audio/video chunking and distribution
-- [ ] Web-based viewer with WebRTC
+### Phase 2 (In Progress): Streaming Pipeline
+- [x] Audio/video chunking and distribution (MP4 parsing, fMP4 fragmentation)
+- [x] Web-based viewer with WebSocket/MSE
+- [ ] WebRTC transport integration
 - [ ] WASM integration
 - [ ] Stream validation
 
