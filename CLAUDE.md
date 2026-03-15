@@ -42,7 +42,7 @@ The system follows a modular overlay network architecture:
    - `topology/` - Network topology management
    - `relay/` - Stream relay functionality
 
-2. **Core Type System** (see `TYPE_REFERENCE.md`)
+2. **Core Type System** (see `docs/TYPE_REFERENCE.md`)
    - `LocalPeerId` - Local wrapper around libp2p::PeerId
    - `OverlayConfig` - Main configuration struct
    - `StreamId` - Unique stream identifiers
@@ -183,13 +183,13 @@ ls -la logs/server*.log
 - **Features**: Only use compatible features: `["tokio", "tcp", "dns", "gossipsub", "identify", "kad", "noise"]`
 - **Avoid**: `async-io`, `quic` (dependency conflicts), `async-std`
 - **Runtime**: Use tokio exclusively (not async-std)
-- **Documentation**: Update `DEPENDENCIES.md` for any dependency changes
+- **Documentation**: Update `docs/DEPENDENCIES.md` for any dependency changes
 - **Pinning**: All versions must be pinned in Cargo.toml
 
 ### Type Conversions
 - Always use proper conversions between `LocalPeerId` and `libp2p::PeerId`
 - Use `.into()` for standard conversions
-- Reference `TYPE_REFERENCE.md` for method signatures
+- Reference `docs/TYPE_REFERENCE.md` for method signatures
 
 ### Error Handling
 - Use `OverlayError` variants for overlay network errors
@@ -197,7 +197,7 @@ ls -la logs/server*.log
 - Include context in error messages
 
 ### Configuration
-- Follow patterns in `CODE_ORGANIZATION.md`
+- Follow patterns in `docs/CODE_ORGANIZATION.md`
 - Manager types should accept config structs in constructors
 - Use `Default` implementations for sensible defaults
 
@@ -244,7 +244,7 @@ The project is in active refactoring on the `feature/libp2p-refactoring` branch,
 
 ## AI Development Workflow
 
-This project follows structured AI-assisted development patterns defined in `promptplan.json`:
+This project follows structured AI-assisted development patterns defined in `docs/promptplan.json`:
 
 1. **PLAN MODE**: Analyze and create detailed action plans
 2. **IMPLEMENT MODE**: Make agreed-upon changes with real code
@@ -260,8 +260,8 @@ This project follows structured AI-assisted development patterns defined in `pro
 ## Essential Reference Documents
 
 When working on this codebase, always reference:
-- `TYPE_REFERENCE.md` - Type definitions and conversion patterns
-- `CODE_ORGANIZATION.md` - Modular structure and refactoring guidelines  
-- `DEPENDENCIES.md` - Dependency management and compatibility
+- `docs/TYPE_REFERENCE.md` - Type definitions and conversion patterns
+- `docs/CODE_ORGANIZATION.md` - Modular structure and refactoring guidelines
+- `docs/DEPENDENCIES.md` - Dependency management and compatibility
 - `.windsurfrules` - Project-specific development rules
-- `Decentralized Streaming Spec` - Complete system requirements
+- `docs/Decentralized Streaming Spec` - Complete system requirements

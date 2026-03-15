@@ -41,6 +41,10 @@ Thumbs.db
 # Logs directory
 logs/
 
+# Debug log artifacts
+sample_video_logs.txt
+server_logs.txt
+
 # Webpack build outputs
 web_viewer/main.*.js
 web_viewer/main.*.js.map 
