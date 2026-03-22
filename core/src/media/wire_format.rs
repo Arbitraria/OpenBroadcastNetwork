@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::segment::{MediaType, StreamId, StreamSegment};
 
 /// Current wire format version
-pub const WIRE_FORMAT_VERSION: u8 = 1;
+pub const WIRE_FORMAT_VERSION: u8 = 2;
 
 /// Compact wire format for P2P segment transmission.
 ///
@@ -39,8 +39,15 @@ pub struct WireSegment {
     pub track_id: u8,
     /// Whether this is a keyframe
     pub is_keyframe: bool,
+    /// Truncated blake3 content hash (16 bytes) for integrity verification
+    pub content_hash: Vec<u8>,
     /// Media data
     pub data: Vec<u8>,
+}
+
+/// Compute a 16-byte truncated blake3 hash for content integrity
+fn compute_content_hash(data: &[u8]) -> Vec<u8> {
+    blake3::hash(data).as_bytes()[..16].to_vec()
 }
 
 impl WireSegment {
@@ -56,6 +63,7 @@ impl WireSegment {
         is_keyframe: bool,
         data: Vec<u8>,
     ) -> Self {
+        let content_hash = compute_content_hash(&data);
         Self {
             version: WIRE_FORMAT_VERSION,
             stream_id,
@@ -65,8 +73,15 @@ impl WireSegment {
             media_type,
             track_id,
             is_keyframe,
+            content_hash,
             data,
         }
+    }
+
+    /// Verify that the content hash matches the data
+    pub fn verify_integrity(&self) -> bool {
+        let expected = compute_content_hash(&self.data);
+        self.content_hash == expected
     }
 
     /// Serialize to bytes using bincode
@@ -97,6 +112,8 @@ impl WireSegment {
 
 impl From<StreamSegment> for WireSegment {
     fn from(segment: StreamSegment) -> Self {
+        let data = segment.data.to_vec();
+        let content_hash = compute_content_hash(&data);
         Self {
             version: WIRE_FORMAT_VERSION,
             stream_id: segment.stream_id.to_vec(),
@@ -106,13 +123,16 @@ impl From<StreamSegment> for WireSegment {
             media_type: segment.media_type.to_u8(),
             track_id: segment.track_id,
             is_keyframe: segment.is_keyframe,
-            data: segment.data.to_vec(),
+            content_hash,
+            data,
         }
     }
 }
 
 impl From<&StreamSegment> for WireSegment {
     fn from(segment: &StreamSegment) -> Self {
+        let data = segment.data.to_vec();
+        let content_hash = compute_content_hash(&data);
         Self {
             version: WIRE_FORMAT_VERSION,
             stream_id: segment.stream_id.to_vec(),
@@ -122,7 +142,8 @@ impl From<&StreamSegment> for WireSegment {
             media_type: segment.media_type.to_u8(),
             track_id: segment.track_id,
             is_keyframe: segment.is_keyframe,
-            data: segment.data.to_vec(),
+            content_hash,
+            data,
         }
     }
 }
@@ -241,7 +262,9 @@ mod tests {
         assert_eq!(decoded.media_type, wire.media_type);
         assert_eq!(decoded.track_id, wire.track_id);
         assert_eq!(decoded.is_keyframe, wire.is_keyframe);
+        assert_eq!(decoded.content_hash, wire.content_hash);
         assert_eq!(decoded.data, wire.data);
+        assert!(decoded.verify_integrity());
     }
 
     #[test]

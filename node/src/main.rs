@@ -178,6 +178,28 @@ enum Commands {
         dht: bool,
     },
 
+    /// Publish a video file to the P2P network
+    Publish {
+        /// Path to the video file to stream
+        video: PathBuf,
+
+        /// Stream title
+        #[clap(short, long)]
+        title: Option<String>,
+
+        /// Web server port
+        #[clap(short, long, default_value = "8080")]
+        port: u16,
+
+        /// Bootstrap nodes to connect to
+        #[clap(short, long, value_delimiter = ',')]
+        bootstrap: Option<Vec<String>>,
+
+        /// Enable DHT discovery
+        #[clap(short = 'D', long, action)]
+        dht: bool,
+    },
+
     /// Run as a bootstrap server for peer discovery
     BootstrapServer {
         /// Port to listen on
@@ -842,20 +864,60 @@ async fn main() -> Result<(), anyhow::Error> {
             demo_node.overlay.stop().await?;
         }
         Commands::ListStreams { node } => {
-            info!("Connecting to node at {}", node);
+            let url = format!("http://{}/api/streams", node);
+            info!("Querying streams from {}", url);
 
-            // For demonstration, create a temporary overlay and show stream info
-            let demo_node = RunningNode::new(PeerRole::Relay, false, false, vec![]).await?;
-            demo_node.overlay.start().await?;
-
-            // Get active streams and display
-            if let Ok(streams) = demo_node.overlay.active_streams().await {
-                println!("{}", create_stream_table(&streams));
-            } else {
-                println!("No active streams found");
+            match reqwest::get(&url).await {
+                Ok(resp) => {
+                    let data: serde_json::Value = resp.json().await?;
+                    let streams = data["streams"].as_array();
+                    match streams {
+                        Some(streams) if !streams.is_empty() => {
+                            println!(
+                                "{:<40} {:<20} {:<15} {:<10}",
+                                "Stream ID", "Title", "Codecs", "Resolution"
+                            );
+                            println!("{}", "-".repeat(85));
+                            for s in streams {
+                                let id = s["stream_id"]
+                                    .as_str()
+                                    .unwrap_or("unknown");
+                                let title = s["title"]
+                                    .as_str()
+                                    .unwrap_or("untitled");
+                                let vc = s["video_codec"]
+                                    .as_str()
+                                    .unwrap_or("");
+                                let ac = s["audio_codec"]
+                                    .as_str()
+                                    .unwrap_or("");
+                                let codecs = format!("{}/{}", vc, ac);
+                                let w = s["video_width"].as_u64().unwrap_or(0);
+                                let h = s["video_height"].as_u64().unwrap_or(0);
+                                let res = if w > 0 {
+                                    format!("{}x{}", w, h)
+                                } else {
+                                    String::new()
+                                };
+                                println!(
+                                    "{:<40} {:<20} {:<15} {:<10}",
+                                    id, title, codecs, res
+                                );
+                            }
+                        }
+                        _ => println!("No active streams found on {}", node),
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to connect to node at {}: {}",
+                        node, e
+                    );
+                    eprintln!(
+                        "Make sure a web-viewer is running on that address."
+                    );
+                }
             }
-
-            demo_node.overlay.stop().await?;
         }
         Commands::Visualize {
             node,
@@ -979,6 +1041,37 @@ async fn main() -> Result<(), anyhow::Error> {
                 video.clone(),
                 stream_id.clone(),
                 *publish,
+                *dht,
+            )
+            .await?;
+        }
+        Commands::Publish {
+            video,
+            title,
+            port,
+            bootstrap,
+            dht,
+        } => {
+            let bootstrap_nodes = bootstrap.clone().unwrap_or_default();
+            let video_str = video.to_string_lossy().to_string();
+            let stream_title = title
+                .clone()
+                .unwrap_or_else(|| {
+                    video
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Live Stream".to_string())
+                });
+            info!("Publishing: \"{}\" from {}", stream_title, video_str);
+            run_web_viewer(
+                "127.0.0.1".to_string(),
+                *port,
+                "web_viewer".to_string(),
+                bootstrap_nodes,
+                false,
+                Some(video_str),
+                None,
+                true,
                 *dht,
             )
             .await?;

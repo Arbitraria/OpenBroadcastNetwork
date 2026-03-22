@@ -606,6 +606,7 @@ impl Sample {
     ///
     /// The `timescale` parameter converts duration to microseconds.
     /// Typical values: 90000 for video (90kHz), 48000 for audio (48kHz).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn to_stream_segment(
         &self,
         stream_id: crate::media::segment::StreamId,

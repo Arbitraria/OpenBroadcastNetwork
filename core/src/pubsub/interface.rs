@@ -1,4 +1,6 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::future::Future;
+#[cfg(not(target_arch = "wasm32"))]
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -175,12 +177,8 @@ pub trait PubSub: Send + Sync {
     fn stop(&mut self) -> Result<(), PubSubError>;
 }
 
-/// Asynchronous publish-subscribe interface for non-blocking operations
-///
-/// This trait provides an asynchronous API for interacting with the publish-subscribe
-/// system, allowing for non-blocking operations in an async runtime environment.
-/// It mirrors the functionality of the synchronous `PubSub` trait but with Future-based
-/// return values for integration with async/await patterns.
+/// Asynchronous publish-subscribe interface (native only — uses Send bounds)
+#[cfg(not(target_arch = "wasm32"))]
 pub trait AsyncPubSub: Send + Sync {
     /// Subscribe to a topic asynchronously
     fn subscribe<'a>(
@@ -207,21 +205,52 @@ pub trait AsyncPubSub: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<PubSubEventStream, PubSubError>> + Send + 'a>>;
 }
 
-use tokio::sync::mpsc;
+// PubSubEventStream: tokio-backed on native, futures-backed on wasm
 
-/// Event stream for receiving PubSub events
-pub struct PubSubEventStream {
-    receiver: mpsc::Receiver<PubSubEvent>,
-}
+#[cfg(not(target_arch = "wasm32"))]
+mod event_stream_impl {
+    use super::PubSubEvent;
 
-impl PubSubEventStream {
-    /// Create a new PubSubEventStream
-    pub fn new(receiver: mpsc::Receiver<PubSubEvent>) -> Self {
-        Self { receiver }
+    /// Event stream for receiving PubSub events
+    pub struct PubSubEventStream {
+        receiver: tokio::sync::mpsc::Receiver<PubSubEvent>,
     }
 
-    /// Get the next event
-    pub async fn next(&mut self) -> Option<PubSubEvent> {
-        self.receiver.recv().await
+    impl PubSubEventStream {
+        /// Create a new PubSubEventStream
+        pub fn new(receiver: tokio::sync::mpsc::Receiver<PubSubEvent>) -> Self {
+            Self { receiver }
+        }
+
+        /// Get the next event
+        pub async fn next(&mut self) -> Option<PubSubEvent> {
+            self.receiver.recv().await
+        }
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+mod event_stream_impl {
+    use super::PubSubEvent;
+    use futures::channel::mpsc;
+    use futures::StreamExt;
+
+    /// Event stream for receiving PubSub events
+    pub struct PubSubEventStream {
+        receiver: mpsc::UnboundedReceiver<PubSubEvent>,
+    }
+
+    impl PubSubEventStream {
+        /// Create a new PubSubEventStream
+        pub fn new(receiver: mpsc::UnboundedReceiver<PubSubEvent>) -> Self {
+            Self { receiver }
+        }
+
+        /// Get the next event
+        pub async fn next(&mut self) -> Option<PubSubEvent> {
+            self.receiver.next().await
+        }
+    }
+}
+
+pub use event_stream_impl::PubSubEventStream;

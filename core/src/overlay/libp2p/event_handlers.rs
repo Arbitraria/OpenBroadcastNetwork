@@ -230,6 +230,14 @@ impl Libp2pOverlay {
                         let (sequence, timestamp, is_keyframe, content_type) =
                             if let Ok(wire_segment) = WireSegment::from_bytes(&data)
                         {
+                            // Verify content integrity
+                            if !wire_segment.verify_integrity() {
+                                warn!(
+                                    "Content hash mismatch for stream {} seq {}",
+                                    stream_id, wire_segment.sequence
+                                );
+                                return Ok(());
+                            }
                             debug!(
                                 "Deserialized WireSegment: type={}, seq={}, keyframe={}",
                                 wire_segment.media_type,

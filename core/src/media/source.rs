@@ -3,21 +3,31 @@
 //! This module provides various implementations of the `MediaSource` trait
 //! for different types of media sources.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::fs::File;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::io::AsyncReadExt;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::media::interface::{MediaError, MediaSource};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::media::stream::MediaStreamImpl;
 
 /// A dummy implementation of MediaSource for testing and initialization
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct DummySource;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSource for DummySource {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {
@@ -35,6 +45,7 @@ impl MediaSource for DummySource {
 }
 
 /// A media source that reads from a file
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct FileSource {
     /// The underlying file
@@ -43,6 +54,7 @@ pub struct FileSource {
     stream: MediaStreamImpl,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FileSource {
     /// Create a new file source
     pub async fn new<P: AsRef<Path>>(
@@ -68,6 +80,7 @@ impl FileSource {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSource for FileSource {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {
@@ -98,6 +111,7 @@ impl MediaSource for FileSource {
 }
 
 /// A media source that reads from a network stream
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct NetworkSource {
     /// The URL of the stream
@@ -108,6 +122,7 @@ pub struct NetworkSource {
     client: reqwest::Client,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl NetworkSource {
     /// Create a new network source
     pub fn new(url: &str, format: crate::media::interface::MediaFormat) -> Self {
@@ -130,6 +145,7 @@ impl NetworkSource {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSource for NetworkSource {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {
@@ -167,6 +183,7 @@ impl MediaSource for NetworkSource {
 }
 
 /// A media source that reads from memory
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct MemorySource {
     /// The data to read from
@@ -177,6 +194,7 @@ pub struct MemorySource {
     stream: MediaStreamImpl,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MemorySource {
     /// Create a new memory source
     pub fn new(data: Vec<u8>, format: crate::media::interface::MediaFormat) -> Self {
@@ -199,6 +217,7 @@ impl MemorySource {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSource for MemorySource {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {

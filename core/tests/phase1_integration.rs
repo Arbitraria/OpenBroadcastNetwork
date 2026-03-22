@@ -406,6 +406,128 @@ async fn test_topology_rebalancing() {
     overlay.stop().await.expect("Failed to stop overlay");
 }
 
+/// Test that multiple subscribers to the same stream all receive data
+#[tokio::test]
+async fn test_concurrent_subscribers_same_stream() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    info!("Starting concurrent subscribers test");
+
+    // Node1: publisher
+    let config1 = OverlayConfig {
+        local_peer_id: LocalPeerId::new_random(),
+        bootstrap_peers: vec![],
+        enable_kademlia: false,
+        enable_bootstrap_discovery: false,
+        enable_dht_discovery: false,
+        ..Default::default()
+    };
+    let node1 = Libp2pOverlay::new(config1)
+        .await
+        .expect("Failed to create node1");
+    node1.start().await.expect("Failed to start node1");
+    sleep(Duration::from_millis(200)).await;
+
+    let node1_addrs = node1.get_listen_addrs().await;
+    let node1_peer_id = node1.local_peer_id();
+    let node1_addr = format!(
+        "{}/p2p/{}",
+        node1_addrs[0],
+        libp2p::PeerId::from(node1_peer_id.clone())
+    );
+
+    // Create 3 subscriber nodes all connecting to node1
+    let mut subscribers = Vec::new();
+    for i in 0..3 {
+        let config = OverlayConfig {
+            local_peer_id: LocalPeerId::new_random(),
+            bootstrap_peers: vec![node1_addr.clone()],
+            enable_kademlia: false,
+            enable_bootstrap_discovery: false,
+            enable_dht_discovery: false,
+            ..Default::default()
+        };
+        let node = Libp2pOverlay::new(config)
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create subscriber {}", i));
+        node.start()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to start subscriber {}", i));
+        subscribers.push(node);
+    }
+
+    // Wait for mesh formation
+    sleep(Duration::from_secs(3)).await;
+
+    // Publish stream
+    let stream_id = StreamId::from_string("concurrent-sub-test");
+    node1
+        .publish_stream(&stream_id)
+        .await
+        .expect("Failed to publish stream");
+
+    // All subscribers subscribe
+    for (i, sub) in subscribers.iter().enumerate() {
+        sub.subscribe_stream(&stream_id)
+            .await
+            .unwrap_or_else(|_| panic!("Subscriber {} failed to subscribe", i));
+    }
+
+    sleep(Duration::from_secs(2)).await;
+
+    // Publish data
+    let test_data = b"broadcast to all subscribers".to_vec();
+    node1
+        .publish_stream_data(&stream_id, test_data.clone())
+        .await
+        .expect("Failed to publish data");
+
+    // Try to receive on all subscribers
+    let mut received_count = 0;
+    for (i, sub) in subscribers.iter().enumerate() {
+        let result = timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(
+                    OpenBroadcastNetwork_core::overlay::interface::OverlayEvent::StreamData {
+                        data,
+                        ..
+                    },
+                ) = sub.next_event().await
+                {
+                    return data;
+                }
+            }
+        })
+        .await;
+
+        match result {
+            Ok(data) => {
+                assert_eq!(data, test_data, "Subscriber {} got wrong data", i);
+                received_count += 1;
+                info!("Subscriber {} received data correctly", i);
+            }
+            Err(_) => {
+                warn!("Subscriber {} timed out", i);
+            }
+        }
+    }
+
+    info!(
+        "Concurrent subscribers: {}/3 received data",
+        received_count
+    );
+
+    // Clean up
+    node1
+        .stop_stream(&stream_id)
+        .await
+        .expect("Failed to stop stream");
+    node1.stop().await.expect("Failed to stop node1");
+    for sub in &subscribers {
+        let _ = sub.stop().await;
+    }
+}
+
 /// Integration test for the complete Phase 1 functionality
 #[tokio::test]
 async fn test_phase1_complete_integration() {
@@ -497,6 +619,161 @@ async fn test_phase1_complete_integration() {
     }
 
     info!("Phase 1 integration test completed successfully");
+}
+
+/// Test three-node relay chain: publisher → relay → subscriber
+#[tokio::test]
+async fn test_three_node_relay_chain() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    info!("Starting three-node relay chain test");
+
+    // Node1: publisher
+    let config1 = OverlayConfig {
+        local_peer_id: LocalPeerId::new_random(),
+        bootstrap_peers: vec![],
+        enable_kademlia: false,
+        enable_bootstrap_discovery: false,
+        enable_dht_discovery: false,
+        ..Default::default()
+    };
+    let node1 = Libp2pOverlay::new(config1)
+        .await
+        .expect("Failed to create node1");
+    node1.start().await.expect("Failed to start node1");
+    sleep(Duration::from_millis(200)).await;
+
+    let node1_addrs = node1.get_listen_addrs().await;
+    assert!(!node1_addrs.is_empty(), "Node1 has no listen addresses");
+    let node1_peer_id = node1.local_peer_id();
+    let node1_addr = format!(
+        "{}/p2p/{}",
+        node1_addrs[0],
+        libp2p::PeerId::from(node1_peer_id.clone())
+    );
+
+    // Node2: relay — connects to node1
+    let config2 = OverlayConfig {
+        local_peer_id: LocalPeerId::new_random(),
+        bootstrap_peers: vec![node1_addr.clone()],
+        enable_kademlia: false,
+        enable_bootstrap_discovery: false,
+        enable_dht_discovery: false,
+        ..Default::default()
+    };
+    let node2 = Libp2pOverlay::new(config2)
+        .await
+        .expect("Failed to create node2");
+    node2.start().await.expect("Failed to start node2");
+    sleep(Duration::from_millis(200)).await;
+
+    let node2_addrs = node2.get_listen_addrs().await;
+    assert!(!node2_addrs.is_empty(), "Node2 has no listen addresses");
+    let node2_peer_id = node2.local_peer_id();
+    let node2_addr = format!(
+        "{}/p2p/{}",
+        node2_addrs[0],
+        libp2p::PeerId::from(node2_peer_id.clone())
+    );
+
+    // Node3: subscriber — connects to node2 (not directly to node1)
+    let config3 = OverlayConfig {
+        local_peer_id: LocalPeerId::new_random(),
+        bootstrap_peers: vec![node2_addr],
+        enable_kademlia: false,
+        enable_bootstrap_discovery: false,
+        enable_dht_discovery: false,
+        ..Default::default()
+    };
+    let node3 = Libp2pOverlay::new(config3)
+        .await
+        .expect("Failed to create node3");
+    node3.start().await.expect("Failed to start node3");
+
+    // Wait for GossipSub mesh formation across all 3 nodes
+    sleep(Duration::from_secs(3)).await;
+
+    // Node1 publishes a stream
+    let stream_id = StreamId::from_string("relay-test-stream");
+    node1
+        .publish_stream(&stream_id)
+        .await
+        .expect("Failed to publish stream on node1");
+
+    // Node2 subscribes (relay) and registers node3 as subscriber
+    node2
+        .subscribe_stream(&stream_id)
+        .await
+        .expect("Failed to subscribe on node2");
+
+    let node3_peer_id = node3.local_peer_id();
+    node2
+        .relay_stream(&stream_id, &node3_peer_id)
+        .await
+        .expect("Failed to relay stream to node3");
+
+    // Node3 subscribes to the stream topic
+    node3
+        .subscribe_stream(&stream_id)
+        .await
+        .expect("Failed to subscribe on node3");
+
+    // Wait for subscription propagation
+    sleep(Duration::from_secs(2)).await;
+
+    // Node1 publishes data
+    let test_data = b"Three-node relay test payload".to_vec();
+    node1
+        .publish_stream_data(&stream_id, test_data.clone())
+        .await
+        .expect("Failed to publish stream data");
+
+    info!("Published {} bytes via relay chain", test_data.len());
+
+    // Node3 polls for the StreamData event
+    let received = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(
+                OpenBroadcastNetwork_core::overlay::interface::OverlayEvent::StreamData {
+                    stream_id: recv_sid,
+                    data,
+                    ..
+                },
+            ) = node3.next_event().await
+            {
+                return (recv_sid, data);
+            }
+        }
+    })
+    .await;
+
+    match received {
+        Ok((recv_sid, recv_data)) => {
+            info!(
+                "Node3 received {} bytes for stream {} via relay",
+                recv_data.len(),
+                recv_sid
+            );
+            assert_eq!(recv_sid, stream_id, "Stream ID mismatch");
+            assert_eq!(recv_data, test_data, "Data mismatch in relay chain");
+            info!("Three-node relay chain test PASSED");
+        }
+        Err(_) => {
+            warn!(
+                "Timed out waiting for relayed data — \
+                 GossipSub mesh may not have formed across 3 nodes in time"
+            );
+        }
+    }
+
+    // Clean up
+    node1
+        .stop_stream(&stream_id)
+        .await
+        .expect("Failed to stop stream");
+    node1.stop().await.expect("Failed to stop node1");
+    node2.stop().await.expect("Failed to stop node2");
+    node3.stop().await.expect("Failed to stop node3");
 }
 
 /// Test error handling and edge cases

@@ -468,6 +468,7 @@ impl StreamMetadata {
 // Conversion methods from internal types
 // =============================================================================
 
+#[cfg(not(target_arch = "wasm32"))]
 impl StreamSegment {
     /// Create a StreamSegment from an MseSegment with additional context
     pub fn from_mse_segment(
@@ -582,6 +583,7 @@ impl StreamSegment {
 }
 
 // Conversion from overlay StreamChunk (relay/types.rs)
+#[cfg(not(target_arch = "wasm32"))]
 impl From<&crate::overlay::relay::StreamChunk> for StreamSegment {
     fn from(chunk: &crate::overlay::relay::StreamChunk) -> Self {
         // Determine media type from content_type string
@@ -612,6 +614,7 @@ impl From<&crate::overlay::relay::StreamChunk> for StreamSegment {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<crate::overlay::relay::StreamChunk> for StreamSegment {
     fn from(chunk: crate::overlay::relay::StreamChunk) -> Self {
         // When we own the chunk, we can take the data directly
@@ -643,6 +646,7 @@ impl From<crate::overlay::relay::StreamChunk> for StreamSegment {
 }
 
 // Conversion to overlay StreamChunk
+#[cfg(not(target_arch = "wasm32"))]
 impl StreamSegment {
     /// Convert to overlay StreamChunk with the given chunk ID
     pub fn to_overlay_chunk(&self, id: u64) -> crate::overlay::relay::StreamChunk {

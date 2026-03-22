@@ -94,7 +94,7 @@ pub enum OverlayError {
 
     /// Peer not found error
     #[error("Peer not found: {0}")]
-    PeerNotFound(libp2p::PeerId),
+    PeerNotFound(String),
 
     /// Already running error
     #[error("Operation not possible: already running")]
@@ -279,6 +279,12 @@ pub enum OverlayEvent {
         data: Vec<u8>,
     },
 
+    /// A list of available streams was received from the relay
+    StreamList {
+        /// Pairs of (stream_id, optional publisher)
+        streams: Vec<(String, Option<String>)>,
+    },
+
     /// The topology has changed
     TopologyChanged {
         /// Number of peers
@@ -360,7 +366,8 @@ pub struct OverlayStats {
 }
 
 /// The core interface for the overlay network
-#[async_trait::async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait Overlay {
     /// Start the overlay network
     async fn start(&self) -> Result<(), OverlayError>;

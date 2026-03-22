@@ -1019,6 +1019,254 @@ async fn run_p2p_receive_loop(
     }
 }
 
+// ── Relay WebSocket proxy for WASM browser clients ──────────────────
+
+/// JSON messages exchanged with WASM browsers over /ws/relay
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum RelayMessage {
+    #[serde(rename = "subscribe")]
+    Subscribe { stream_id: String },
+    #[serde(rename = "unsubscribe")]
+    Unsubscribe { stream_id: String },
+    #[serde(rename = "publish")]
+    Publish { stream_id: String },
+    #[serde(rename = "list_streams")]
+    ListStreams,
+    #[serde(rename = "stream_list")]
+    StreamList { streams: Vec<RelayStreamInfo> },
+    #[serde(rename = "error")]
+    Error { message: String },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct RelayStreamInfo {
+    stream_id: String,
+    publisher: Option<String>,
+}
+
+/// WebSocket handler for WASM browser relay connections
+async fn relay_websocket_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_relay_websocket(socket, state))
+}
+
+/// Handle a single WASM relay WebSocket connection
+async fn handle_relay_websocket(socket: WebSocket, state: AppState) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let sm = &state.stream_manager;
+
+    // Per-connection subscription: spawns a task that forwards P2P data
+    let mut relay_task: Option<tokio::task::JoinHandle<()>> = None;
+    let (binary_tx, mut binary_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (text_tx, mut text_rx) = mpsc::unbounded_channel::<String>();
+
+    // Spawn a task that forwards frames to the browser
+    let forward_handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Some(data) = binary_rx.recv() => {
+                    if ws_sender.send(Message::Binary(data)).await.is_err() {
+                        break;
+                    }
+                }
+                Some(text) = text_rx.recv() => {
+                    if ws_sender.send(Message::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+                else => break,
+            }
+        }
+    });
+
+    while let Some(Ok(msg)) = ws_receiver.next().await {
+        match msg {
+            Message::Text(text) => {
+                let parsed: Result<RelayMessage, _> = serde_json::from_str(&text);
+                match parsed {
+                    Ok(RelayMessage::Subscribe { stream_id }) => {
+                        info!(
+                            "WASM relay: subscribe to stream '{}'",
+                            stream_id
+                        );
+                        // Cancel any existing relay task
+                        if let Some(handle) = relay_task.take() {
+                            handle.abort();
+                        }
+
+                        // Start forwarding P2P data for this stream
+                        if let Some(ref overlay) = sm.overlay {
+                            let overlay = Arc::clone(overlay);
+                            let sid = stream_id.clone();
+                            let tx = binary_tx.clone();
+
+                            // Subscribe on the overlay
+                            let overlay_sid =
+                                OverlayStreamId::from_string(&sid);
+                            if let Err(e) =
+                                overlay.subscribe_stream(&overlay_sid).await
+                            {
+                                warn!(
+                                    "Relay subscribe failed: {}",
+                                    e
+                                );
+                            }
+
+                            // Send init segment if available
+                            {
+                                let init = sm.initialization_segment.lock().await;
+                                if let Some(ref data) = *init {
+                                    let _ = tx.send(data.clone());
+                                }
+                            }
+
+                            // Spawn task to forward overlay events
+                            relay_task = Some(tokio::spawn(async move {
+                                let target = OverlayStreamId::from_string(&sid);
+                                loop {
+                                    if let Some(event) =
+                                        overlay.next_event().await
+                                    {
+                                        if let OverlayEvent::StreamData {
+                                            stream_id: recv_id,
+                                            data,
+                                            ..
+                                        } = event
+                                        {
+                                            let recv_str =
+                                                String::from_utf8_lossy(
+                                                    recv_id.as_bytes(),
+                                                )
+                                                .to_string();
+                                            let target_str = target
+                                                .as_str()
+                                                .unwrap_or_default();
+                                            if recv_str == target_str {
+                                                if tx.send(data).is_err() {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        tokio::time::sleep(
+                                            Duration::from_millis(50),
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }));
+                        } else {
+                            // No overlay — subscribe to the broadcast channel
+                            let mut rx = sm.segment_sender.subscribe();
+                            let tx = binary_tx.clone();
+                            relay_task = Some(tokio::spawn(async move {
+                                while let Ok(segment) = rx.recv().await {
+                                    let wire: WireSegment = (&segment).into();
+                                    if let Ok(bytes) = wire.to_bytes() {
+                                        if tx.send(bytes).is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }));
+                        }
+                    }
+                    Ok(RelayMessage::Unsubscribe { stream_id }) => {
+                        info!(
+                            "WASM relay: unsubscribe from stream '{}'",
+                            stream_id
+                        );
+                        if let Some(handle) = relay_task.take() {
+                            handle.abort();
+                        }
+                    }
+                    Ok(RelayMessage::Publish { stream_id }) => {
+                        info!(
+                            "WASM relay: publish stream '{}'",
+                            stream_id
+                        );
+                        // Browser is publishing — announce stream
+                        if let Some(ref overlay) = sm.overlay {
+                            let sid =
+                                OverlayStreamId::from_string(&stream_id);
+                            if let Err(e) =
+                                overlay.publish_stream(&sid).await
+                            {
+                                warn!(
+                                    "Relay publish announce failed: {}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Ok(RelayMessage::ListStreams) => {
+                        let streams = if let Some(ref discovery) =
+                            sm.stream_discovery
+                        {
+                            discovery
+                                .list_streams()
+                                .await
+                                .iter()
+                                .map(|ann| RelayStreamInfo {
+                                    stream_id: ann.stream_id.to_string(),
+                                    publisher: Some(
+                                        String::from_utf8_lossy(
+                                            &ann.publisher_id,
+                                        )
+                                        .to_string(),
+                                    ),
+                                })
+                                .collect()
+                        } else {
+                            vec![]
+                        };
+
+                        let resp = RelayMessage::StreamList { streams };
+                        if let Ok(json) = serde_json::to_string(&resp) {
+                            let _ = text_tx.send(json);
+                        }
+                    }
+                    Ok(_) => {} // ignore other message types from client
+                    Err(e) => {
+                        warn!(
+                            "WASM relay: invalid JSON from client: {}",
+                            e
+                        );
+                    }
+                }
+            }
+            Message::Binary(data) => {
+                // Browser is publishing binary stream data
+                if let Some(ref overlay) = sm.overlay {
+                    if let Some(ref sid) = sm.stream_id {
+                        let overlay_sid = OverlayStreamId::from_string(
+                            sid.as_str().unwrap_or_default(),
+                        );
+                        if let Err(e) = overlay
+                            .publish_stream_data(&overlay_sid, data)
+                            .await
+                        {
+                            warn!("Relay publish data failed: {}", e);
+                        }
+                    }
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    // Clean up
+    if let Some(handle) = relay_task.take() {
+        handle.abort();
+    }
+    forward_handle.abort();
+    info!("WASM relay client disconnected");
+}
+
 /// Main web server implementation
 pub struct WebServer {
     config: WebServerConfig,
@@ -1065,6 +1313,7 @@ impl WebServer {
     async fn create_app(&self) -> Router {
         let mut router = Router::new()
             .route("/stream", get(websocket_handler))
+            .route("/ws/relay", get(relay_websocket_handler))
             .route("/webrtc/signal", get(webrtc_signaling_handler))
             .route("/api/stream/start", post(start_stream_handler))
             .route("/api/stream/stop", post(stop_stream_handler))
@@ -1519,36 +1768,67 @@ async fn handle_websocket(
         }
     }
 
-    // Spawn task to handle incoming messages from client
+    // Shared flag so the reader task can signal the writer to stop
+    let client_disconnected = Arc::new(tokio::sync::Notify::new());
+
+    // Spawn task to handle incoming messages from client (reader side)
     let client_id_clone = client_id.clone();
+    let disconnect_notify = client_disconnected.clone();
     tokio::spawn(async move {
         while let Some(message) = receiver.next().await {
             match message {
                 Ok(Message::Text(text)) => {
-                    debug!("Received text from client {}: {}", client_id_clone, text);
-                    // Handle client control messages here
+                    debug!(
+                        "Received text from client {}: {}",
+                        client_id_clone, text
+                    );
                 }
                 Ok(Message::Binary(_)) => {
-                    debug!("Received binary data from client {}", client_id_clone);
-                    // Handle binary data if needed
+                    debug!(
+                        "Received binary data from client {}",
+                        client_id_clone
+                    );
+                }
+                Ok(Message::Pong(_)) => {
+                    debug!("Pong from client {}", client_id_clone);
                 }
                 Ok(Message::Close(_)) => {
                     info!("Client {} disconnected", client_id_clone);
                     break;
                 }
                 Err(e) => {
-                    error!("WebSocket error for client {}: {}", client_id_clone, e);
+                    warn!(
+                        "WebSocket read error for client {}: {} — \
+                         cleaning up connection",
+                        client_id_clone, e
+                    );
                     break;
                 }
                 _ => {}
             }
         }
+        // Signal the writer loop that this client is gone
+        disconnect_notify.notify_one();
     });
+
+    // Backpressure / drop tracking
+    let mut dropped_segments: u64 = 0;
+    let mut last_heartbeat = tokio::time::Instant::now();
+    let heartbeat_interval = tokio::time::Duration::from_secs(30);
 
     // Handle outgoing stream segments to client
     // Convert StreamSegment → JSON at the WebSocket boundary
     loop {
         tokio::select! {
+            // Client reader task signalled disconnect
+            _ = client_disconnected.notified() => {
+                info!(
+                    "Client {} reader closed — stopping writer \
+                     (dropped {} segments)",
+                    client_id, dropped_segments
+                );
+                break;
+            }
             segment_result = segment_receiver.recv() => {
                 match segment_result {
                     Ok(segment) => {
@@ -1568,13 +1848,19 @@ async fn handle_websocket(
                                     data: ChunkInfo {
                                         chunk_type,
                                         size: segment.data.len(),
-                                        timestamp: segment.pts_ms(), // Convert us → ms
+                                        timestamp: segment.pts_ms(),
                                     },
                                 };
 
                                 if let Ok(info_message) = serde_json::to_string(&chunk_info) {
                                     if sender.send(Message::Text(info_message)).await.is_err() {
-                                        // Client disconnected, exit gracefully
+                                        dropped_segments += 1;
+                                        warn!(
+                                            "Client {} send failed — \
+                                             removing dead connection \
+                                             (total dropped: {})",
+                                            client_id, dropped_segments
+                                        );
                                         break;
                                     }
                                 }
@@ -1597,7 +1883,13 @@ async fn handle_websocket(
 
                                 if let Ok(info_message) = serde_json::to_string(&chunk_info) {
                                     if sender.send(Message::Text(info_message)).await.is_err() {
-                                        // Client disconnected, exit gracefully
+                                        dropped_segments += 1;
+                                        warn!(
+                                            "Client {} send failed — \
+                                             removing dead connection \
+                                             (total dropped: {})",
+                                            client_id, dropped_segments
+                                        );
                                         break;
                                     }
                                 }
@@ -1641,9 +1933,25 @@ async fn handle_websocket(
                         };
 
                         if sender.send(message).await.is_err() {
-                            // Client disconnected, exit gracefully
+                            dropped_segments += 1;
+                            warn!(
+                                "Client {} send failed — removing dead \
+                                 connection (total dropped: {})",
+                                client_id, dropped_segments
+                            );
                             break;
                         }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        dropped_segments += n;
+                        warn!(
+                            "Client {} lagged: skipped {} segments \
+                             (total dropped: {})",
+                            client_id, n, dropped_segments
+                        );
+                        // Continue — the receiver auto-advances past
+                        // the gap so we'll get the next available segment
+                        continue;
                     }
                     Err(_) => {
                         // Channel closed, exit gracefully
@@ -1651,8 +1959,25 @@ async fn handle_websocket(
                     }
                 }
             }
-            // Check if we should signal end of stream after a timeout
+            // Heartbeat ping + end-of-stream check
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
+                // Send keepalive ping if interval has elapsed
+                let now = tokio::time::Instant::now();
+                if now.duration_since(last_heartbeat) >= heartbeat_interval {
+                    if sender.send(Message::Ping(vec![]))
+                        .await
+                        .is_err()
+                    {
+                        warn!(
+                            "Heartbeat ping failed for client {} — \
+                             removing dead connection",
+                            client_id
+                        );
+                        break;
+                    }
+                    last_heartbeat = now;
+                }
+
                 // If no more data is being streamed, send end of stream signal
                 if !*state.stream_manager.is_streaming.lock().await {
                     let end_signal = ClientMessage::ChunkInfo {
@@ -1672,6 +1997,13 @@ async fn handle_websocket(
                 }
             }
         }
+    }
+
+    if dropped_segments > 0 {
+        info!(
+            "Client {} total dropped segments: {}",
+            client_id, dropped_segments
+        );
     }
 
     // Clean up dynamic P2P listener if one was spawned

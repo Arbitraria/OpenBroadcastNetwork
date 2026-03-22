@@ -3,17 +3,25 @@
 //! This module provides functionality for managing media streams, including
 //! creating, reading, and writing media data.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::Mutex;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::media::buffer::{BufferConfig, MediaBuffer};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::media::codec::{AudioCodec, Codec, CodecRegistry, VideoCodec};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::media::interface::{MediaError, MediaSink, MediaSource, MediaStream};
 
 /// Implementation of a media stream that can be read from or written to
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct MediaStreamImpl {
     /// The underlying media stream
@@ -28,6 +36,7 @@ pub struct MediaStreamImpl {
     pub metadata: crate::media::interface::MediaStream,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MediaStreamImpl {
     /// Create a new media stream
     pub fn new(
@@ -144,6 +153,7 @@ impl MediaStreamImpl {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSource for MediaStreamImpl {
     async fn next_chunk(&mut self) -> Result<Vec<u8>, MediaError> {
@@ -159,6 +169,7 @@ impl MediaSource for MediaStreamImpl {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSink for MediaStreamImpl {
     async fn write_chunk(&mut self, data: &[u8]) -> Result<(), MediaError> {

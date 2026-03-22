@@ -1,9 +1,22 @@
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::warn;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use instant::Instant;
+
+use crate::media::wire_format::WireSegment;
 use crate::pubsub::message::{Message, SerializablePeerId};
 use crate::pubsub::topic::TopicId;
+
+// On native, PeerId is libp2p::PeerId. On wasm, use String as a stand-in.
+#[cfg(not(target_arch = "wasm32"))]
 use libp2p::PeerId;
+#[cfg(target_arch = "wasm32")]
+type PeerId = String;
 
 /// Result of message validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +35,8 @@ pub enum ValidationResult {
 }
 
 /// Interface for validating messages
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait MessageValidator: Send + Sync {
     /// Synchronously validate a message (fast path)
     ///
@@ -126,7 +140,8 @@ impl BasicValidator {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageValidator for BasicValidator {
     fn validate(&self, message: &Message, _source: Option<&PeerId>) -> ValidationResult {
         // Check message size
@@ -163,6 +178,154 @@ impl MessageValidator for BasicValidator {
     }
 }
 
+/// Validator for stream data messages.
+///
+/// Validates wire format deserialization, enforces per-source rate limits,
+/// and detects sequence gaps/duplicates.
+pub struct StreamDataValidator {
+    /// Maximum messages per second per source peer
+    max_messages_per_second: usize,
+    /// Per-source rate tracking: (message count, window start)
+    rate_tracker: std::sync::Mutex<HashMap<String, (usize, Instant)>>,
+    /// Per-stream last-seen sequence number for gap detection
+    sequence_tracker: std::sync::Mutex<HashMap<String, u64>>,
+}
+
+impl StreamDataValidator {
+    /// Create a new stream data validator
+    pub fn new(max_messages_per_second: usize) -> Self {
+        Self {
+            max_messages_per_second,
+            rate_tracker: std::sync::Mutex::new(HashMap::new()),
+            sequence_tracker: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Check if a topic looks like a stream data topic
+    fn is_stream_data_topic(topic: &TopicId) -> bool {
+        topic.0.starts_with("stream/") && topic.0.ends_with("/data")
+    }
+
+    /// Check rate limit for a source peer. Returns true if allowed.
+    fn check_rate_limit(&self, source_id: &str) -> bool {
+        let mut tracker = self.rate_tracker.lock().unwrap();
+        let now = Instant::now();
+
+        let entry = tracker
+            .entry(source_id.to_string())
+            .or_insert((0, now));
+
+        // Reset window if more than 1 second has passed
+        if now.duration_since(entry.1).as_secs() >= 1 {
+            *entry = (1, now);
+            return true;
+        }
+
+        entry.0 += 1;
+        entry.0 <= self.max_messages_per_second
+    }
+
+    /// Track sequence number, warn on gaps/duplicates.
+    /// Returns Ignore for duplicates, Accept otherwise (gaps are logged).
+    fn check_sequence(
+        &self,
+        stream_key: &str,
+        sequence: u64,
+    ) -> ValidationResult {
+        let mut tracker = self.sequence_tracker.lock().unwrap();
+        if let Some(last_seq) = tracker.get(stream_key) {
+            if sequence == *last_seq {
+                return ValidationResult::Ignore; // duplicate
+            }
+            if sequence < *last_seq {
+                warn!(
+                    "Out-of-order segment: got seq {} after {} for {}",
+                    sequence, last_seq, stream_key
+                );
+            } else if sequence > last_seq + 1 {
+                warn!(
+                    "Sequence gap: expected {} got {} for {}",
+                    last_seq + 1,
+                    sequence,
+                    stream_key
+                );
+            }
+        }
+        tracker.insert(stream_key.to_string(), sequence);
+        ValidationResult::Accept
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl MessageValidator for StreamDataValidator {
+    fn validate(
+        &self,
+        message: &Message,
+        source: Option<&PeerId>,
+    ) -> ValidationResult {
+        // Only validate stream data topics
+        if !Self::is_stream_data_topic(&message.topic) {
+            return ValidationResult::Accept;
+        }
+
+        // Rate limit check
+        let source_id = source
+            .map(|p| p.to_string())
+            .or_else(|| message.publisher.as_ref().map(|p| p.0.clone()))
+            .unwrap_or_default();
+
+        if !source_id.is_empty() && !self.check_rate_limit(&source_id) {
+            warn!("Rate limit exceeded for source {}", source_id);
+            return ValidationResult::Reject;
+        }
+
+        // Try to deserialize as WireSegment to validate structure
+        let payload_bytes = message.payload.as_bytes();
+        match WireSegment::from_bytes(&payload_bytes) {
+            Ok(wire) => {
+                // Check version compatibility
+                if !wire.is_compatible() {
+                    warn!(
+                        "Incompatible wire format version: {}",
+                        wire.version
+                    );
+                    return ValidationResult::Reject;
+                }
+
+                // Validate media type is known
+                if wire.media_type_enum().is_none() {
+                    warn!("Unknown media type: {}", wire.media_type);
+                    return ValidationResult::Reject;
+                }
+
+                // Check sequence continuity
+                let stream_key = format!(
+                    "{}:{}",
+                    hex::encode(&wire.stream_id),
+                    wire.track_id
+                );
+                self.check_sequence(&stream_key, wire.sequence)
+            }
+            Err(e) => {
+                warn!(
+                    "Invalid WireSegment on stream data topic: {}",
+                    e
+                );
+                ValidationResult::Reject
+            }
+        }
+    }
+
+    async fn async_validate(
+        &self,
+        _message: Arc<Message>,
+        _source: Option<PeerId>,
+    ) -> ValidationResult {
+        ValidationResult::Accept
+    }
+}
+
 /// Validator that delegates to multiple other validators
 #[derive(Default)]
 pub struct CompositeValidator {
@@ -183,7 +346,8 @@ impl CompositeValidator {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageValidator for CompositeValidator {
     fn validate(&self, message: &Message, source: Option<&PeerId>) -> ValidationResult {
         let mut pending = false;
@@ -216,7 +380,7 @@ impl MessageValidator for CompositeValidator {
                 _ => {
                     // Continue with async validation for this validator
                     let result = validator
-                        .async_validate(message.clone(), source)
+                        .async_validate(message.clone(), source.clone())
                         .await;
                     match result {
                         ValidationResult::Reject => return ValidationResult::Reject,

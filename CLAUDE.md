@@ -225,17 +225,17 @@ The libp2p refactoring has landed on `main`. The codebase uses a modular libp2p-
 - [x] Geo-aware rebalancing
 - [x] Relay node CLI with logging
 
-### Phase 2 (In Progress): Streaming Pipeline
+### Phase 2 (Complete): Streaming Pipeline
 - [x] Audio/video chunking and distribution (MP4 parsing, fMP4 fragmentation)
 - [x] Web-based viewer with WebSocket/MSE
-- [ ] WebRTC transport integration
-- [ ] WASM integration
-- [ ] Stream validation
+- [x] WebRTC transport integration (browser-native via webrtc-client.js + signaling server)
+- [x] Stream validation (content hash integrity, composite validators, keypair signing)
 
 ### Phase 3: UI and Tooling
-- [ ] CLI broadcasting tool
-- [ ] Web UI for viewing streams
-- [ ] Stream registry and discovery
+- [x] CLI broadcasting tool (`publish` subcommand wrapping web-viewer --publish)
+- [x] Web UI for viewing streams (stream browser sidebar in main viewer)
+- [x] Stream registry and discovery (`list-streams` queries running node's HTTP API)
+- [x] WASM integration (dual-target core + ui crate with relay proxy)
 
 ### Future Phases
 - Moderation and privacy features

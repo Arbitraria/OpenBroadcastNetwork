@@ -531,7 +531,7 @@ impl RelayNode {
                 info!("Removed subscriber {} from stream {}", peer_id, stream_id);
                 Ok(())
             } else {
-                Err(OverlayError::PeerNotFound(peer_id))
+                Err(OverlayError::PeerNotFound(peer_id.to_string()))
             }
         } else {
             Err(OverlayError::StreamNotFound(stream_id))

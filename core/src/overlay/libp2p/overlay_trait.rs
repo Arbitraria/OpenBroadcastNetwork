@@ -166,11 +166,9 @@ impl Overlay for Libp2pOverlay {
     ) -> Result<(), OverlayError> {
         debug!("Relaying stream data for {} to {}", stream_id, target);
 
-        // Convert local peer ID to libp2p peer ID for relay operations (zero-cost)
-        let _target_libp2p = to_libp2p_peer_id(target);
-
-        // For now, this is a stub implementation
-        // Actual implementation should relay from stream_id to target
+        let relay_node = self.relay.relay_node();
+        let target_libp2p = to_libp2p_peer_id(target);
+        relay_node.add_subscriber(stream_id, target_libp2p).await?;
 
         Ok(())
     }

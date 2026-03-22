@@ -5,6 +5,12 @@ members = [
   "ui",
   "proto"
 ]
+# Default members exclude ui/ (wasm-only crate, build with: cargo check --target wasm32-unknown-unknown -p OpenBroadcastNetwork-ui)
+default-members = [
+  "core",
+  "node",
+  "proto"
+]
 resolver = "2"
 
 

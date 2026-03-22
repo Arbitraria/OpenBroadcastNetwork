@@ -1,11 +1,21 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use instant::Instant;
 
 use crate::pubsub::message::MessageId;
 use crate::pubsub::topic::TopicId;
+
+// On native, PeerId is libp2p::PeerId. On wasm, use String as a stand-in.
+#[cfg(not(target_arch = "wasm32"))]
 use libp2p::PeerId;
+#[cfg(target_arch = "wasm32")]
+type PeerId = String;
 
 /// Time window for calculating rates
 const TIME_WINDOW_SECONDS: u64 = 60;
@@ -153,7 +163,7 @@ impl PubSubMetrics {
         if let Some(peer_id) = peer_id {
             if let Ok(mut peer_metrics) = self.peer_metrics.write() {
                 let metrics = peer_metrics
-                    .entry(*peer_id)
+                    .entry(peer_id.clone())
                     .or_insert_with(PeerMetrics::new);
 
                 metrics.messages_received.fetch_add(1, Ordering::Relaxed);
@@ -186,7 +196,7 @@ impl PubSubMetrics {
         if let Some(peer_id) = peer_id {
             if let Ok(mut peer_metrics) = self.peer_metrics.write() {
                 let metrics = peer_metrics
-                    .entry(*peer_id)
+                    .entry(peer_id.clone())
                     .or_insert_with(PeerMetrics::new);
 
                 metrics.messages_sent.fetch_add(1, Ordering::Relaxed);

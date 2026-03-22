@@ -301,9 +301,15 @@ mod tests {
 
         async fn connect_peer(
             &self,
-            _addr: &str,
+            addr: &str,
         ) -> Result<crate::overlay::peer::PeerInfo, OverlayError> {
-            unimplemented!()
+            Ok(crate::overlay::peer::PeerInfo {
+                id: crate::overlay::peer::LocalPeerId::new_random(),
+                addresses: vec![addr.to_string()],
+                role: crate::overlay::peer::PeerRole::Unknown,
+                status: crate::overlay::peer::ConnectionStatus::Connected,
+                ..Default::default()
+            })
         }
 
         async fn disconnect_peer(

@@ -14,9 +14,14 @@
 //! the collection process is designed to have minimal overhead on the main application.
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::RwLock;
 
 /// Configuration for the telemetry and metrics system
@@ -158,6 +163,7 @@ impl Histogram {
 /// The TelemetryManager provides a thread-safe interface for components to
 /// register and update metrics from anywhere in the application, with minimal
 /// impact on performance.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct TelemetryManager {
     /// Configuration
     config: TelemetryConfig,
@@ -172,6 +178,7 @@ pub struct TelemetryManager {
     histograms: Arc<RwLock<HashMap<String, Histogram>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl TelemetryManager {
     /// Create a new telemetry manager with the given configuration
     pub fn new(config: TelemetryConfig) -> Self {

@@ -1,27 +1,36 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
+#[cfg(not(target_arch = "wasm32"))]
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::pubsub::topic::TopicId;
-use libp2p::PeerId;
 
 /// Serializable wrapper for PeerId
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SerializablePeerId(pub String);
 
-impl From<PeerId> for SerializablePeerId {
-    fn from(peer_id: PeerId) -> Self {
+#[cfg(not(target_arch = "wasm32"))]
+impl From<libp2p::PeerId> for SerializablePeerId {
+    fn from(peer_id: libp2p::PeerId) -> Self {
         SerializablePeerId(peer_id.to_string())
     }
 }
 
-impl TryFrom<SerializablePeerId> for PeerId {
+#[cfg(not(target_arch = "wasm32"))]
+impl TryFrom<SerializablePeerId> for libp2p::PeerId {
     type Error = String;
 
     fn try_from(peer_id: SerializablePeerId) -> Result<Self, Self::Error> {
-        PeerId::from_str(&peer_id.0).map_err(|e| format!("Failed to parse PeerId: {}", e))
+        libp2p::PeerId::from_str(&peer_id.0)
+            .map_err(|e| format!("Failed to parse PeerId: {}", e))
+    }
+}
+
+impl From<String> for SerializablePeerId {
+    fn from(s: String) -> Self {
+        SerializablePeerId(s)
     }
 }
 
@@ -188,9 +197,17 @@ impl Message {
         }
     }
 
-    /// Set the publisher of the message
-    pub fn with_publisher(mut self, publisher: PeerId) -> Self {
+    /// Set the publisher of the message (native: accepts libp2p::PeerId)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_publisher(mut self, publisher: libp2p::PeerId) -> Self {
         self.publisher = Some(publisher.into());
+        self
+    }
+
+    /// Set the publisher of the message (wasm: accepts String)
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_publisher(mut self, publisher: String) -> Self {
+        self.publisher = Some(SerializablePeerId(publisher));
         self
     }
 

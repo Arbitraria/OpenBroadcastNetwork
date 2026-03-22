@@ -27,7 +27,9 @@ use crate::pubsub::interface::{AsyncPubSub, PubSub, PubSubConfig, PubSubError, P
 use crate::pubsub::message::{Message, MessageId};
 use crate::pubsub::metrics::PubSubMetrics;
 use crate::pubsub::topic::{Topic, TopicId};
-use crate::pubsub::validation::{BasicValidator, MessageValidator, ValidationResult};
+use crate::pubsub::validation::{
+    BasicValidator, CompositeValidator, MessageValidator, StreamDataValidator, ValidationResult,
+};
 
 /// Configuration for GossipSub
 #[derive(Debug, Clone)]
@@ -143,10 +145,14 @@ impl GossipSubService {
 
     /// Create a new GossipSub service with custom configuration
     pub fn with_config(keypair: Keypair, config: GossipSubConfig) -> Self {
+        let mut composite = CompositeValidator::new();
+        composite.add_validator(BasicValidator::new());
+        composite.add_validator(StreamDataValidator::new(100));
+
         Self {
             config,
             topics: RwLock::new(HashMap::new()),
-            validator: Arc::new(BasicValidator::new()),
+            validator: Arc::new(composite),
             metrics: Arc::new(PubSubMetrics::new()),
             event_sender: Mutex::new(None),
             keypair,

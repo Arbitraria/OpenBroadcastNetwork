@@ -3,22 +3,28 @@
 //! This module provides various implementations of the `MediaSink` trait
 //! for different types of media destinations.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::fs::File;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::io::AsyncWriteExt;
 
 use crate::media::interface::{MediaError, MediaSink};
 
 /// A media sink that writes to a file
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct FileSink {
     /// The underlying file
     file: File,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FileSink {
     /// Create a new file sink
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, MediaError> {
@@ -30,6 +36,7 @@ impl FileSink {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSink for FileSink {
     async fn write_chunk(&mut self, data: &[u8]) -> Result<(), MediaError> {
@@ -49,12 +56,14 @@ impl MediaSink for FileSink {
 }
 
 /// A media sink that writes to memory
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct MemorySink {
     /// The data being written to
     data: Arc<tokio::sync::Mutex<Vec<u8>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MemorySink {
     /// Create a new memory sink
     pub fn new() -> Self {
@@ -71,6 +80,7 @@ impl MemorySink {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl MediaSink for MemorySink {
     async fn write_chunk(&mut self, data: &[u8]) -> Result<(), MediaError> {
@@ -85,6 +95,7 @@ impl MediaSink for MemorySink {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for MemorySink {
     fn default() -> Self {
         Self::new()

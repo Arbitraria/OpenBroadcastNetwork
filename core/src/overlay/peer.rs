@@ -6,20 +6,29 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+// On native, use std::time::Instant directly.
+// On wasm32, use instant::Instant which polyfills via performance.now().
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use instant::Instant;
+
+// ── Native LocalPeerId (wraps libp2p::PeerId) ──────────────────────
+
+#[cfg(not(target_arch = "wasm32"))]
 /// A unique peer identifier
 ///
-/// This is a wrapper around libp2p::PeerId that provides zero-cost conversions
-/// and custom serialization. By wrapping PeerId directly (instead of Vec<u8>),
-/// we avoid fallible conversions and expensive byte copies.
+/// This is a wrapper around libp2p::PeerId that provides zero-cost
+/// conversions and custom serialization.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LocalPeerId(pub libp2p::PeerId);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LocalPeerId {
     /// Create a new random peer ID
     pub fn new_random() -> Self {
-        // Generate a random Ed25519 keypair and derive peer ID from it
         let keypair = libp2p::identity::Keypair::generate_ed25519();
         Self(keypair.public().to_peer_id())
     }
@@ -69,47 +78,49 @@ impl LocalPeerId {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Debug for LocalPeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "LocalPeerId({})", self.to_base58())
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Display for LocalPeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_base58())
     }
 }
 
-// Zero-cost conversion from libp2p::PeerId to LocalPeerId
+#[cfg(not(target_arch = "wasm32"))]
 impl From<libp2p::PeerId> for LocalPeerId {
     fn from(peer_id: libp2p::PeerId) -> Self {
         Self(peer_id)
     }
 }
 
-// Zero-cost conversion from &libp2p::PeerId to LocalPeerId
+#[cfg(not(target_arch = "wasm32"))]
 impl From<&libp2p::PeerId> for LocalPeerId {
     fn from(peer_id: &libp2p::PeerId) -> Self {
         Self(*peer_id)
     }
 }
 
-// Zero-cost conversion from LocalPeerId to libp2p::PeerId (infallible now!)
+#[cfg(not(target_arch = "wasm32"))]
 impl From<LocalPeerId> for libp2p::PeerId {
     fn from(peer_id: LocalPeerId) -> Self {
         peer_id.0
     }
 }
 
-// Zero-cost conversion from &LocalPeerId to libp2p::PeerId (infallible now!)
+#[cfg(not(target_arch = "wasm32"))]
 impl From<&LocalPeerId> for libp2p::PeerId {
     fn from(peer_id: &LocalPeerId) -> Self {
         peer_id.0
     }
 }
 
-// Custom serialization - serialize as base58 string for JSON compatibility
+#[cfg(not(target_arch = "wasm32"))]
 impl Serialize for LocalPeerId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -119,7 +130,7 @@ impl Serialize for LocalPeerId {
     }
 }
 
-// Custom deserialization - deserialize from base58 string
+#[cfg(not(target_arch = "wasm32"))]
 impl<'de> Deserialize<'de> for LocalPeerId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -129,6 +140,95 @@ impl<'de> Deserialize<'de> for LocalPeerId {
         s.parse::<libp2p::PeerId>()
             .map(Self)
             .map_err(serde::de::Error::custom)
+    }
+}
+
+// ── WASM LocalPeerId (raw bytes + bs58 encoding) ───────────────────
+
+#[cfg(target_arch = "wasm32")]
+/// A unique peer identifier (WASM variant)
+///
+/// Uses raw bytes with bs58 encoding instead of libp2p::PeerId.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct LocalPeerId(pub Vec<u8>);
+
+#[cfg(target_arch = "wasm32")]
+impl LocalPeerId {
+    /// Create a new random peer ID
+    pub fn new_random() -> Self {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut bytes = vec![0u8; 32];
+        rng.fill(&mut bytes[..]);
+        Self(bytes)
+    }
+
+    /// Create a peer ID from a byte slice (fallible)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        Ok(Self(bytes.to_vec()))
+    }
+
+    /// Create a peer ID from a base58 string
+    pub fn from_base58(s: &str) -> Result<Self, String> {
+        bs58::decode(s)
+            .into_vec()
+            .map(Self)
+            .map_err(|e| format!("Failed to decode base58: {}", e))
+    }
+
+    /// Get the bytes representation of the peer ID
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    /// Convert to a base58 string
+    pub fn to_base58(&self) -> String {
+        bs58::encode(&self.0).into_string()
+    }
+
+    /// Get a shortened version of the peer ID for display
+    pub fn short_id(&self) -> String {
+        let b58 = self.to_base58();
+        if b58.len() <= 10 {
+            b58
+        } else {
+            format!("{}..", &b58[0..7])
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl fmt::Debug for LocalPeerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LocalPeerId({})", self.to_base58())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl fmt::Display for LocalPeerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_base58())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Serialize for LocalPeerId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_base58())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<'de> Deserialize<'de> for LocalPeerId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Self::from_base58(&s).map_err(serde::de::Error::custom)
     }
 }
 

@@ -49,18 +49,48 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Sign data with a private key
+/// Sign data with a private key (deprecated stub)
+#[deprecated(note = "Use sign_with_keypair instead")]
 pub fn sign(_private_key: &[u8], _data: &[u8]) -> Result<Vec<u8>, CryptoError> {
-    // Implementation depends on the cryptographic library you're using
-    // This is a placeholder implementation
     Ok(vec![])
 }
 
-/// Verify a signature with a public key
-pub fn verify(_public_key: &[u8], _data: &[u8], _signature: &[u8]) -> Result<bool, CryptoError> {
-    // Implementation depends on the cryptographic library you're using
-    // This is a placeholder implementation
+/// Verify a signature with a public key (deprecated stub)
+#[deprecated(note = "Use verify_with_public_key instead")]
+pub fn verify(
+    _public_key: &[u8],
+    _data: &[u8],
+    _signature: &[u8],
+) -> Result<bool, CryptoError> {
     Ok(false)
+}
+
+/// Compute a blake3 hash suitable for signing (32 bytes)
+pub fn hash_for_signing(data: &[u8]) -> [u8; 32] {
+    *blake3::hash(data).as_bytes()
+}
+
+/// Sign data using a libp2p identity keypair
+#[cfg(not(target_arch = "wasm32"))]
+pub fn sign_with_keypair(
+    keypair: &libp2p::identity::Keypair,
+    data: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    let hash = hash_for_signing(data);
+    keypair
+        .sign(&hash)
+        .map_err(|e| CryptoError::from(format!("Signing failed: {}", e)))
+}
+
+/// Verify a signature using a libp2p identity public key
+#[cfg(not(target_arch = "wasm32"))]
+pub fn verify_with_public_key(
+    pubkey: &libp2p::identity::PublicKey,
+    data: &[u8],
+    signature: &[u8],
+) -> Result<bool, CryptoError> {
+    let hash = hash_for_signing(data);
+    Ok(pubkey.verify(&hash, signature))
 }
 
 #[cfg(test)]
@@ -86,5 +116,40 @@ mod tests {
         // Test that different inputs produce different hashes
         let hash2 = sha256(b"hello, world!");
         assert_ne!(hash, hash2);
+    }
+
+    #[test]
+    fn test_hash_for_signing() {
+        let hash = hash_for_signing(b"test data");
+        assert_eq!(hash.len(), 32);
+
+        let hash2 = hash_for_signing(b"different data");
+        assert_ne!(hash, hash2);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_sign_and_verify_with_keypair() {
+        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        let data = b"hello, signed world";
+
+        let signature = sign_with_keypair(&keypair, data).unwrap();
+        assert!(!signature.is_empty());
+
+        let pubkey = keypair.public();
+        let valid = verify_with_public_key(&pubkey, data, &signature).unwrap();
+        assert!(valid);
+
+        // Tampered data should fail
+        let invalid =
+            verify_with_public_key(&pubkey, b"tampered", &signature).unwrap();
+        assert!(!invalid);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_stubs_compile() {
+        let _ = sign(&[], &[]);
+        let _ = verify(&[], &[], &[]);
     }
 }
