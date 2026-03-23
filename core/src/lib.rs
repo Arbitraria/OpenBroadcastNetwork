@@ -22,6 +22,9 @@ pub mod telemetry;
 /// Peer discovery mechanisms (native only — requires libp2p + tokio)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod discovery;
+/// Per-node moderation: peer blocking, stream flagging (native only)
+#[cfg(not(target_arch = "wasm32"))]
+pub mod moderation;
 /// Network transport layer implementations (native only)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod transport;
