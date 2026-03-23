@@ -33,6 +33,10 @@ pub struct RelayConfig {
     pub relay_queue_size: usize,
     /// Timeout for relay operations in milliseconds
     pub relay_timeout_ms: u64,
+    /// Enable structured relay logging for each chunk
+    pub enable_relay_logging: bool,
+    /// Enable hop-removal anonymization (strip publisher peer ID)
+    pub enable_hop_removal: bool,
 }
 
 impl Default for RelayConfig {
@@ -51,6 +55,8 @@ impl Default for RelayConfig {
             relay_buffer_size: 100,
             relay_queue_size: 1000,
             relay_timeout_ms: 5000,
+            enable_relay_logging: true,
+            enable_hop_removal: true,
         }
     }
 }

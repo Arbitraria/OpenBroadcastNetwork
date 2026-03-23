@@ -188,6 +188,9 @@ impl RelayNode {
             let stats = self.stats.clone();
             let chunk_handler = self.chunk_handler.clone();
             let max_buffer_size = self.config.max_buffer_size;
+            let enable_relay_logging = self.config.enable_relay_logging;
+            let enable_hop_removal = self.config.enable_hop_removal;
+            let local_peer_id = self.local_peer_id;
             let running = self.running.clone();
 
             let task = tokio::spawn(async move {
@@ -203,6 +206,9 @@ impl RelayNode {
                         max_buffer_size,
                         &chunk_handler,
                         &stats,
+                        enable_relay_logging,
+                        enable_hop_removal,
+                        local_peer_id,
                     )
                     .await;
 
@@ -223,6 +229,9 @@ impl RelayNode {
             let chunk_handler = self.chunk_handler.clone();
             let running = self.running.clone();
             let max_buffer_size = self.config.max_buffer_size;
+            let msg_enable_relay_logging = self.config.enable_relay_logging;
+            let msg_enable_hop_removal = self.config.enable_hop_removal;
+            let msg_local_peer_id = self.local_peer_id;
 
             let task = tokio::spawn(async move {
                 while let Some(msg) = rx.recv().await {
@@ -268,6 +277,9 @@ impl RelayNode {
                                 max_buffer_size,
                                 &chunk_handler,
                                 &stats,
+                                msg_enable_relay_logging,
+                                msg_enable_hop_removal,
+                                msg_local_peer_id,
                             )
                             .await;
                         }
@@ -383,19 +395,26 @@ impl RelayNode {
     }
 
     /// Process a chunk (internal implementation)
+    #[allow(clippy::too_many_arguments)]
     async fn process_chunk_internal(
         streams: &RwLock<HashMap<StreamId, StreamRelay>>,
         chunk: StreamChunk,
         max_buffer_size: usize,
         chunk_handler: &Arc<RwLock<Option<ChunkHandlerFn>>>,
         stats: &Arc<RwLock<RelayStats>>,
+        enable_relay_logging: bool,
+        enable_hop_removal: bool,
+        local_peer_id: PeerId,
     ) -> Result<(), OverlayError> {
         let stream_id = chunk.stream_id.clone();
 
-        // Record stats
+        // Record per-stream stats
         {
             let mut stats_guard = stats.write().await;
-            stats_guard.record_chunk(chunk.data.len());
+            stats_guard.record_chunk_for_stream(
+                chunk.data.len(),
+                &stream_id.to_string(),
+            );
         }
 
         // Check if we have this stream
@@ -414,10 +433,30 @@ impl RelayNode {
             }
         };
 
+        // Structured relay logging
+        if enable_relay_logging {
+            debug!(
+                stream_id = %stream_id,
+                sequence = chunk.sequence,
+                bytes = chunk.data.len(),
+                subscribers = subscribers.len(),
+                "Relayed chunk"
+            );
+        }
+
+        // Hop-removal: replace original source with relay's own peer ID
+        let relay_chunk = if enable_hop_removal {
+            let mut anonymized = chunk.clone();
+            anonymized.source = Some(local_peer_id);
+            anonymized
+        } else {
+            chunk.clone()
+        };
+
         // Send chunk to all subscribers
         if let Some(handler) = &*chunk_handler.read().await {
             for subscriber in subscribers {
-                if let Err(e) = handler(subscriber, chunk.clone()).await {
+                if let Err(e) = handler(subscriber, relay_chunk.clone()).await {
                     error!("Failed to send chunk to {}: {}", subscriber, e);
                 }
             }

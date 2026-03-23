@@ -2,6 +2,7 @@
 //!
 //! This module provides utilities for tracking and analyzing relay performance.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// Statistics for a relay
@@ -23,6 +24,8 @@ pub struct RelayStats {
     pub outgoing_bandwidth: u64,
     /// Measurement period start
     pub period_start: Instant,
+    /// Per-stream chunk counters
+    pub per_stream_chunks: HashMap<String, u64>,
 }
 
 impl Default for RelayStats {
@@ -36,6 +39,7 @@ impl Default for RelayStats {
             incoming_bandwidth: 0,
             outgoing_bandwidth: 0,
             period_start: Instant::now(),
+            per_stream_chunks: HashMap::new(),
         }
     }
 }
@@ -56,7 +60,7 @@ impl RelayStats {
         self.outgoing_bandwidth = 0;
     }
 
-    /// Record a relayed chunk
+    /// Record a relayed chunk with optional stream tracking
     pub fn record_chunk(&mut self, chunk_size: usize) {
         self.chunks_relayed += 1;
         self.bytes_relayed += chunk_size as u64;
@@ -65,5 +69,15 @@ impl RelayStats {
         if self.chunks_relayed > 0 {
             self.avg_chunk_size = self.bytes_relayed / self.chunks_relayed;
         }
+    }
+
+    /// Record a relayed chunk with per-stream tracking
+    pub fn record_chunk_for_stream(
+        &mut self,
+        chunk_size: usize,
+        stream_id: &str,
+    ) {
+        self.record_chunk(chunk_size);
+        *self.per_stream_chunks.entry(stream_id.to_string()).or_insert(0) += 1;
     }
 }
