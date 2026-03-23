@@ -73,6 +73,13 @@ class WebRtcStreamClient {
         // P2P segment receiving state (subscriber)
         this.pendingSegmentHeader = new Map(); // peerId -> pending segment header
 
+        // Relay state: allows subscribers to relay data to other browsers
+        this.canRelay = false;          // true when subscriber has init segment + stream_info
+        this.seenSequences = new Set(); // dedup: "${streamId}:${sequence}" keys
+        this.maxSeenSequences = 500;    // prune oldest when exceeded
+        this.maxRelayTTL = 3;           // max hops a segment can travel
+        this.maxPeerConnections = 5;    // limit outbound peer connections
+
         this.log('info', `WebRTC client created for stream ${streamId} (${isPublisher ? 'publisher' : 'subscriber'})`);
     }
 
@@ -222,17 +229,21 @@ class WebRtcStreamClient {
             case 'peer_list':
                 // List of existing peers in the stream
                 const publishers = message.peers.filter(p => p.is_publisher);
-                const subscribers = message.peers.filter(p => !p.is_publisher);
-                this.log('info', `Received peer list: ${publishers.length} publishers, ${subscribers.length} subscribers`);
+                const relayers = message.peers.filter(p => !p.is_publisher && p.can_relay);
+                const subscribers = message.peers.filter(p => !p.is_publisher && !p.can_relay);
+                this.log('info', `Received peer list: ${publishers.length} publishers, ${relayers.length} relayers, ${subscribers.length} subscribers`);
 
                 // Notify callback
                 if (this.onPeerListReceived) {
                     this.onPeerListReceived(publishers, subscribers);
                 }
 
-                // As subscriber, initiate connections to publishers
-                for (const peer of publishers) {
-                    if (!this.isPublisher) {
+                // As subscriber, connect to publishers first, then relayers
+                if (!this.isPublisher) {
+                    // Prefer publishers (lower latency), then relayers
+                    const sources = [...publishers, ...relayers];
+                    for (const peer of sources) {
+                        if (this.getConnectedPeerCount() >= this.maxPeerConnections) break;
                         await this.initiateConnection(peer.peer_id);
                     }
                 }
@@ -242,10 +253,24 @@ class WebRtcStreamClient {
                 // New peer joined the stream
                 if (message.peer_id !== this.localPeerId) {
                     this.log('info', `Peer joined: ${message.peer_id} (publisher: ${message.is_publisher})`);
-                    // As publisher, wait for subscribers to initiate
                     // As subscriber, initiate connection to new publishers
                     if (!this.isPublisher && message.is_publisher) {
-                        await this.initiateConnection(message.peer_id);
+                        if (this.getConnectedPeerCount() < this.maxPeerConnections) {
+                            await this.initiateConnection(message.peer_id);
+                        }
+                    }
+                }
+                break;
+
+            case 'peer_update':
+                // Peer updated its capabilities (e.g., became a relayer)
+                if (message.peer_id !== this.localPeerId) {
+                    this.log('info', `Peer updated: ${message.peer_id} (publisher: ${message.is_publisher}, can_relay: ${message.can_relay})`);
+                    // As subscriber without enough sources, connect to new relayers
+                    if (!this.isPublisher && message.can_relay && !this.peerConnections.has(message.peer_id)) {
+                        if (this.getConnectedPeerCount() < this.maxPeerConnections) {
+                            await this.initiateConnection(message.peer_id);
+                        }
                     }
                 }
                 break;
@@ -496,14 +521,14 @@ class WebRtcStreamClient {
             this.dataChannels.set(remotePeerId, dc);
             this.notifyStateChange('streaming');
 
-            // Publisher: send cached data to new peer (late-joiner support)
-            if (this.isPublisher && this.cachedStreamInfo) {
+            // Publisher/relayer: send cached data to new peer (late-joiner support)
+            if ((this.isPublisher || this.canRelay) && this.cachedStreamInfo) {
                 this.log('info', `Sending cached stream data to new peer ${remotePeerId.substring(0, 8)}`);
                 this.sendCachedDataToPeer(dc);
             }
 
-            // Subscriber: request init data from publisher
-            if (!this.isPublisher) {
+            // Subscriber: request init data from publisher/relayer
+            if (!this.isPublisher && !this.canRelay) {
                 this.log('info', `Requesting init data from peer ${remotePeerId.substring(0, 8)}`);
                 try {
                     dc.send(JSON.stringify({ type: 'request_init' }));
@@ -582,11 +607,14 @@ class WebRtcStreamClient {
                 break;
 
             case 'stream_info':
-                // Received stream metadata from publisher
+                // Received stream metadata - cache regardless of role
                 this.log('info', `Received stream_info from peer ${peerId.substring(0, 8)}`);
+                this.cachedStreamInfo = msg.data;
                 if (this.onStreamInfo) {
                     this.onStreamInfo(msg.data);
                 }
+                // Check if we can now relay (need both stream_info and init segment)
+                this.checkRelayReady();
                 break;
 
             case 'segment_header':
@@ -596,9 +624,11 @@ class WebRtcStreamClient {
                     sequence: msg.sequence,
                     size: msg.size,
                     is_keyframe: msg.is_keyframe,
-                    timestamp: msg.timestamp
+                    timestamp: msg.timestamp,
+                    ttl: msg.ttl !== undefined ? msg.ttl : this.maxRelayTTL,
+                    from_peer: peerId
                 });
-                this.log('debug', `Received segment header: ${msg.segment_type} seq=${msg.sequence} size=${msg.size}`);
+                this.log('debug', `Received segment header: ${msg.segment_type} seq=${msg.sequence} size=${msg.size} ttl=${msg.ttl}`);
                 break;
 
             case 'request_init':
@@ -628,15 +658,112 @@ class WebRtcStreamClient {
             // We have segment metadata - use the new callback
             this.log('debug', `Processing segment: ${header.segment_type} seq=${header.sequence} (${buffer.byteLength} bytes)`);
 
+            // Cache init segments for relay
+            if (header.segment_type === 'initialization' || header.segment_type === 'init_video') {
+                this.cachedInitSegment = buffer;
+                this.checkRelayReady();
+            }
+
+            // Cache keyframes for late-joiners
+            if (header.is_keyframe) {
+                this.cachedKeyframe = { header, buffer };
+            }
+
             if (this.onSegmentReceived) {
                 this.onSegmentReceived(header, buffer);
             } else if (this.onStreamData) {
                 // Fallback to legacy callback
                 this.notifyStreamData(buffer);
             }
+
+            // Relay forward if we can
+            if (this.canRelay && !this.isPublisher) {
+                const dedupKey = `${this.streamId}:${header.sequence}`;
+                const ttl = (header.ttl !== undefined ? header.ttl : this.maxRelayTTL);
+                if (!this.seenSequences.has(dedupKey) && ttl > 0) {
+                    this.addSeenSequence(dedupKey);
+                    // Add to segment queue for late-joiners
+                    this.segmentQueue.push({ header, buffer });
+                    while (this.segmentQueue.length > this.maxSegmentQueueSize) {
+                        this.segmentQueue.shift();
+                    }
+                    this.relaySegmentToPeers(header, buffer, peerId);
+                }
+            }
         } else {
             // No header - legacy mode, just pass raw data
             this.notifyStreamData(buffer);
+        }
+    }
+
+    /**
+     * Check if this subscriber has enough data to start relaying
+     */
+    checkRelayReady() {
+        if (!this.isPublisher && !this.canRelay && this.cachedStreamInfo && this.cachedInitSegment) {
+            this.canRelay = true;
+            this.log('info', 'canRelay = true (have init segment + stream_info)');
+
+            // Announce relay capability via signaling
+            this.sendSignaling({
+                type: 'peer_update',
+                peer_id: this.localPeerId,
+                stream_id: this.streamId,
+                is_publisher: false,
+                can_relay: true
+            });
+        }
+    }
+
+    /**
+     * Track seen sequences for dedup, prune when exceeding max
+     */
+    addSeenSequence(key) {
+        this.seenSequences.add(key);
+        if (this.seenSequences.size > this.maxSeenSequences) {
+            // Prune oldest entries (Sets iterate in insertion order)
+            const arr = Array.from(this.seenSequences);
+            const toRemove = arr.slice(0, arr.length - this.maxSeenSequences);
+            for (const k of toRemove) {
+                this.seenSequences.delete(k);
+            }
+        }
+    }
+
+    /**
+     * Relay a segment to all connected peers except the sender
+     * @param {Object} header - Segment header with TTL
+     * @param {ArrayBuffer} buffer - Segment data
+     * @param {string} fromPeerId - Peer that sent us this segment (skip)
+     */
+    relaySegmentToPeers(header, buffer, fromPeerId) {
+        const ttl = (header.ttl !== undefined ? header.ttl : this.maxRelayTTL) - 1;
+        if (ttl <= 0) {
+            this.log('debug', `TTL expired for segment seq=${header.sequence}, not relaying`);
+            return;
+        }
+
+        const relayHeader = {
+            type: 'segment_header',
+            segment_type: header.segment_type,
+            sequence: header.sequence,
+            size: buffer.byteLength,
+            is_keyframe: header.is_keyframe,
+            timestamp: header.timestamp,
+            ttl: ttl
+        };
+
+        let relayCount = 0;
+        for (const [peerId, dc] of this.dataChannels) {
+            // Don't relay back to sender
+            if (peerId === fromPeerId) continue;
+            if (dc.readyState === 'open') {
+                this.sendSegmentToPeer(dc, relayHeader, buffer);
+                relayCount++;
+            }
+        }
+        if (relayCount > 0) {
+            this.log('debug', `Relayed segment seq=${header.sequence} to ${relayCount} peers (ttl=${ttl})`);
         }
     }
 
@@ -658,8 +785,8 @@ class WebRtcStreamClient {
      * Send data to all connected peers (for publishers)
      */
     sendData(data) {
-        if (!this.isPublisher) {
-            this.log('warn', 'Only publishers can send data');
+        if (!this.isPublisher && !this.canRelay) {
+            this.log('warn', 'Only publishers/relayers can send data');
             return;
         }
 
@@ -732,8 +859,8 @@ class WebRtcStreamClient {
      * @param {boolean} isKeyframe - Whether this is a keyframe segment
      */
     forwardSegmentToPeers(buffer, chunkType, isKeyframe = false) {
-        if (!this.isPublisher) {
-            this.log('warn', 'Only publishers can forward segments');
+        if (!this.isPublisher && !this.canRelay) {
+            this.log('warn', 'Only publishers/relayers can forward segments');
             return;
         }
 
@@ -745,7 +872,8 @@ class WebRtcStreamClient {
             sequence: sequence,
             size: buffer.byteLength,
             is_keyframe: isKeyframe,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            ttl: this.maxRelayTTL
         };
 
         // Cache special segments for late-joiners
@@ -800,7 +928,7 @@ class WebRtcStreamClient {
      * @param {RTCDataChannel} dc - The data channel
      */
     sendCachedDataToPeer(dc) {
-        if (!this.isPublisher) return;
+        if (!this.isPublisher && !this.canRelay) return;
 
         this.log('info', 'Sending cached data to new peer');
 

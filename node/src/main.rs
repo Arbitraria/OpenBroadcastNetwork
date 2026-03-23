@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::fmt;
 use OpenBroadcastNetwork_core::media::publisher::StreamPublisher;
 use OpenBroadcastNetwork_core::media::segment::StreamId;
+use OpenBroadcastNetwork_core::moderation::{ModerationConfig, ModerationManager};
 use OpenBroadcastNetwork_core::overlay::interface::{Overlay, OverlayConfig};
 use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
 use OpenBroadcastNetwork_core::overlay::peer::{LocalPeerId, PeerRole};
@@ -241,6 +242,8 @@ struct RunningNode {
     overlay: Arc<Libp2pOverlay>,
     /// Node role
     role: PeerRole,
+    /// Moderation manager
+    moderation: Arc<ModerationManager>,
 }
 
 impl RunningNode {
@@ -263,12 +266,32 @@ impl RunningNode {
             ..Default::default()
         };
 
-        let overlay = Libp2pOverlay::new(config).await?;
+        let mut overlay = Libp2pOverlay::new(config).await?;
+
+        // Create moderation manager with auto-persist
+        let mod_config = ModerationConfig {
+            persistence_path: Some(PathBuf::from("moderation.json")),
+            auto_persist: true,
+            ..Default::default()
+        };
+        let moderation = Arc::new(ModerationManager::new(mod_config));
+
+        // Load existing moderation state if present
+        let persist_path = PathBuf::from("moderation.json");
+        if persist_path.exists() {
+            if let Err(e) = moderation.load_from_file(&persist_path).await {
+                warn!("Failed to load moderation state: {}", e);
+            }
+        }
+
+        // Wire moderation into the overlay for connection enforcement
+        overlay.set_moderation(moderation.clone());
 
         Ok(Self {
             start_time: SystemTime::now(),
             overlay: Arc::new(overlay),
             role,
+            moderation,
         })
     }
 }
@@ -529,6 +552,7 @@ async fn run_web_viewer(
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
+            moderation: Some(node.moderation.clone()),
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -573,6 +597,7 @@ async fn run_web_viewer(
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
+            moderation: Some(node.moderation.clone()),
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -610,6 +635,7 @@ async fn run_web_viewer(
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
+            moderation: Some(node.moderation.clone()),
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);

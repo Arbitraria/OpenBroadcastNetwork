@@ -58,6 +58,7 @@ use tracing::{debug, info, warn};
 use crate::discovery::{
     BootstrapDiscoveryConfig, DhtDiscoveryConfig, DiscoveryManager, DiscoveryManagerConfig,
 };
+use crate::moderation::ModerationManager;
 use crate::overlay::interface::{OverlayConfig, OverlayError, OverlayEvent, StreamId};
 use crate::overlay::libp2p::behavior::OverlayBehavior;
 use crate::overlay::mesh::{MeshConfig, MeshNetwork};
@@ -100,6 +101,8 @@ pub struct Libp2pOverlay {
     pub running: Arc<RwLock<bool>>,
     /// Worker task handle
     pub worker_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Optional moderation manager for peer blocking/whitelisting
+    pub moderation: Option<Arc<ModerationManager>>,
 }
 
 impl Clone for Libp2pOverlay {
@@ -119,6 +122,7 @@ impl Clone for Libp2pOverlay {
             event_rx: self.event_rx.clone(),
             running: self.running.clone(),
             worker_task: self.worker_task.clone(),
+            moderation: self.moderation.clone(),
         }
     }
 }
@@ -217,12 +221,18 @@ impl Libp2pOverlay {
             event_rx: Arc::new(Mutex::new(event_rx)),
             running: Arc::new(RwLock::new(false)),
             worker_task: Arc::new(Mutex::new(None)),
+            moderation: None,
         })
     }
 
     /// Get the local peer ID as a LocalPeerId wrapper (zero-cost)
     pub fn local_peer_id(&self) -> LocalPeerId {
         LocalPeerId::from(self.peer_id)
+    }
+
+    /// Set the moderation manager for peer blocking enforcement
+    pub fn set_moderation(&mut self, mgr: Arc<ModerationManager>) {
+        self.moderation = Some(mgr);
     }
 
     /// Initialize the swarm with behaviors including NAT traversal support

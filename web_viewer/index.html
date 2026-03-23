@@ -139,6 +139,74 @@
         .stream-empty { color: #888; font-style: italic; padding: 20px 0; }
         #browseBtn { background: #9C27B0; }
         #browseBtn:hover { background: #7B1FA2; }
+        #flagBtn { background: #FF5722; }
+        #flagBtn:hover { background: #E64A19; }
+        /* Moderation panel */
+        .moderation-panel {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 320px;
+            height: 100%;
+            background: rgba(30, 30, 30, 0.95);
+            color: #eee;
+            padding: 20px;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.3);
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 1001;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        .moderation-panel.open { transform: translateX(0); }
+        .moderation-panel h3 {
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .moderation-panel .close-btn {
+            background: none;
+            color: #aaa;
+            font-size: 20px;
+            padding: 4px 8px;
+            margin: 0;
+        }
+        .moderation-panel .close-btn:hover { color: #fff; }
+        .moderation-panel label {
+            display: block;
+            margin: 12px 0 4px;
+            font-size: 13px;
+            color: #bbb;
+        }
+        .moderation-panel select,
+        .moderation-panel textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #333;
+            color: #eee;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        .moderation-panel textarea { resize: vertical; min-height: 60px; }
+        .mod-submit-btn {
+            margin-top: 12px;
+            width: 100%;
+            padding: 10px;
+            background: #F44336;
+            font-weight: bold;
+        }
+        .mod-submit-btn:hover { background: #D32F2F; }
+        .mod-info {
+            margin-top: 16px;
+            padding: 10px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 4px;
+            font-size: 12px;
+            color: #aaa;
+        }
     </style>
 </head>
 <body>
@@ -151,6 +219,7 @@
             <button id="playBtn" disabled>Play</button>
             <button id="clearBtn">Clear Log</button>
             <button id="browseBtn">Browse Streams</button>
+            <button id="flagBtn" disabled>Flag Stream</button>
             <select id="connectionModeSelect">
                 <option value="auto">Auto (WebSocket + P2P relay)</option>
                 <option value="p2p-first">P2P First (true mesh)</option>
@@ -221,6 +290,27 @@
         
         <h3>Debug Log</h3>
         <div id="log"></div>
+    </div>
+
+    <div class="moderation-panel" id="moderationPanel">
+        <h3>
+            Flag Stream
+            <button class="close-btn" id="closeModBtn">&times;</button>
+        </h3>
+        <label for="flagReason">Reason</label>
+        <select id="flagReason">
+            <option value="spam">Spam</option>
+            <option value="inappropriate">Inappropriate Content</option>
+            <option value="copyright">Copyright Violation</option>
+            <option value="abuse">Abuse</option>
+            <option value="other">Other</option>
+        </select>
+        <label for="flagDetails">Details (optional)</label>
+        <textarea id="flagDetails" placeholder="Provide additional details..."></textarea>
+        <button class="mod-submit-btn" id="submitFlagBtn">Submit Flag</button>
+        <div class="mod-info" id="modInfo">
+            Blocked peers: <span id="blockedPeersCount">0</span>
+        </div>
     </div>
 
     <div class="stream-browser" id="streamBrowser">
@@ -439,6 +529,7 @@
             // Update button states
             document.getElementById('connectBtn').disabled = true;
             document.getElementById('disconnectBtn').disabled = false;
+            document.getElementById('flagBtn').disabled = false;
 
             // Clean up any existing connections
             if (websocket) {
@@ -1013,8 +1104,8 @@
             // Process locally first
             processStreamChunk(buffer);
 
-            // Forward to P2P peers if we're a publisher with connected peers
-            if (webrtcClient && webrtcClient.isPublisher && webrtcClient.getConnectedPeerCount() > 0) {
+            // Forward to P2P peers if we're a publisher/relayer with connected peers
+            if (webrtcClient && (webrtcClient.isPublisher || webrtcClient.canRelay) && webrtcClient.getConnectedPeerCount() > 0) {
                 const chunkType = nextChunkType || 'video';
                 const isKeyframe = detectKeyframe(buffer);
                 webrtcClient.forwardSegmentToPeers(buffer, chunkType, isKeyframe);
@@ -1028,8 +1119,8 @@
             // Process locally
             handleControlMessage(message);
 
-            // Cache stream info for P2P forwarding
-            if (message.type === 'stream_info' && webrtcClient && webrtcClient.isPublisher) {
+            // Cache stream info for P2P forwarding (publishers and relayers)
+            if (message.type === 'stream_info' && webrtcClient) {
                 webrtcClient.cacheStreamInfo(message.data);
             }
 
@@ -1219,7 +1310,7 @@
                     logMessage(`Buffer codec: ${currentAudioMimeType || 'unknown'}`);
 
                     // Cache init segment for P2P forwarding
-                    if (webrtcClient && webrtcClient.isPublisher) {
+                    if (webrtcClient) {
                         webrtcClient.cacheInitSegment(arrayBuffer);
                     }
 
@@ -1229,7 +1320,7 @@
                     logMessage(`Detected MP4 initialization segment (${formatBytes(arrayBuffer.byteLength)})`, 'success');
 
                     // Cache init segment for P2P forwarding
-                    if (webrtcClient && webrtcClient.isPublisher) {
+                    if (webrtcClient) {
                         webrtcClient.cacheInitSegment(arrayBuffer);
                     }
                 } else if (boxType === 'moof') {
@@ -1411,7 +1502,7 @@
             }
 
             // Cache init segment for P2P forwarding
-            if (webrtcClient && webrtcClient.isPublisher) {
+            if (webrtcClient) {
                 webrtcClient.cacheInitSegment(combinedBuffer);
                 logMessage('Cached init segment for P2P late-joiners', 'info');
             }
@@ -1424,7 +1515,7 @@
                     initSegmentComplete = true;
 
                     // Forward init segment to P2P peers
-                    if (webrtcClient && webrtcClient.isPublisher && webrtcClient.getConnectedPeerCount() > 0) {
+                    if (webrtcClient && (webrtcClient.isPublisher || webrtcClient.canRelay) && webrtcClient.getConnectedPeerCount() > 0) {
                         webrtcClient.forwardSegmentToPeers(combinedBuffer, 'initialization', false);
                     }
                 } catch (error) {
@@ -1700,6 +1791,7 @@
             document.getElementById('connectBtn').disabled = false;
             document.getElementById('disconnectBtn').disabled = true;
             document.getElementById('playBtn').disabled = true;
+            document.getElementById('flagBtn').disabled = true;
 
             // Reset stats
             document.getElementById('segmentsStat').textContent = '0';
@@ -1879,6 +1971,61 @@
         document.getElementById('browseBtn').addEventListener('click', toggleStreamBrowser);
         document.getElementById('closeBrowserBtn').addEventListener('click', toggleStreamBrowser);
         document.getElementById('refreshStreamsBtn').addEventListener('click', refreshStreams);
+
+        // --- Moderation Panel ---
+        function toggleModerationPanel() {
+            const modPanel = document.getElementById('moderationPanel');
+            const browserPanel = document.getElementById('streamBrowser');
+            const isOpen = modPanel.classList.toggle('open');
+            if (isOpen) {
+                // Close stream browser if open (mutual exclusion)
+                browserPanel.classList.remove('open');
+                clearInterval(streamRefreshTimer);
+                streamRefreshTimer = null;
+                fetchBlockedPeersCount();
+            }
+        }
+
+        async function submitFlag() {
+            const reason = document.getElementById('flagReason').value;
+            const details = document.getElementById('flagDetails').value || null;
+            const sid = streamId || 'unknown';
+            try {
+                const resp = await fetch('/api/moderation/flag-stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        stream_id: sid,
+                        reason: reason,
+                        details: details
+                    })
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    logMessage('Stream flagged successfully', 'success');
+                    document.getElementById('flagDetails').value = '';
+                    toggleModerationPanel();
+                } else {
+                    logMessage('Failed to flag stream: ' + (data.message || 'unknown error'), 'error');
+                }
+            } catch (e) {
+                logMessage('Error flagging stream: ' + e, 'error');
+            }
+        }
+
+        async function fetchBlockedPeersCount() {
+            try {
+                const resp = await fetch('/api/moderation/blocked-peers');
+                const data = await resp.json();
+                document.getElementById('blockedPeersCount').textContent = data.count || 0;
+            } catch (e) {
+                // Moderation API not available
+            }
+        }
+
+        document.getElementById('flagBtn').addEventListener('click', toggleModerationPanel);
+        document.getElementById('closeModBtn').addEventListener('click', toggleModerationPanel);
+        document.getElementById('submitFlagBtn').addEventListener('click', submitFlag);
 
         // ── WASM P2P Module (optional) ──────────────────────────────
         // If the WASM module is available (built via wasm-pack from ui/),

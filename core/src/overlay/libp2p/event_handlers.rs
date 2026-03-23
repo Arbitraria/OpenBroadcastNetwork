@@ -52,6 +52,19 @@ impl Libp2pOverlay {
                     peer_id, endpoint: _endpoint, ..
                 } => {
                     let peer_id = from_libp2p_peer_id(&peer_id);
+
+                    // Check moderation: reject blocked peers
+                    if let Some(ref moderation) = self.moderation {
+                        let peer_str = peer_id.to_string();
+                        if !moderation.is_peer_allowed(&peer_str).await {
+                            warn!(
+                                "Rejected connection from blocked peer: {}",
+                                peer_id
+                            );
+                            return Ok(());
+                        }
+                    }
+
                     info!("Connection established with peer: {}", peer_id);
 
                     // Update peer state

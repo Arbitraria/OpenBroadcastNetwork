@@ -38,10 +38,10 @@ use std::sync::Arc;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        Path, Query, State,
     },
     response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
@@ -110,6 +110,8 @@ pub struct AppState {
     pub clients: Arc<RwLock<HashMap<String, ClientConnection>>>,
     /// WebRTC signaling state for P2P connections
     pub signaling_state: Arc<SignalingState>,
+    /// Optional moderation manager for peer blocking and stream flagging
+    pub moderation: Option<Arc<OpenBroadcastNetwork_core::moderation::ModerationManager>>,
 }
 
 /// State for WebRTC signaling coordination
@@ -125,6 +127,7 @@ pub struct SignalingState {
 pub struct SignalingPeer {
     pub peer_id: String,
     pub is_publisher: bool,
+    pub can_relay: bool,
 }
 
 impl Default for SignalingState {
@@ -1284,6 +1287,7 @@ impl WebServer {
             stream_manager,
             clients,
             signaling_state,
+            moderation: None,
         };
 
         Self { config, app_state }
@@ -1319,6 +1323,25 @@ impl WebServer {
             .route("/api/stream/stop", post(stop_stream_handler))
             .route("/api/stream/status", get(stream_status_handler))
             .route("/api/streams", get(list_streams_handler))
+            .route("/api/moderation/block-peer", post(mod_block_peer_handler))
+            .route(
+                "/api/moderation/block-peer/:peer_id",
+                delete(mod_unblock_peer_handler),
+            )
+            .route(
+                "/api/moderation/blocked-peers",
+                get(mod_blocked_peers_handler),
+            )
+            .route(
+                "/api/moderation/flag-stream",
+                post(mod_flag_stream_handler),
+            )
+            .route(
+                "/api/moderation/flagged-streams",
+                get(mod_flagged_streams_handler),
+            )
+            .route("/api/moderation/import", post(mod_import_handler))
+            .route("/api/moderation/export", get(mod_export_handler))
             .with_state(self.app_state.clone());
 
         // Add CORS if enabled
@@ -2244,6 +2267,7 @@ async fn handle_signaling_message(
                 peers.push(SignalingPeer {
                     peer_id: peer_id.to_string(),
                     is_publisher,
+                    can_relay: false,
                 });
 
                 debug!(
@@ -2265,6 +2289,7 @@ async fn handle_signaling_message(
                         .map(|p| PeerInfo {
                             peer_id: p.peer_id.clone(),
                             is_publisher: p.is_publisher,
+                            can_relay: p.can_relay,
                         })
                         .collect::<Vec<_>>()
                 } else {
@@ -2367,6 +2392,55 @@ async fn handle_signaling_message(
             }
         }
 
+        SignalingMessage::PeerUpdate {
+            peer_id: _,
+            stream_id: _,
+            is_publisher: updated_publisher,
+            can_relay,
+        } => {
+            info!(
+                "Peer {} updated: is_publisher={}, can_relay={}",
+                peer_id, updated_publisher, can_relay
+            );
+
+            // Update the peer's state and collect peer IDs to notify
+            let stream_id_for_update = current_stream_id.clone();
+            let peers_to_notify = if let Some(ref sid) = stream_id_for_update {
+                let mut streams = state.signaling_state.streams.write().await;
+                if let Some(peers) = streams.get_mut(sid) {
+                    if let Some(p) = peers.iter_mut().find(|p| p.peer_id == peer_id) {
+                        p.is_publisher = updated_publisher;
+                        p.can_relay = can_relay;
+                    }
+                    peers
+                        .iter()
+                        .filter(|p| p.peer_id != peer_id)
+                        .map(|p| p.peer_id.clone())
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
+            // Broadcast update to other peers
+            if !peers_to_notify.is_empty() {
+                let update_msg = SignalingMessage::PeerUpdate {
+                    peer_id: peer_id.to_string(),
+                    stream_id: stream_id_for_update,
+                    is_publisher: updated_publisher,
+                    can_relay,
+                };
+                let senders = state.signaling_state.peer_senders.read().await;
+                for other_id in &peers_to_notify {
+                    if let Some(sender) = senders.get(other_id) {
+                        let _ = sender.send(update_msg.clone());
+                    }
+                }
+            }
+        }
+
         SignalingMessage::PeerList { .. } | SignalingMessage::Error { .. } => {
             // These are server-to-client messages, ignore if received from client
             debug!("Ignoring server-only message type from client {}", peer_id);
@@ -2413,6 +2487,141 @@ async fn cleanup_signaling_peer(
     }
 
     info!("Cleaned up signaling peer: {}", peer_id);
+}
+
+// ============================================================================
+// Moderation API Handlers
+// ============================================================================
+
+/// Request body for blocking a peer
+#[derive(Debug, Deserialize)]
+struct BlockPeerRequest {
+    peer_id: String,
+    reason: Option<String>,
+}
+
+/// Request body for flagging a stream
+#[derive(Debug, Deserialize)]
+struct FlagStreamRequest {
+    stream_id: String,
+    reason: String,
+    details: Option<String>,
+    reporter: Option<String>,
+}
+
+fn mod_not_enabled() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "error",
+        "message": "Moderation not enabled"
+    }))
+}
+
+fn parse_flag_reason(s: &str) -> OpenBroadcastNetwork_core::moderation::FlagReason {
+    use OpenBroadcastNetwork_core::moderation::FlagReason;
+    match s.to_lowercase().as_str() {
+        "spam" => FlagReason::Spam,
+        "inappropriate" => FlagReason::Inappropriate,
+        "copyright" => FlagReason::Copyright,
+        "abuse" => FlagReason::Abuse,
+        other => FlagReason::Other(other.to_string()),
+    }
+}
+
+async fn mod_block_peer_handler(
+    State(state): State<AppState>,
+    Json(body): Json<BlockPeerRequest>,
+) -> impl IntoResponse {
+    let Some(ref moderation) = state.moderation else {
+        return mod_not_enabled();
+    };
+    moderation.block_peer(&body.peer_id, body.reason).await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "message": format!("Blocked peer: {}", body.peer_id)
+    }))
+}
+
+async fn mod_unblock_peer_handler(
+    State(state): State<AppState>,
+    Path(peer_id): Path<String>,
+) -> impl IntoResponse {
+    let Some(ref moderation) = state.moderation else {
+        return mod_not_enabled();
+    };
+    let removed = moderation.unblock_peer(&peer_id).await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "removed": removed
+    }))
+}
+
+async fn mod_blocked_peers_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let Some(ref moderation) = state.moderation else {
+        return mod_not_enabled();
+    };
+    let peers = moderation.blocked_peers().await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "blocked_peers": peers,
+        "count": peers.len()
+    }))
+}
+
+async fn mod_flag_stream_handler(
+    State(state): State<AppState>,
+    Json(body): Json<FlagStreamRequest>,
+) -> impl IntoResponse {
+    let Some(ref moderation) = state.moderation else {
+        return mod_not_enabled();
+    };
+    let reason = parse_flag_reason(&body.reason);
+    moderation
+        .flag_stream(&body.stream_id, reason, body.details, body.reporter)
+        .await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "message": format!("Flagged stream: {}", body.stream_id)
+    }))
+}
+
+async fn mod_flagged_streams_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let Some(ref moderation) = state.moderation else {
+        return mod_not_enabled();
+    };
+    let flags = moderation.flagged_streams().await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "flagged_streams": flags,
+        "count": flags.len()
+    }))
+}
+
+async fn mod_import_handler(
+    State(state): State<AppState>,
+    Json(list): Json<OpenBroadcastNetwork_core::moderation::ModerationList>,
+) -> impl IntoResponse {
+    let Some(ref moderation) = state.moderation else {
+        return mod_not_enabled();
+    };
+    moderation.import_list(list).await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "message": "Imported moderation list"
+    }))
+}
+
+async fn mod_export_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let Some(ref moderation) = state.moderation else {
+        return mod_not_enabled();
+    };
+    let list = moderation.export_list().await;
+    Json(serde_json::json!(list))
 }
 
 /// Default HTML page when web_root is not available

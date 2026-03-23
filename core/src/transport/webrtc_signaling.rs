@@ -93,6 +93,21 @@ pub enum SignalingMessage {
         peers: Vec<PeerInfo>,
     },
 
+    /// Peer update (e.g., subscriber becomes relayer)
+    #[serde(rename = "peer_update")]
+    PeerUpdate {
+        /// Unique identifier of the peer
+        peer_id: String,
+        /// Stream ID the peer is in
+        #[serde(default)]
+        stream_id: Option<String>,
+        /// Whether this peer is a publisher
+        is_publisher: bool,
+        /// Whether this peer can relay data to other browsers
+        #[serde(default)]
+        can_relay: bool,
+    },
+
     /// Error message from signaling server
     #[serde(rename = "error")]
     Error {
@@ -108,6 +123,9 @@ pub struct PeerInfo {
     pub peer_id: String,
     /// Whether this peer is a publisher
     pub is_publisher: bool,
+    /// Whether this peer can relay data to other browsers
+    #[serde(default)]
+    pub can_relay: bool,
 }
 
 #[cfg(test)]
@@ -146,6 +164,35 @@ mod tests {
         let json = serde_json::to_string(&join).unwrap();
         assert!(json.contains("\"type\":\"peer_join\""));
         assert!(json.contains("\"is_publisher\":true"));
+    }
+
+    #[test]
+    fn test_peer_update_serialization() {
+        let update = SignalingMessage::PeerUpdate {
+            peer_id: "peer-123".to_string(),
+            stream_id: Some("stream-abc".to_string()),
+            is_publisher: false,
+            can_relay: true,
+        };
+
+        let json = serde_json::to_string(&update).unwrap();
+        assert!(json.contains("\"type\":\"peer_update\""));
+        assert!(json.contains("\"can_relay\":true"));
+
+        let parsed: SignalingMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            SignalingMessage::PeerUpdate { can_relay, .. } => {
+                assert!(can_relay);
+            }
+            _ => panic!("Expected PeerUpdate message"),
+        }
+    }
+
+    #[test]
+    fn test_peer_info_can_relay_default() {
+        let json = r#"{"peer_id":"peer-1","is_publisher":false}"#;
+        let info: PeerInfo = serde_json::from_str(json).unwrap();
+        assert!(!info.can_relay);
     }
 
     #[test]
