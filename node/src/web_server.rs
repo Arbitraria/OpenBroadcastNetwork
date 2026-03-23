@@ -2251,6 +2251,21 @@ async fn handle_signaling_message(
             stream_id,
             is_publisher,
         } => {
+            // Check moderation before allowing join
+            if let Some(ref moderation) = state.moderation {
+                if !moderation.is_peer_allowed(peer_id).await {
+                    warn!("Rejected signaling from blocked peer: {}", peer_id);
+                    let error_msg = SignalingMessage::Error {
+                        message: "You have been blocked from this node".to_string(),
+                    };
+                    let senders = state.signaling_state.peer_senders.read().await;
+                    if let Some(sender) = senders.get(peer_id) {
+                        let _ = sender.send(error_msg);
+                    }
+                    return;
+                }
+            }
+
             info!(
                 "Peer {} joining stream {} (publisher: {})",
                 peer_id, stream_id, is_publisher
@@ -2331,6 +2346,14 @@ async fn handle_signaling_message(
             target_peer_id,
             sdp,
         } => {
+            // Drop offers from blocked peers
+            if let Some(ref moderation) = state.moderation {
+                if !moderation.is_peer_allowed(peer_id).await {
+                    debug!("Dropping offer from blocked peer: {}", peer_id);
+                    return;
+                }
+            }
+
             if let Some(target_id) = target_peer_id {
                 debug!("Relaying offer from {} to {}", peer_id, target_id);
                 let offer = SignalingMessage::Offer {
@@ -2489,6 +2512,58 @@ async fn cleanup_signaling_peer(
     info!("Cleaned up signaling peer: {}", peer_id);
 }
 
+/// Kick a peer from all signaling rooms and close their sender channel.
+///
+/// Used when a peer is blocked via the moderation API to immediately
+/// disconnect them from WebRTC signaling.
+async fn kick_peer_from_signaling(state: &AppState, peer_id: &str) {
+    // Find all streams this peer is in
+    let streams_to_notify: Vec<(String, Vec<String>)> = {
+        let mut streams = state.signaling_state.streams.write().await;
+        let mut result = Vec::new();
+        for (stream_id, peers) in streams.iter_mut() {
+            if peers.iter().any(|p| p.peer_id == peer_id) {
+                peers.retain(|p| p.peer_id != peer_id);
+                let remaining: Vec<String> =
+                    peers.iter().map(|p| p.peer_id.clone()).collect();
+                result.push((stream_id.clone(), remaining));
+            }
+        }
+        // Clean up empty streams
+        streams.retain(|_, peers| !peers.is_empty());
+        result
+    };
+
+    // Notify remaining peers with PeerLeave
+    let leave_msg = SignalingMessage::PeerLeave {
+        peer_id: peer_id.to_string(),
+    };
+    {
+        let senders = state.signaling_state.peer_senders.read().await;
+        for (_stream_id, remaining_peers) in &streams_to_notify {
+            for other_id in remaining_peers {
+                if let Some(sender) = senders.get(other_id) {
+                    let _ = sender.send(leave_msg.clone());
+                }
+            }
+        }
+    }
+
+    // Remove the peer's sender channel (closes their WebSocket)
+    {
+        let mut senders = state.signaling_state.peer_senders.write().await;
+        senders.remove(peer_id);
+    }
+
+    if !streams_to_notify.is_empty() {
+        info!(
+            "Kicked blocked peer {} from {} signaling stream(s)",
+            peer_id,
+            streams_to_notify.len()
+        );
+    }
+}
+
 // ============================================================================
 // Moderation API Handlers
 // ============================================================================
@@ -2535,6 +2610,10 @@ async fn mod_block_peer_handler(
         return mod_not_enabled();
     };
     moderation.block_peer(&body.peer_id, body.reason).await;
+
+    // Kick the peer from signaling immediately
+    kick_peer_from_signaling(&state, &body.peer_id).await;
+
     Json(serde_json::json!({
         "status": "ok",
         "message": format!("Blocked peer: {}", body.peer_id)
