@@ -553,6 +553,7 @@ async fn run_web_viewer(
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
             moderation: Some(node.moderation.clone()),
+            relay_stats: None,
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -598,6 +599,7 @@ async fn run_web_viewer(
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
             moderation: Some(node.moderation.clone()),
+            relay_stats: None,
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -636,6 +638,7 @@ async fn run_web_viewer(
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
             moderation: Some(node.moderation.clone()),
+            relay_stats: None,
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);

@@ -207,6 +207,61 @@
             font-size: 12px;
             color: #aaa;
         }
+        #statsBtn { background: #00897B; }
+        #statsBtn:hover { background: #00695C; }
+        /* Stats panel */
+        .stats-panel {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 340px;
+            height: 100%;
+            background: rgba(30, 30, 30, 0.95);
+            color: #eee;
+            padding: 20px;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.3);
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 1002;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        .stats-panel.open { transform: translateX(0); }
+        .stats-panel h3 {
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .stats-panel .close-btn {
+            background: none;
+            color: #aaa;
+            font-size: 20px;
+            padding: 4px 8px;
+            margin: 0;
+        }
+        .stats-panel .close-btn:hover { color: #fff; }
+        .stats-section { margin: 14px 0; }
+        .stats-section h4 {
+            margin: 0 0 8px;
+            color: #81C784;
+            font-size: 14px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .stat-row .stat-key { color: #aaa; }
+        .stat-row .stat-val { color: #fff; font-weight: bold; }
+        .stats-refresh-note {
+            margin-top: 12px;
+            font-size: 11px;
+            color: #777;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -220,6 +275,7 @@
             <button id="clearBtn">Clear Log</button>
             <button id="browseBtn">Browse Streams</button>
             <button id="flagBtn" disabled>Flag Stream</button>
+            <button id="statsBtn">Stats</button>
             <select id="connectionModeSelect">
                 <option value="auto">Auto (WebSocket + P2P relay)</option>
                 <option value="p2p-first">P2P First (true mesh)</option>
@@ -311,6 +367,35 @@
         <div class="mod-info" id="modInfo">
             Blocked peers: <span id="blockedPeersCount">0</span>
         </div>
+    </div>
+
+    <div class="stats-panel" id="statsPanel">
+        <h3>
+            Node Stats
+            <button class="close-btn" id="closeStatsBtn">&times;</button>
+        </h3>
+        <div class="stats-section" id="relaySection">
+            <h4>Relay</h4>
+            <div id="relayStatsBody">
+                <div class="stat-row"><span class="stat-key">Chunks relayed</span><span class="stat-val" id="sChunks">-</span></div>
+                <div class="stat-row"><span class="stat-key">Bytes relayed</span><span class="stat-val" id="sBytes">-</span></div>
+                <div class="stat-row"><span class="stat-key">Avg chunk size</span><span class="stat-val" id="sAvgChunk">-</span></div>
+                <div class="stat-row"><span class="stat-key">Active streams</span><span class="stat-val" id="sRelayStreams">-</span></div>
+                <div class="stat-row"><span class="stat-key">Connected peers</span><span class="stat-val" id="sRelayPeers">-</span></div>
+                <div class="stat-row"><span class="stat-key">Incoming BW</span><span class="stat-val" id="sInBw">-</span></div>
+                <div class="stat-row"><span class="stat-key">Outgoing BW</span><span class="stat-val" id="sOutBw">-</span></div>
+            </div>
+        </div>
+        <div class="stats-section">
+            <h4>Signaling</h4>
+            <div class="stat-row"><span class="stat-key">Connected peers</span><span class="stat-val" id="sSigPeers">-</span></div>
+            <div class="stat-row"><span class="stat-key">Active streams</span><span class="stat-val" id="sSigStreams">-</span></div>
+        </div>
+        <div class="stats-section">
+            <h4>WebRTC</h4>
+            <div class="stat-row"><span class="stat-key">Peer connections</span><span class="stat-val" id="sWebrtcPeers">-</span></div>
+        </div>
+        <div class="stats-refresh-note">Auto-refreshes every 5s</div>
     </div>
 
     <div class="stream-browser" id="streamBrowser">
@@ -2026,6 +2111,80 @@
         document.getElementById('flagBtn').addEventListener('click', toggleModerationPanel);
         document.getElementById('closeModBtn').addEventListener('click', toggleModerationPanel);
         document.getElementById('submitFlagBtn').addEventListener('click', submitFlag);
+
+        // --- Stats Panel ---
+        let statsRefreshTimer = null;
+
+        function formatBytes(bytes) {
+            if (bytes == null) return '-';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+
+        function formatBps(bps) {
+            if (bps == null || bps === 0) return '0 bps';
+            if (bps < 1024) return bps + ' bps';
+            if (bps < 1024 * 1024) return (bps / 1024).toFixed(1) + ' Kbps';
+            return (bps / (1024 * 1024)).toFixed(2) + ' Mbps';
+        }
+
+        async function fetchStats() {
+            try {
+                const resp = await fetch('/api/stats');
+                const data = await resp.json();
+                if (data.status !== 'ok') return;
+
+                // Relay stats
+                const r = data.relay;
+                if (r) {
+                    document.getElementById('sChunks').textContent = r.chunks_relayed.toLocaleString();
+                    document.getElementById('sBytes').textContent = formatBytes(r.bytes_relayed);
+                    document.getElementById('sAvgChunk').textContent = formatBytes(r.avg_chunk_size);
+                    document.getElementById('sRelayStreams').textContent = r.active_streams;
+                    document.getElementById('sRelayPeers').textContent = r.connected_peers;
+                    document.getElementById('sInBw').textContent = formatBps(r.incoming_bandwidth_bps);
+                    document.getElementById('sOutBw').textContent = formatBps(r.outgoing_bandwidth_bps);
+                    document.getElementById('relaySection').style.display = '';
+                } else {
+                    document.getElementById('relaySection').style.display = 'none';
+                }
+
+                // Signaling stats
+                const s = data.signaling;
+                document.getElementById('sSigPeers').textContent = s.connected_peers;
+                document.getElementById('sSigStreams').textContent = s.active_streams;
+
+                // WebRTC stats
+                document.getElementById('sWebrtcPeers').textContent = data.webrtc.peer_connections;
+            } catch (e) {
+                // Stats API not available
+            }
+        }
+
+        function toggleStatsPanel() {
+            const panel = document.getElementById('statsPanel');
+            const browserPanel = document.getElementById('streamBrowser');
+            const modPanel = document.getElementById('moderationPanel');
+            const isOpen = panel.classList.toggle('open');
+            if (isOpen) {
+                // Close other panels
+                browserPanel.classList.remove('open');
+                modPanel.classList.remove('open');
+                clearInterval(streamRefreshTimer);
+                streamRefreshTimer = null;
+                // Fetch immediately and start auto-refresh
+                fetchStats();
+                statsRefreshTimer = setInterval(fetchStats, 5000);
+            } else {
+                clearInterval(statsRefreshTimer);
+                statsRefreshTimer = null;
+            }
+        }
+
+        document.getElementById('statsBtn').addEventListener('click', toggleStatsPanel);
+        document.getElementById('closeStatsBtn').addEventListener('click', toggleStatsPanel);
 
         // ── WASM P2P Module (optional) ──────────────────────────────
         // If the WASM module is available (built via wasm-pack from ui/),

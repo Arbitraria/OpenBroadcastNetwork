@@ -112,6 +112,8 @@ pub struct AppState {
     pub signaling_state: Arc<SignalingState>,
     /// Optional moderation manager for peer blocking and stream flagging
     pub moderation: Option<Arc<OpenBroadcastNetwork_core::moderation::ModerationManager>>,
+    /// Optional relay stats shared with RelayNode
+    pub relay_stats: Option<Arc<RwLock<OpenBroadcastNetwork_core::overlay::RelayStats>>>,
 }
 
 /// State for WebRTC signaling coordination
@@ -1288,6 +1290,7 @@ impl WebServer {
             clients,
             signaling_state,
             moderation: None,
+            relay_stats: None,
         };
 
         Self { config, app_state }
@@ -1342,6 +1345,7 @@ impl WebServer {
             )
             .route("/api/moderation/import", post(mod_import_handler))
             .route("/api/moderation/export", get(mod_export_handler))
+            .route("/api/stats", get(stats_handler))
             .with_state(self.app_state.clone());
 
         // Add CORS if enabled
@@ -2701,6 +2705,55 @@ async fn mod_export_handler(
     };
     let list = moderation.export_list().await;
     Json(serde_json::json!(list))
+}
+
+// ============================================================================
+// Stats API Handler
+// ============================================================================
+
+/// API endpoint returning relay, signaling, and WebRTC statistics
+async fn stats_handler(State(state): State<AppState>) -> impl IntoResponse {
+    // Relay stats (from RelayNode if available)
+    let relay = if let Some(ref rs) = state.relay_stats {
+        let s = rs.read().await;
+        serde_json::json!({
+            "chunks_relayed": s.chunks_relayed,
+            "bytes_relayed": s.bytes_relayed,
+            "avg_chunk_size": s.avg_chunk_size,
+            "active_streams": s.active_streams,
+            "connected_peers": s.connected_peers,
+            "incoming_bandwidth_bps": s.incoming_bandwidth,
+            "outgoing_bandwidth_bps": s.outgoing_bandwidth,
+            "per_stream_chunks": s.per_stream_chunks,
+        })
+    } else {
+        serde_json::json!(null)
+    };
+
+    // Signaling stats (always available)
+    let (sig_peers, sig_streams) = {
+        let senders = state.signaling_state.peer_senders.read().await;
+        let streams = state.signaling_state.streams.read().await;
+        (senders.len(), streams.len())
+    };
+
+    // WebRTC peer connection count: sum of peers across all stream rooms
+    let webrtc_peers: usize = {
+        let streams = state.signaling_state.streams.read().await;
+        streams.values().map(|peers| peers.len()).sum()
+    };
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "relay": relay,
+        "signaling": {
+            "connected_peers": sig_peers,
+            "active_streams": sig_streams,
+        },
+        "webrtc": {
+            "peer_connections": webrtc_peers,
+        }
+    }))
 }
 
 /// Default HTML page when web_root is not available
