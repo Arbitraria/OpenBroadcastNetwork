@@ -81,3 +81,50 @@ impl RelayStats {
         *self.per_stream_chunks.entry(stream_id.to_string()).or_insert(0) += 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_record_chunk() {
+        let mut stats = RelayStats::new();
+        stats.record_chunk(100);
+        stats.record_chunk(200);
+        stats.record_chunk(300);
+
+        assert_eq!(stats.chunks_relayed, 3);
+        assert_eq!(stats.bytes_relayed, 600);
+        assert_eq!(stats.avg_chunk_size, 200); // 600 / 3
+    }
+
+    #[test]
+    fn test_record_chunk_for_stream() {
+        let mut stats = RelayStats::new();
+        stats.record_chunk_for_stream(100, "stream-a");
+        stats.record_chunk_for_stream(200, "stream-a");
+        stats.record_chunk_for_stream(300, "stream-b");
+
+        assert_eq!(stats.chunks_relayed, 3);
+        assert_eq!(stats.bytes_relayed, 600);
+        assert_eq!(*stats.per_stream_chunks.get("stream-a").unwrap(), 2);
+        assert_eq!(*stats.per_stream_chunks.get("stream-b").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_reset_period() {
+        let mut stats = RelayStats::new();
+        stats.record_chunk(500);
+        stats.incoming_bandwidth = 1000;
+        stats.outgoing_bandwidth = 2000;
+
+        stats.reset_period();
+
+        // Bandwidth fields reset
+        assert_eq!(stats.incoming_bandwidth, 0);
+        assert_eq!(stats.outgoing_bandwidth, 0);
+        // Cumulative counters preserved
+        assert_eq!(stats.chunks_relayed, 1);
+        assert_eq!(stats.bytes_relayed, 500);
+    }
+}

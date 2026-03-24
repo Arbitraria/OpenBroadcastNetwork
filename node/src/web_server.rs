@@ -33,13 +33,17 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
+    http::{header, HeaderName, HeaderValue, Method, Request, StatusCode},
+    middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -48,7 +52,11 @@ use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tower::ServiceBuilder;
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::{
+    cors::CorsLayer,
+    services::ServeDir,
+    set_header::SetResponseHeaderLayer,
+};
 use tracing::{debug, error, info, warn};
 
 // Import WebRTC signaling types
@@ -85,6 +93,27 @@ pub struct WebServerConfig {
     pub enable_p2p: bool,
     /// Fall back to direct WebSocket when P2P is unavailable
     pub p2p_fallback: bool,
+    /// Allowed CORS origins (empty = same-origin only)
+    pub cors_allowed_origins: Vec<String>,
+    /// Max concurrent WebSocket connections (0 = unlimited)
+    pub max_ws_connections: usize,
+    /// Max signaling peers across all streams
+    pub max_signaling_peers: usize,
+    /// Max stream rooms in signaling
+    pub max_stream_rooms: usize,
+    /// Max peers per stream room
+    pub max_peers_per_stream: usize,
+    /// Max WebSocket message size in bytes
+    pub max_ws_message_bytes: usize,
+    /// Bearer token for admin API — protects stream control + moderation
+    /// (None = admin endpoints return 404)
+    pub admin_api_token: Option<String>,
+    /// Max HTTP requests per IP per window (0 = unlimited)
+    pub rate_limit_per_ip: u32,
+    /// Rate limit window in seconds
+    pub rate_limit_window_secs: u64,
+    /// Idle stream room cleanup interval in seconds
+    pub idle_cleanup_secs: u64,
 }
 
 impl Default for WebServerConfig {
@@ -97,6 +126,16 @@ impl Default for WebServerConfig {
             video_file: None,
             enable_p2p: true,
             p2p_fallback: true,
+            cors_allowed_origins: Vec::new(),
+            max_ws_connections: 100,
+            max_signaling_peers: 50,
+            max_stream_rooms: 20,
+            max_peers_per_stream: 50,
+            max_ws_message_bytes: 65536,
+            admin_api_token: None,
+            rate_limit_per_ip: 60,
+            rate_limit_window_secs: 60,
+            idle_cleanup_secs: 300,
         }
     }
 }
@@ -114,6 +153,10 @@ pub struct AppState {
     pub moderation: Option<Arc<OpenBroadcastNetwork_core::moderation::ModerationManager>>,
     /// Optional relay stats shared with RelayNode
     pub relay_stats: Option<Arc<RwLock<OpenBroadcastNetwork_core::overlay::RelayStats>>>,
+    /// Active WebSocket connection count
+    pub ws_connection_count: Arc<AtomicUsize>,
+    /// Per-IP rate limiter state
+    pub rate_limiter: Arc<RateLimiterState>,
 }
 
 /// State for WebRTC signaling coordination
@@ -121,7 +164,9 @@ pub struct SignalingState {
     /// Map of stream_id -> list of connected peers
     pub streams: RwLock<HashMap<String, Vec<SignalingPeer>>>,
     /// Map of peer_id -> sender for signaling messages
-    pub peer_senders: RwLock<HashMap<String, mpsc::UnboundedSender<SignalingMessage>>>,
+    pub peer_senders: RwLock<HashMap<String, mpsc::Sender<SignalingMessage>>>,
+    /// Last activity timestamp per stream room
+    pub stream_last_active: RwLock<HashMap<String, Instant>>,
 }
 
 /// Represents a connected signaling peer
@@ -137,8 +182,132 @@ impl Default for SignalingState {
         Self {
             streams: RwLock::new(HashMap::new()),
             peer_senders: RwLock::new(HashMap::new()),
+            stream_last_active: RwLock::new(HashMap::new()),
         }
     }
+}
+
+// ── Connection limiting helpers ─────────────────────────────────────
+
+/// RAII guard that decrements the WebSocket connection counter on drop.
+struct WsConnectionGuard(Arc<AtomicUsize>);
+
+impl Drop for WsConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Try to acquire a WebSocket connection slot.
+/// Returns a guard that auto-decrements the count on drop.
+fn try_acquire_ws_slot(state: &AppState) -> Option<WsConnectionGuard> {
+    let max = state.config.max_ws_connections;
+    if max == 0 {
+        // Unlimited
+        state.ws_connection_count.fetch_add(1, Ordering::Relaxed);
+        return Some(WsConnectionGuard(state.ws_connection_count.clone()));
+    }
+    let prev = state.ws_connection_count.fetch_add(1, Ordering::Relaxed);
+    if prev >= max {
+        state.ws_connection_count.fetch_sub(1, Ordering::Relaxed);
+        return None;
+    }
+    Some(WsConnectionGuard(state.ws_connection_count.clone()))
+}
+
+// ── Input validation helpers ────────────────────────────────────────
+
+/// Validate that an ID contains only safe characters.
+fn validate_id(id: &str, max_len: usize) -> bool {
+    !id.is_empty()
+        && id.len() <= max_len
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+// ── Per-IP rate limiting ─────────────────────────────────────────────
+
+/// Simple fixed-window per-IP rate limiter.
+///
+/// Each IP gets a bucket of `(count, window_start)`. When a request
+/// arrives we check whether the current window has expired; if so the
+/// bucket resets. If `count >= max_requests` within the window the
+/// request is rejected.
+pub struct RateLimiterState {
+    buckets: std::sync::Mutex<
+        HashMap<std::net::IpAddr, (u32, Instant)>,
+    >,
+    max_requests: u32,
+    window: Duration,
+}
+
+impl RateLimiterState {
+    pub fn new(max_requests: u32, window_secs: u64) -> Self {
+        Self {
+            buckets: std::sync::Mutex::new(HashMap::new()),
+            max_requests,
+            window: Duration::from_secs(window_secs),
+        }
+    }
+
+    /// Returns `true` if the request is allowed, `false` if rate-limited.
+    pub fn check_rate_limit(&self, ip: std::net::IpAddr) -> bool {
+        let mut buckets = self.buckets.lock().unwrap();
+        let now = Instant::now();
+        let entry = buckets
+            .entry(ip)
+            .or_insert((0, now));
+
+        // Reset bucket if window expired
+        if now.duration_since(entry.1) >= self.window {
+            *entry = (1, now);
+            return true;
+        }
+
+        if entry.0 >= self.max_requests {
+            return false;
+        }
+
+        entry.0 += 1;
+        true
+    }
+
+    /// Number of IPs currently being tracked.
+    pub fn tracked_count(&self) -> usize {
+        self.buckets.lock().unwrap().len()
+    }
+
+    /// Evict buckets whose window has expired.
+    pub fn cleanup_expired(&self) {
+        let mut buckets = self.buckets.lock().unwrap();
+        let now = Instant::now();
+        buckets.retain(|_, (_, start)| {
+            now.duration_since(*start) < self.window
+        });
+    }
+}
+
+/// Middleware that enforces per-IP rate limiting.
+///
+/// If `rate_limit_per_ip` is 0 in the config, the middleware is a no-op.
+async fn rate_limit_middleware<B>(
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<
+        SocketAddr,
+    >,
+    State(state): State<AppState>,
+    req: Request<B>,
+    next: Next<B>,
+) -> Response {
+    if state.config.rate_limit_per_ip == 0 {
+        return next.run(req).await;
+    }
+    if !state.rate_limiter.check_rate_limit(addr.ip()) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded",
+        )
+            .into_response();
+    }
+    next.run(req).await
 }
 
 /// Manages streaming connections and codec operations
@@ -1055,18 +1224,27 @@ async fn relay_websocket_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_relay_websocket(socket, state))
+    let Some(guard) = try_acquire_ws_slot(&state) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections")
+            .into_response();
+    };
+    ws.max_message_size(state.config.max_ws_message_bytes)
+        .on_upgrade(move |socket| handle_relay_websocket(socket, state, guard))
 }
 
 /// Handle a single WASM relay WebSocket connection
-async fn handle_relay_websocket(socket: WebSocket, state: AppState) {
+async fn handle_relay_websocket(
+    socket: WebSocket,
+    state: AppState,
+    _guard: WsConnectionGuard,
+) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let sm = &state.stream_manager;
 
     // Per-connection subscription: spawns a task that forwards P2P data
     let mut relay_task: Option<tokio::task::JoinHandle<()>> = None;
-    let (binary_tx, mut binary_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let (text_tx, mut text_rx) = mpsc::unbounded_channel::<String>();
+    let (binary_tx, mut binary_rx) = mpsc::channel::<Vec<u8>>(256);
+    let (text_tx, mut text_rx) = mpsc::channel::<String>(64);
 
     // Spawn a task that forwards frames to the browser
     let forward_handle = tokio::spawn(async move {
@@ -1124,7 +1302,7 @@ async fn handle_relay_websocket(socket: WebSocket, state: AppState) {
                             {
                                 let init = sm.initialization_segment.lock().await;
                                 if let Some(ref data) = *init {
-                                    let _ = tx.send(data.clone());
+                                    let _ = tx.try_send(data.clone());
                                 }
                             }
 
@@ -1149,10 +1327,10 @@ async fn handle_relay_websocket(socket: WebSocket, state: AppState) {
                                             let target_str = target
                                                 .as_str()
                                                 .unwrap_or_default();
-                                            if recv_str == target_str {
-                                                if tx.send(data).is_err() {
-                                                    break;
-                                                }
+                                            if recv_str == target_str
+                                                && tx.try_send(data).is_err()
+                                            {
+                                                break;
                                             }
                                         }
                                     } else {
@@ -1171,7 +1349,7 @@ async fn handle_relay_websocket(socket: WebSocket, state: AppState) {
                                 while let Ok(segment) = rx.recv().await {
                                     let wire: WireSegment = (&segment).into();
                                     if let Ok(bytes) = wire.to_bytes() {
-                                        if tx.send(bytes).is_err() {
+                                        if tx.try_send(bytes).is_err() {
                                             break;
                                         }
                                     }
@@ -1231,7 +1409,7 @@ async fn handle_relay_websocket(socket: WebSocket, state: AppState) {
 
                         let resp = RelayMessage::StreamList { streams };
                         if let Ok(json) = serde_json::to_string(&resp) {
-                            let _ = text_tx.send(json);
+                            let _ = text_tx.try_send(json);
                         }
                     }
                     Ok(_) => {} // ignore other message types from client
@@ -1283,6 +1461,10 @@ impl WebServer {
         let stream_manager = Arc::new(StreamManager::new());
         let clients = Arc::new(RwLock::new(HashMap::new()));
         let signaling_state = Arc::new(SignalingState::default());
+        let rate_limiter = Arc::new(RateLimiterState::new(
+            config.rate_limit_per_ip,
+            config.rate_limit_window_secs,
+        ));
 
         let app_state = AppState {
             config: config.clone(),
@@ -1291,6 +1473,8 @@ impl WebServer {
             signaling_state,
             moderation: None,
             relay_stats: None,
+            ws_connection_count: Arc::new(AtomicUsize::new(0)),
+            rate_limiter,
         };
 
         Self { config, app_state }
@@ -1310,6 +1494,70 @@ impl WebServer {
         info!("Web viewer available at http://{}/", addr);
         info!("WebSocket streaming endpoint: ws://{}/stream", addr);
 
+        // Spawn rate limiter bucket cleanup task (every 5 min)
+        if self.config.rate_limit_per_ip > 0 {
+            let rl = self.app_state.rate_limiter.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(
+                    Duration::from_secs(300),
+                );
+                loop {
+                    interval.tick().await;
+                    let before = rl.tracked_count();
+                    rl.cleanup_expired();
+                    let removed = before - rl.tracked_count();
+                    if removed > 0 {
+                        info!(
+                            "Rate limiter cleanup: evicted {} \
+                             expired bucket(s)",
+                            removed
+                        );
+                    }
+                }
+            });
+        }
+
+        // Spawn idle stream room cleanup task
+        let cleanup_interval = self.config.idle_cleanup_secs;
+        if cleanup_interval > 0 {
+            let cleanup_state = self.app_state.signaling_state.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(
+                    Duration::from_secs(cleanup_interval),
+                );
+                loop {
+                    interval.tick().await;
+                    let now = Instant::now();
+                    let mut streams = cleanup_state.streams.write().await;
+                    let mut timestamps =
+                        cleanup_state.stream_last_active.write().await;
+                    let before = streams.len();
+                    streams.retain(|id, peers| {
+                        if peers.is_empty() {
+                            timestamps.remove(id);
+                            return false;
+                        }
+                        if let Some(last) = timestamps.get(id) {
+                            if now.duration_since(*last).as_secs()
+                                > cleanup_interval
+                            {
+                                timestamps.remove(id);
+                                return false;
+                            }
+                        }
+                        true
+                    });
+                    let removed = before - streams.len();
+                    if removed > 0 {
+                        info!(
+                            "Idle cleanup: removed {} stale stream room(s)",
+                            removed
+                        );
+                    }
+                }
+            });
+        }
+
         axum::Server::bind(&socket_addr)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
@@ -1318,50 +1566,141 @@ impl WebServer {
     }
 
     async fn create_app(&self) -> Router {
+        // Build admin-protected routes: stream control + moderation
+        let admin_router = Router::new()
+            // Stream control (was unprotected)
+            .route("/stream/start", post(start_stream_handler))
+            .route("/stream/stop", post(stop_stream_handler))
+            // Moderation
+            .route(
+                "/moderation/block-peer",
+                post(mod_block_peer_handler),
+            )
+            .route(
+                "/moderation/block-peer/:peer_id",
+                delete(mod_unblock_peer_handler),
+            )
+            .route(
+                "/moderation/blocked-peers",
+                get(mod_blocked_peers_handler),
+            )
+            .route(
+                "/moderation/flag-stream",
+                post(mod_flag_stream_handler),
+            )
+            .route(
+                "/moderation/flagged-streams",
+                get(mod_flagged_streams_handler),
+            )
+            .route("/moderation/import", post(mod_import_handler))
+            .route("/moderation/export", get(mod_export_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                self.app_state.clone(),
+                admin_auth_middleware,
+            ))
+            .with_state(self.app_state.clone());
+
         let mut router = Router::new()
             .route("/stream", get(websocket_handler))
             .route("/ws/relay", get(relay_websocket_handler))
             .route("/webrtc/signal", get(webrtc_signaling_handler))
-            .route("/api/stream/start", post(start_stream_handler))
-            .route("/api/stream/stop", post(stop_stream_handler))
+            // Read-only endpoints stay public
             .route("/api/stream/status", get(stream_status_handler))
             .route("/api/streams", get(list_streams_handler))
-            .route("/api/moderation/block-peer", post(mod_block_peer_handler))
-            .route(
-                "/api/moderation/block-peer/:peer_id",
-                delete(mod_unblock_peer_handler),
-            )
-            .route(
-                "/api/moderation/blocked-peers",
-                get(mod_blocked_peers_handler),
-            )
-            .route(
-                "/api/moderation/flag-stream",
-                post(mod_flag_stream_handler),
-            )
-            .route(
-                "/api/moderation/flagged-streams",
-                get(mod_flagged_streams_handler),
-            )
-            .route("/api/moderation/import", post(mod_import_handler))
-            .route("/api/moderation/export", get(mod_export_handler))
             .route("/api/stats", get(stats_handler))
+            // Admin-protected endpoints
+            .nest("/api", admin_router)
             .with_state(self.app_state.clone());
 
         // Add CORS if enabled
         if self.config.enable_cors {
-            router = router.layer(ServiceBuilder::new().layer(CorsLayer::permissive()));
+            let cors = if self.config.cors_allowed_origins.is_empty() {
+                // Same-origin only when no origins configured
+                CorsLayer::new()
+                    .allow_methods([
+                        Method::GET,
+                        Method::POST,
+                        Method::DELETE,
+                    ])
+                    .allow_headers([
+                        header::CONTENT_TYPE,
+                        header::AUTHORIZATION,
+                    ])
+            } else {
+                CorsLayer::new()
+                    .allow_origin(
+                        self.config
+                            .cors_allowed_origins
+                            .iter()
+                            .filter_map(|o| {
+                                o.parse::<HeaderValue>().ok()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .allow_methods([
+                        Method::GET,
+                        Method::POST,
+                        Method::DELETE,
+                    ])
+                    .allow_headers([
+                        header::CONTENT_TYPE,
+                        header::AUTHORIZATION,
+                    ])
+            };
+            router = router.layer(ServiceBuilder::new().layer(cors));
+        }
+
+        // Security headers
+        router = router
+            .layer(SetResponseHeaderLayer::overriding(
+                header::X_FRAME_OPTIONS,
+                HeaderValue::from_static("DENY"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                HeaderName::from_static("x-xss-protection"),
+                HeaderValue::from_static("1; mode=block"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                HeaderName::from_static("content-security-policy"),
+                HeaderValue::from_static(
+                    "default-src 'self'; \
+                     script-src 'self' 'unsafe-inline'; \
+                     style-src 'self' 'unsafe-inline'; \
+                     connect-src 'self' ws: wss:; \
+                     media-src 'self' blob:; \
+                     img-src 'self' data:",
+                ),
+            ));
+
+        // Per-IP rate limiting (outermost layer)
+        if self.config.rate_limit_per_ip > 0 {
+            router = router.layer(
+                axum::middleware::from_fn_with_state(
+                    self.app_state.clone(),
+                    rate_limit_middleware,
+                ),
+            );
         }
 
         // Serve static files (web viewer)
         if self.config.web_root.exists() {
-            info!("Serving static files from: {:?}", self.config.web_root);
+            info!(
+                "Serving static files from: {:?}",
+                self.config.web_root
+            );
             router = router.fallback_service(
                 ServeDir::new(&self.config.web_root)
-                    .append_index_html_on_directories(true)
+                    .append_index_html_on_directories(true),
             );
         } else {
-            warn!("Web root directory not found: {:?}", self.config.web_root);
+            warn!(
+                "Web root directory not found: {:?}",
+                self.config.web_root
+            );
             router = router.fallback(|| async { Html(DEFAULT_HTML) });
         }
 
@@ -1382,11 +1721,18 @@ async fn websocket_handler(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Response {
+    let Some(guard) = try_acquire_ws_slot(&state) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections")
+            .into_response();
+    };
     let stream_id = params.get("stream_id").cloned();
     if let Some(ref id) = stream_id {
         info!("WebSocket connection requested stream_id={}", id);
     }
-    ws.on_upgrade(move |socket| handle_websocket(socket, state, stream_id))
+    ws.max_message_size(state.config.max_ws_message_bytes)
+        .on_upgrade(move |socket| {
+            handle_websocket(socket, state, stream_id, guard)
+        })
 }
 
 /// Handle individual WebSocket connections
@@ -1411,6 +1757,7 @@ async fn handle_websocket(
     socket: WebSocket,
     state: AppState,
     requested_stream_id: Option<String>,
+    _guard: WsConnectionGuard,
 ) {
     let client_id = uuid::Uuid::new_v4().to_string();
     if let Some(ref sid) = requested_stream_id {
@@ -2151,8 +2498,16 @@ async fn list_streams_handler(State(state): State<AppState>) -> impl IntoRespons
 ///
 /// This endpoint handles WebSocket connections for WebRTC signaling,
 /// relaying SDP offers/answers and ICE candidates between peers.
-async fn webrtc_signaling_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    ws.on_upgrade(|socket| handle_webrtc_signaling(socket, state))
+async fn webrtc_signaling_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> Response {
+    let Some(guard) = try_acquire_ws_slot(&state) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections")
+            .into_response();
+    };
+    ws.max_message_size(state.config.max_ws_message_bytes)
+        .on_upgrade(|socket| handle_webrtc_signaling(socket, state, guard))
 }
 
 /// Handle individual WebRTC signaling connections
@@ -2161,15 +2516,19 @@ async fn webrtc_signaling_handler(ws: WebSocketUpgrade, State(state): State<AppS
 /// 1. Assigns a unique peer ID to the connection
 /// 2. Receives and relays signaling messages between peers
 /// 3. Manages peer registration and discovery for streams
-async fn handle_webrtc_signaling(socket: WebSocket, state: AppState) {
+async fn handle_webrtc_signaling(
+    socket: WebSocket,
+    state: AppState,
+    _guard: WsConnectionGuard,
+) {
     let peer_id = uuid::Uuid::new_v4().to_string();
     info!("New WebRTC signaling client connected: {}", peer_id);
 
     // Split the socket into sender and receiver
     let (mut sender, mut receiver) = socket.split();
 
-    // Create channel for sending messages to this peer
-    let (tx, mut rx) = mpsc::unbounded_channel::<SignalingMessage>();
+    // Create bounded channel for sending messages to this peer
+    let (tx, mut rx) = mpsc::channel::<SignalingMessage>(64);
 
     // Register this peer's sender
     {
@@ -2220,7 +2579,7 @@ async fn handle_webrtc_signaling(socket: WebSocket, state: AppState) {
                         };
                         let senders = state.signaling_state.peer_senders.read().await;
                         if let Some(sender) = senders.get(&peer_id) {
-                            let _ = sender.send(error_msg);
+                            let _ = sender.try_send(error_msg);
                         }
                     }
                 }
@@ -2255,6 +2614,18 @@ async fn handle_signaling_message(
             stream_id,
             is_publisher,
         } => {
+            // Validate stream ID
+            if !validate_id(&stream_id, 128) {
+                warn!("Invalid stream_id from peer {}", peer_id);
+                let senders = state.signaling_state.peer_senders.read().await;
+                if let Some(sender) = senders.get(peer_id) {
+                    let _ = sender.try_send(SignalingMessage::Error {
+                        message: "Invalid stream ID".to_string(),
+                    });
+                }
+                return;
+            }
+
             // Check moderation before allowing join
             if let Some(ref moderation) = state.moderation {
                 if !moderation.is_peer_allowed(peer_id).await {
@@ -2264,7 +2635,7 @@ async fn handle_signaling_message(
                     };
                     let senders = state.signaling_state.peer_senders.read().await;
                     if let Some(sender) = senders.get(peer_id) {
-                        let _ = sender.send(error_msg);
+                        let _ = sender.try_send(error_msg);
                     }
                     return;
                 }
@@ -2275,10 +2646,47 @@ async fn handle_signaling_message(
                 peer_id, stream_id, is_publisher
             );
 
-            // Add peer to stream
+            // Add peer to stream (with capacity checks)
             {
                 let mut streams = state.signaling_state.streams.write().await;
-                let peers = streams.entry(stream_id.clone()).or_insert_with(Vec::new);
+
+                // Check max stream rooms
+                if !streams.contains_key(&stream_id)
+                    && streams.len() >= state.config.max_stream_rooms
+                {
+                    warn!("Max stream rooms reached, rejecting {}", peer_id);
+                    let senders =
+                        state.signaling_state.peer_senders.read().await;
+                    if let Some(sender) = senders.get(peer_id) {
+                        let _ = sender.try_send(SignalingMessage::Error {
+                            message: "Max stream rooms reached".to_string(),
+                        });
+                    }
+                    return;
+                }
+
+                // Check max peers per stream
+                if let Some(peers) = streams.get(&stream_id) {
+                    if peers.iter().all(|p| p.peer_id != peer_id)
+                        && peers.len() >= state.config.max_peers_per_stream
+                    {
+                        warn!(
+                            "Stream {} full, rejecting {}",
+                            stream_id, peer_id
+                        );
+                        let senders =
+                            state.signaling_state.peer_senders.read().await;
+                        if let Some(sender) = senders.get(peer_id) {
+                            let _ = sender.try_send(SignalingMessage::Error {
+                                message: "Stream room is full".to_string(),
+                            });
+                        }
+                        return;
+                    }
+                }
+
+                let peers =
+                    streams.entry(stream_id.clone()).or_insert_with(Vec::new);
 
                 // Remove if already exists (rejoin)
                 peers.retain(|p| p.peer_id != peer_id);
@@ -2294,6 +2702,13 @@ async fn handle_signaling_message(
                     stream_id,
                     peers.len()
                 );
+            }
+
+            // Update stream last-active timestamp
+            {
+                let mut timestamps =
+                    state.signaling_state.stream_last_active.write().await;
+                timestamps.insert(stream_id.clone(), Instant::now());
             }
 
             *current_stream_id = Some(stream_id.clone());
@@ -2319,7 +2734,7 @@ async fn handle_signaling_message(
             let peer_list_msg = SignalingMessage::PeerList { peers: peer_list };
             let senders = state.signaling_state.peer_senders.read().await;
             if let Some(sender) = senders.get(peer_id) {
-                let _ = sender.send(peer_list_msg);
+                let _ = sender.try_send(peer_list_msg);
             }
 
             // Notify other peers about the new peer
@@ -2333,7 +2748,7 @@ async fn handle_signaling_message(
             if let Some(peers) = streams.get(&stream_id) {
                 for other_peer in peers.iter().filter(|p| p.peer_id != peer_id) {
                     if let Some(sender) = senders.get(&other_peer.peer_id) {
-                        let _ = sender.send(join_notification.clone());
+                        let _ = sender.try_send(join_notification.clone());
                     }
                 }
             }
@@ -2368,7 +2783,7 @@ async fn handle_signaling_message(
 
                 let senders = state.signaling_state.peer_senders.read().await;
                 if let Some(sender) = senders.get(&target_id) {
-                    let _ = sender.send(offer);
+                    let _ = sender.try_send(offer);
                 } else {
                     warn!("Target peer {} not found for offer relay", target_id);
                 }
@@ -2389,7 +2804,7 @@ async fn handle_signaling_message(
 
             let senders = state.signaling_state.peer_senders.read().await;
             if let Some(sender) = senders.get(&target_peer_id) {
-                let _ = sender.send(answer);
+                let _ = sender.try_send(answer);
             } else {
                 warn!("Target peer {} not found for answer relay", target_peer_id);
             }
@@ -2413,7 +2828,7 @@ async fn handle_signaling_message(
 
             let senders = state.signaling_state.peer_senders.read().await;
             if let Some(sender) = senders.get(&target_peer_id) {
-                let _ = sender.send(ice);
+                let _ = sender.try_send(ice);
             } else {
                 debug!("Target peer {} not found for ICE relay", target_peer_id);
             }
@@ -2462,7 +2877,7 @@ async fn handle_signaling_message(
                 let senders = state.signaling_state.peer_senders.read().await;
                 for other_id in &peers_to_notify {
                     if let Some(sender) = senders.get(other_id) {
-                        let _ = sender.send(update_msg.clone());
+                        let _ = sender.try_send(update_msg.clone());
                     }
                 }
             }
@@ -2501,7 +2916,7 @@ async fn cleanup_signaling_peer(
             let senders = state.signaling_state.peer_senders.read().await;
             for other_peer in peers.iter() {
                 if let Some(sender) = senders.get(&other_peer.peer_id) {
-                    let _ = sender.send(leave_msg.clone());
+                    let _ = sender.try_send(leave_msg.clone());
                 }
             }
 
@@ -2547,7 +2962,7 @@ async fn kick_peer_from_signaling(state: &AppState, peer_id: &str) {
         for (_stream_id, remaining_peers) in &streams_to_notify {
             for other_id in remaining_peers {
                 if let Some(sender) = senders.get(other_id) {
-                    let _ = sender.send(leave_msg.clone());
+                    let _ = sender.try_send(leave_msg.clone());
                 }
             }
         }
@@ -2565,6 +2980,47 @@ async fn kick_peer_from_signaling(state: &AppState, peer_id: &str) {
             peer_id,
             streams_to_notify.len()
         );
+    }
+}
+
+// ============================================================================
+// Moderation Auth Middleware
+// ============================================================================
+
+/// Middleware that checks `Authorization: Bearer <token>` against the
+/// configured `admin_api_token`. If no token is configured, all admin
+/// endpoints return 404. If the token is missing or wrong, returns 401.
+async fn admin_auth_middleware<B>(
+    State(state): State<AppState>,
+    req: Request<B>,
+    next: Next<B>,
+) -> Response {
+    let expected = match &state.config.admin_api_token {
+        Some(t) => t,
+        None => {
+            return (StatusCode::NOT_FOUND, "Admin API not enabled")
+                .into_response()
+        }
+    };
+
+    let auth_header = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    match auth_header {
+        Some(h) if h.starts_with("Bearer ") => {
+            let token = &h[7..];
+            if token == expected.as_str() {
+                next.run(req).await
+            } else {
+                (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
+            }
+        }
+        _ => {
+            (StatusCode::UNAUTHORIZED, "Missing or invalid Authorization header")
+                .into_response()
+        }
     }
 }
 
@@ -2752,6 +3208,15 @@ async fn stats_handler(State(state): State<AppState>) -> impl IntoResponse {
         },
         "webrtc": {
             "peer_connections": webrtc_peers,
+        },
+        "connections": {
+            "active_websockets": state.ws_connection_count.load(Ordering::Relaxed),
+            "max_websockets": state.config.max_ws_connections,
+        },
+        "rate_limiter": {
+            "tracked_ips": state.rate_limiter.tracked_count(),
+            "limit_per_ip": state.config.rate_limit_per_ip,
+            "window_secs": state.config.rate_limit_window_secs,
         }
     }))
 }
@@ -2793,3 +3258,519 @@ const DEFAULT_HTML: &str = r#"
 </body>
 </html>
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::State;
+    use OpenBroadcastNetwork_core::overlay::RelayStats;
+
+    /// Helper to build an AppState suitable for unit tests (no overlay).
+    fn test_app_state(
+        relay_stats: Option<Arc<RwLock<RelayStats>>>,
+    ) -> AppState {
+        let config = WebServerConfig::default();
+        let rate_limiter = Arc::new(RateLimiterState::new(
+            config.rate_limit_per_ip,
+            config.rate_limit_window_secs,
+        ));
+        AppState {
+            config,
+            stream_manager: Arc::new(StreamManager::new()),
+            clients: Arc::new(RwLock::new(HashMap::new())),
+            signaling_state: Arc::new(SignalingState::default()),
+            moderation: None,
+            relay_stats,
+            ws_connection_count: Arc::new(AtomicUsize::new(0)),
+            rate_limiter,
+        }
+    }
+
+    /// Helper to build an AppState with custom config for unit tests.
+    fn test_app_state_with_config(
+        config: WebServerConfig,
+    ) -> AppState {
+        let rate_limiter = Arc::new(RateLimiterState::new(
+            config.rate_limit_per_ip,
+            config.rate_limit_window_secs,
+        ));
+        AppState {
+            config,
+            stream_manager: Arc::new(StreamManager::new()),
+            clients: Arc::new(RwLock::new(HashMap::new())),
+            signaling_state: Arc::new(SignalingState::default()),
+            moderation: None,
+            relay_stats: None,
+            ws_connection_count: Arc::new(AtomicUsize::new(0)),
+            rate_limiter,
+        }
+    }
+
+    /// Helper: call stats_handler and parse the JSON response body.
+    async fn call_stats(state: AppState) -> serde_json::Value {
+        let resp = stats_handler(State(state)).await;
+        let resp = axum::response::IntoResponse::into_response(resp);
+        let bytes =
+            hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_stats_handler_with_relay_stats() {
+        let stats = RelayStats {
+            chunks_relayed: 42,
+            bytes_relayed: 1234,
+            avg_chunk_size: 29,
+            active_streams: 2,
+            connected_peers: 5,
+            ..Default::default()
+        };
+        let state =
+            test_app_state(Some(Arc::new(RwLock::new(stats))));
+        let json = call_stats(state).await;
+
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["relay"]["chunks_relayed"], 42);
+        assert_eq!(json["relay"]["bytes_relayed"], 1234);
+        assert_eq!(json["relay"]["avg_chunk_size"], 29);
+        assert_eq!(json["relay"]["active_streams"], 2);
+        assert_eq!(json["relay"]["connected_peers"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_stats_handler_without_relay_stats() {
+        let json = call_stats(test_app_state(None)).await;
+
+        assert_eq!(json["status"], "ok");
+        assert!(json["relay"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_kick_peer_from_signaling() {
+        let state = test_app_state(None);
+
+        // Insert a peer into a stream room and the senders map
+        let (tx, _rx) = mpsc::channel(64);
+        {
+            let mut senders =
+                state.signaling_state.peer_senders.write().await;
+            senders.insert("peer-A".to_string(), tx);
+        }
+        {
+            let mut streams =
+                state.signaling_state.streams.write().await;
+            streams.insert(
+                "stream-1".to_string(),
+                vec![SignalingPeer {
+                    peer_id: "peer-A".to_string(),
+                    is_publisher: false,
+                    can_relay: true,
+                }],
+            );
+        }
+
+        // Kick the peer
+        kick_peer_from_signaling(&state, "peer-A").await;
+
+        // Verify peer is removed from senders
+        let senders = state.signaling_state.peer_senders.read().await;
+        assert!(
+            !senders.contains_key("peer-A"),
+            "peer-A should be removed from senders"
+        );
+        drop(senders);
+
+        // Verify peer is removed from streams (and empty stream pruned)
+        let streams = state.signaling_state.streams.read().await;
+        assert!(
+            !streams.contains_key("stream-1"),
+            "empty stream should be pruned"
+        );
+    }
+
+    #[test]
+    fn test_validate_id() {
+        // Valid IDs
+        assert!(validate_id("abc-123_XYZ", 128));
+        assert!(validate_id("a", 128));
+        assert!(validate_id("stream-id-01", 20));
+
+        // Invalid: empty
+        assert!(!validate_id("", 128));
+        // Invalid: too long
+        assert!(!validate_id("abcdef", 5));
+        // Invalid: special characters
+        assert!(!validate_id("stream id", 128));
+        assert!(!validate_id("stream/id", 128));
+        assert!(!validate_id("stream<script>", 128));
+        assert!(!validate_id("hello\0world", 128));
+    }
+
+    #[tokio::test]
+    async fn test_ws_connection_guard_increments_and_decrements() {
+        let state = test_app_state(None);
+        assert_eq!(state.ws_connection_count.load(Ordering::Relaxed), 0);
+
+        let guard1 = try_acquire_ws_slot(&state).unwrap();
+        assert_eq!(state.ws_connection_count.load(Ordering::Relaxed), 1);
+
+        let guard2 = try_acquire_ws_slot(&state).unwrap();
+        assert_eq!(state.ws_connection_count.load(Ordering::Relaxed), 2);
+
+        drop(guard1);
+        assert_eq!(state.ws_connection_count.load(Ordering::Relaxed), 1);
+
+        drop(guard2);
+        assert_eq!(state.ws_connection_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_ws_connection_limit_enforced() {
+        let config = WebServerConfig {
+            max_ws_connections: 2,
+            ..Default::default()
+        };
+        let state = test_app_state_with_config(config);
+
+        let g1 = try_acquire_ws_slot(&state);
+        assert!(g1.is_some());
+        let g2 = try_acquire_ws_slot(&state);
+        assert!(g2.is_some());
+
+        // Third connection should be rejected
+        let g3 = try_acquire_ws_slot(&state);
+        assert!(g3.is_none());
+        assert_eq!(state.ws_connection_count.load(Ordering::Relaxed), 2);
+
+        // After dropping one, a new connection should succeed
+        drop(g1);
+        let g4 = try_acquire_ws_slot(&state);
+        assert!(g4.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_signaling_max_stream_rooms() {
+        let config = WebServerConfig {
+            max_stream_rooms: 2,
+            max_peers_per_stream: 10,
+            ..Default::default()
+        };
+        let state = test_app_state_with_config(config);
+
+        // Fill up 2 stream rooms
+        {
+            let mut streams =
+                state.signaling_state.streams.write().await;
+            streams.insert(
+                "stream-1".to_string(),
+                vec![SignalingPeer {
+                    peer_id: "p1".to_string(),
+                    is_publisher: true,
+                    can_relay: false,
+                }],
+            );
+            streams.insert(
+                "stream-2".to_string(),
+                vec![SignalingPeer {
+                    peer_id: "p2".to_string(),
+                    is_publisher: true,
+                    can_relay: false,
+                }],
+            );
+        }
+
+        // Register a sender for the test peer
+        let (tx, _rx) = mpsc::channel(64);
+        {
+            let mut senders =
+                state.signaling_state.peer_senders.write().await;
+            senders.insert("new-peer".to_string(), tx);
+        }
+
+        // Try to join a 3rd stream — should be rejected
+        let mut current_stream = None;
+        handle_signaling_message(
+            &state,
+            "new-peer",
+            &mut current_stream,
+            SignalingMessage::PeerJoin {
+                peer_id: "new-peer".to_string(),
+                stream_id: "stream-3".to_string(),
+                is_publisher: false,
+            },
+        )
+        .await;
+
+        // Verify stream-3 was NOT created
+        let streams = state.signaling_state.streams.read().await;
+        assert!(
+            !streams.contains_key("stream-3"),
+            "stream-3 should not be created when at max rooms"
+        );
+        assert!(
+            current_stream.is_none(),
+            "peer should not have joined"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_idle_cleanup() {
+        let state = test_app_state(None);
+
+        // Insert a stale stream room with an old timestamp
+        {
+            let mut streams =
+                state.signaling_state.streams.write().await;
+            streams.insert(
+                "stale-stream".to_string(),
+                vec![SignalingPeer {
+                    peer_id: "p1".to_string(),
+                    is_publisher: true,
+                    can_relay: false,
+                }],
+            );
+        }
+        {
+            let mut timestamps =
+                state.signaling_state.stream_last_active.write().await;
+            // Set timestamp to 10 minutes ago
+            timestamps.insert(
+                "stale-stream".to_string(),
+                Instant::now() - std::time::Duration::from_secs(600),
+            );
+        }
+
+        // Insert a fresh stream room
+        {
+            let mut streams =
+                state.signaling_state.streams.write().await;
+            streams.insert(
+                "fresh-stream".to_string(),
+                vec![SignalingPeer {
+                    peer_id: "p2".to_string(),
+                    is_publisher: true,
+                    can_relay: false,
+                }],
+            );
+        }
+        {
+            let mut timestamps =
+                state.signaling_state.stream_last_active.write().await;
+            timestamps.insert(
+                "fresh-stream".to_string(),
+                Instant::now(),
+            );
+        }
+
+        // Simulate cleanup (same logic as the spawned task)
+        let cleanup_interval = 300u64; // 5 minutes
+        {
+            let now = Instant::now();
+            let mut streams =
+                state.signaling_state.streams.write().await;
+            let mut timestamps =
+                state.signaling_state.stream_last_active.write().await;
+            streams.retain(|id, peers| {
+                if peers.is_empty() {
+                    timestamps.remove(id);
+                    return false;
+                }
+                if let Some(last) = timestamps.get(id) {
+                    if now.duration_since(*last).as_secs()
+                        > cleanup_interval
+                    {
+                        timestamps.remove(id);
+                        return false;
+                    }
+                }
+                true
+            });
+        }
+
+        let streams = state.signaling_state.streams.read().await;
+        assert!(
+            !streams.contains_key("stale-stream"),
+            "stale stream should be cleaned up"
+        );
+        assert!(
+            streams.contains_key("fresh-stream"),
+            "fresh stream should remain"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stats_includes_connection_count() {
+        let state = test_app_state(None);
+        state.ws_connection_count.fetch_add(5, Ordering::Relaxed);
+        let json = call_stats(state).await;
+
+        assert_eq!(json["connections"]["active_websockets"], 5);
+        assert_eq!(json["connections"]["max_websockets"], 100);
+    }
+
+    #[tokio::test]
+    async fn test_stats_includes_rate_limiter() {
+        let state = test_app_state(None);
+        let json = call_stats(state).await;
+
+        assert_eq!(json["rate_limiter"]["limit_per_ip"], 60);
+        assert_eq!(json["rate_limiter"]["window_secs"], 60);
+        assert_eq!(json["rate_limiter"]["tracked_ips"], 0);
+    }
+
+    // ── Admin auth middleware tests ────────────────────────────────
+
+    /// Build a small router with a single POST route protected by
+    /// admin_auth_middleware, and send a request using `tower::ServiceExt`.
+    async fn call_admin_protected(
+        state: AppState,
+        token: Option<&str>,
+    ) -> StatusCode {
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route(
+                "/test",
+                post(|| async { StatusCode::OK.into_response() }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                admin_auth_middleware,
+            ))
+            .with_state(state);
+
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/test");
+        if let Some(t) = token {
+            builder = builder.header(
+                "Authorization",
+                format!("Bearer {}", t),
+            );
+        }
+        let req = builder.body(hyper::Body::empty()).unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        resp.status()
+    }
+
+    #[tokio::test]
+    async fn test_admin_auth_rejects_without_token() {
+        let config = WebServerConfig {
+            admin_api_token: Some("secret123".to_string()),
+            ..Default::default()
+        };
+        let state = test_app_state_with_config(config);
+        assert_eq!(
+            call_admin_protected(state, None).await,
+            StatusCode::UNAUTHORIZED,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_auth_rejects_wrong_token() {
+        let config = WebServerConfig {
+            admin_api_token: Some("secret123".to_string()),
+            ..Default::default()
+        };
+        let state = test_app_state_with_config(config);
+        assert_eq!(
+            call_admin_protected(state, Some("wrong-token")).await,
+            StatusCode::UNAUTHORIZED,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_auth_allows_correct_token() {
+        let config = WebServerConfig {
+            admin_api_token: Some("secret123".to_string()),
+            ..Default::default()
+        };
+        let state = test_app_state_with_config(config);
+        assert_eq!(
+            call_admin_protected(state, Some("secret123")).await,
+            StatusCode::OK,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_auth_returns_404_when_no_token_configured() {
+        let config = WebServerConfig {
+            admin_api_token: None,
+            ..Default::default()
+        };
+        let state = test_app_state_with_config(config);
+        assert_eq!(
+            call_admin_protected(state, Some("any-token")).await,
+            StatusCode::NOT_FOUND,
+        );
+    }
+
+    // ── Rate limiter tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_rate_limiter_allows_within_limit() {
+        let rl = RateLimiterState::new(5, 60);
+        let ip: std::net::IpAddr =
+            "127.0.0.1".parse().unwrap();
+        for _ in 0..5 {
+            assert!(rl.check_rate_limit(ip));
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_blocks_over_limit() {
+        let rl = RateLimiterState::new(5, 60);
+        let ip: std::net::IpAddr =
+            "127.0.0.1".parse().unwrap();
+        for _ in 0..5 {
+            assert!(rl.check_rate_limit(ip));
+        }
+        // 6th request should be rejected
+        assert!(!rl.check_rate_limit(ip));
+    }
+
+    #[test]
+    fn test_rate_limiter_resets_after_window() {
+        // Use a window of 0 seconds so it expires immediately
+        let rl = RateLimiterState::new(1, 0);
+        let ip: std::net::IpAddr =
+            "127.0.0.1".parse().unwrap();
+        assert!(rl.check_rate_limit(ip));
+        // Window of 0 seconds means the next call will see
+        // that the window has expired and reset
+        assert!(rl.check_rate_limit(ip));
+    }
+
+    #[test]
+    fn test_rate_limiter_independent_per_ip() {
+        let rl = RateLimiterState::new(2, 60);
+        let ip1: std::net::IpAddr =
+            "10.0.0.1".parse().unwrap();
+        let ip2: std::net::IpAddr =
+            "10.0.0.2".parse().unwrap();
+
+        // Exhaust ip1's budget
+        assert!(rl.check_rate_limit(ip1));
+        assert!(rl.check_rate_limit(ip1));
+        assert!(!rl.check_rate_limit(ip1));
+
+        // ip2 should still be allowed
+        assert!(rl.check_rate_limit(ip2));
+        assert!(rl.check_rate_limit(ip2));
+        assert!(!rl.check_rate_limit(ip2));
+    }
+
+    #[test]
+    fn test_rate_limiter_cleanup_expired() {
+        let rl = RateLimiterState::new(10, 0); // 0-second window
+        let ip: std::net::IpAddr =
+            "10.0.0.1".parse().unwrap();
+        rl.check_rate_limit(ip);
+        assert_eq!(rl.tracked_count(), 1);
+
+        // Window is 0s, so cleanup should evict it
+        rl.cleanup_expired();
+        assert_eq!(rl.tracked_count(), 0);
+    }
+}

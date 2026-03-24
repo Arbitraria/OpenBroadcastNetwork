@@ -4,6 +4,7 @@
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::signal;
@@ -23,7 +24,7 @@ use OpenBroadcastNetwork_node::{StreamingDemo, StreamingDemoConfig};
 
 mod bootstrap_server;
 mod web_server;
-use web_server::{WebServer, WebServerConfig};
+use web_server::{RateLimiterState, WebServer, WebServerConfig};
 
 /// Decentralized Streaming Relay Node CLI
 #[derive(Parser, Debug)]
@@ -177,6 +178,18 @@ enum Commands {
         /// Enable DHT discovery for P2P mode
         #[clap(short = 'D', long, action)]
         dht: bool,
+
+        /// Max concurrent WebSocket connections (0 = unlimited)
+        #[clap(long, default_value = "100")]
+        max_connections: usize,
+
+        /// Bearer token for admin API (stream control + moderation)
+        #[clap(long, env = "ADMIN_API_TOKEN", alias = "mod-token")]
+        admin_token: Option<String>,
+
+        /// Max requests per IP per minute (0 = unlimited)
+        #[clap(long, default_value = "60")]
+        rate_limit: u32,
     },
 
     /// Publish a video file to the P2P network
@@ -498,6 +511,9 @@ async fn run_web_viewer(
     stream_id: Option<String>,
     publish: bool,
     enable_dht: bool,
+    max_connections: usize,
+    admin_token: Option<String>,
+    rate_limit: u32,
 ) -> Result<(), anyhow::Error> {
     info!("Starting web viewer server on {}:{}", host, port);
 
@@ -515,6 +531,10 @@ async fn run_web_viewer(
         video_file: video_file.as_ref().map(PathBuf::from),
         enable_p2p,
         p2p_fallback: true,
+        max_ws_connections: max_connections,
+        admin_api_token: admin_token,
+        rate_limit_per_ip: rate_limit,
+        ..Default::default()
     };
 
     // Create server with P2P support
@@ -547,13 +567,19 @@ async fn run_web_viewer(
         ));
 
         let config_clone = config.clone();
+        let rate_limiter = Arc::new(RateLimiterState::new(
+            config_clone.rate_limit_per_ip,
+            config_clone.rate_limit_window_secs,
+        ));
         let app_state = web_server::AppState {
             config: config_clone,
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
             moderation: Some(node.moderation.clone()),
-            relay_stats: None,
+            relay_stats: Some(node.overlay.relay.relay_node().stats.clone()),
+            ws_connection_count: Arc::new(AtomicUsize::new(0)),
+            rate_limiter,
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -593,13 +619,19 @@ async fn run_web_viewer(
         ));
 
         let config_clone = config.clone();
+        let rate_limiter = Arc::new(RateLimiterState::new(
+            config_clone.rate_limit_per_ip,
+            config_clone.rate_limit_window_secs,
+        ));
         let app_state = web_server::AppState {
             config: config_clone,
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
             moderation: Some(node.moderation.clone()),
-            relay_stats: None,
+            relay_stats: Some(node.overlay.relay.relay_node().stats.clone()),
+            ws_connection_count: Arc::new(AtomicUsize::new(0)),
+            rate_limiter,
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -632,13 +664,19 @@ async fn run_web_viewer(
         );
 
         let config_clone = config.clone();
+        let rate_limiter = Arc::new(RateLimiterState::new(
+            config_clone.rate_limit_per_ip,
+            config_clone.rate_limit_window_secs,
+        ));
         let app_state = web_server::AppState {
             config: config_clone,
             stream_manager: stream_manager.clone(),
             clients: Arc::new(RwLock::new(HashMap::new())),
             signaling_state: Arc::new(web_server::SignalingState::default()),
             moderation: Some(node.moderation.clone()),
-            relay_stats: None,
+            relay_stats: Some(node.overlay.relay.relay_node().stats.clone()),
+            ws_connection_count: Arc::new(AtomicUsize::new(0)),
+            rate_limiter,
         };
 
         let server = web_server::WebServer::new_with_state(config, app_state);
@@ -1059,6 +1097,9 @@ async fn main() -> Result<(), anyhow::Error> {
             stream_id,
             publish,
             dht,
+            max_connections,
+            admin_token,
+            rate_limit,
         } => {
             let bootstrap_nodes = bootstrap.clone().unwrap_or_else(Vec::new);
             run_web_viewer(
@@ -1071,6 +1112,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 stream_id.clone(),
                 *publish,
                 *dht,
+                *max_connections,
+                admin_token.clone(),
+                *rate_limit,
             )
             .await?;
         }
@@ -1102,6 +1146,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 None,
                 true,
                 *dht,
+                100,
+                None,
+                60, // default rate limit
             )
             .await?;
         }
