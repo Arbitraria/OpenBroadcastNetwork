@@ -410,9 +410,5 @@ pub trait Overlay {
         data: Vec<u8>,
     ) -> Result<(), OverlayError>;
     /// Publish raw data to a named GossipSub topic (not stream-scoped)
-    async fn publish_to_topic(
-        &self,
-        topic: &str,
-        data: Vec<u8>,
-    ) -> Result<(), OverlayError>;
+    async fn publish_to_topic(&self, topic: &str, data: Vec<u8>) -> Result<(), OverlayError>;
 }

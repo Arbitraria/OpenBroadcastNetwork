@@ -1,87 +1,109 @@
 # OpenBroadcastNetwork
 
-A decentralized peer-to-peer live streaming CDN built in Rust, exploring resilient infrastructure design, distributed peer discovery, and hybrid overlay topologies.
+[![CI](https://github.com/Arbitraria/OpenBroadcastNetwork/actions/workflows/ci.yml/badge.svg)](https://github.com/Arbitraria/OpenBroadcastNetwork/actions/workflows/ci.yml)
 
-## Overview
-
-OpenBroadcastNetwork (OBN) is a distributed streaming system built on libp2p that investigates how live media distribution can function without centralized CDN infrastructure. It supports peer discovery via Kademlia DHT and bootstrap servers, pub/sub messaging via GossipSub, and real-time media delivery through WebSocket/MSE with P2P relay forwarding. The system simulates publisher, relay, and consumer roles in a decentralized network.
-
-## Architecture
-
-<img width="1536" height="1024" alt="OpenBroadcastNetwork Architecture" src="https://github.com/user-attachments/assets/398e7892-5405-4a90-9d1c-8eaf6d3e0e34" />
-
-### Workspace Structure
-
-| Directory | Description |
-|-----------|-------------|
-| `core/` | Core networking, streaming protocols, and media pipeline |
-| `node/` | CLI relay node and web viewer server |
-| `proto/` | Protocol definitions and shared types |
-| `ui/` | Web-based viewer interface (WASM) |
-| `web_viewer/` | Browser-based stream viewer (HTML/JS/CSS) |
-| `docs/` | Architecture specs, type references, dependency docs |
-| `test_utils/` | Python test scripts for WebSocket and codec testing |
-
-### Core Technologies
-
-- **Rust** with **tokio** async runtime
-- **libp2p** 0.53 (Kademlia DHT, GossipSub, Identify, Noise, Yamux, Relay, AutoNAT, DCUtR)
-- **Hybrid tree-mesh overlay** topology for stream distribution
-- **MP4 parsing and fMP4 fragmentation** for MSE-compatible streaming
-- **WebSocket + Media Source Extensions** for browser playback
+A decentralized peer-to-peer live streaming CDN built in Rust. Peers discover each other via Kademlia DHT, relay media through GossipSub pub/sub, and play video in the browser using WebSocket/MSE — no central server required.
 
 ## Quick Start
 
+### Docker (recommended)
+
 ```bash
-# 1. Start a bootstrap server for peer discovery
-cargo run -p OpenBroadcastNetwork-node -- bootstrap-server --port 9000
-
-# 2. Start a publisher (streams an MP4 file to the P2P network)
-cargo run -p OpenBroadcastNetwork-node -- web-viewer \
-  --port 9080 --video test_simple.mp4 --publish \
-  --bootstrap /ip4/127.0.0.1/tcp/9000/p2p/<BOOTSTRAP_PEER_ID>
-
-# 3. Open http://127.0.0.1:9080/ in a browser to view the stream
-
-# For local-only playback (no P2P):
-cargo run -p OpenBroadcastNetwork-node -- web-viewer --port 8080 --video sample.mp4
+docker compose up
+# Open http://localhost:8080 — video streams through the local relay
 ```
 
-## CLI Reference
+### From source
+
+```bash
+# Prerequisites: Rust toolchain, libopus-dev, pkg-config
+cargo build -p OpenBroadcastNetwork-node
+cargo run -p OpenBroadcastNetwork-node -- web-viewer --port 8080 --video test_simple.mp4
+# Open http://127.0.0.1:8080/
+```
+
+See [USAGE.md](USAGE.md) for P2P multi-node setup, relay nodes, and CLI reference.
+
+## What Works Today
+
+- **Local streaming pipeline** — MP4 parsing, fMP4 fragmentation, WebSocket delivery, MSE playback in Chrome/Firefox/Safari. ~4,000 lines of hand-written MP4 parser.
+- **P2P relay** — Two+ nodes discover each other via Kademlia DHT and exchange stream data through GossipSub. Relay nodes forward media to downstream peers.
+- **Web viewer** — Browser-based player with transport selection (WebSocket/WebRTC), stream browser sidebar, connection stats dashboard, and log viewer.
+- **Moderation** — Block/unblock peers, flag streams, JSON export/import, auto-persistence. Enforced at the signaling and connection level.
+- **Privacy** — Hop-removal anonymization replaces source PeerIds at the relay level.
+- **Security** — Admin auth on stream control, per-IP rate limiting, security headers, CORS.
+- **127 tests** across the workspace.
+
+## Architecture
 
 ```
-OpenBroadcastNetwork-node <COMMAND>
-
-Commands:
-  run               Run a relay node with optional DHT/geo-aware rebalancing
-  status            View network status and topology of a running node
-  list-streams      List active streams on a running node
-  visualize         Visualize the network topology (text, JSON, or DOT output)
-  stream            Run streaming demo with synthetic content or a real MP4 file
-  web-viewer        Start web viewer server for browser-based stream playback
-  bootstrap-server  Start a bootstrap server for DHT-based peer discovery
+                  ┌─────────────────┐
+                  │ Bootstrap Server │  ← Kademlia DHT peer discovery
+                  └────────┬────────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+        ┌─────┴─────┐ ┌───┴───┐ ┌─────┴─────┐
+        │ Publisher  │ │ Relay │ │ Subscriber │
+        │ (web-     │ │  Node │ │ (web-      │
+        │  viewer)  │ │       │ │  viewer)   │
+        └─────┬─────┘ └───┬───┘ └─────┬─────┘
+              │            │            │
+              └──── GossipSub Pub/Sub ──┘
+                           │
+                    ┌──────┴──────┐
+                    │   Browser   │  ← WebSocket/MSE or WebRTC
+                    │   Viewer    │
+                    └─────────────┘
 ```
+
+### Workspace
+
+| Crate | Description |
+|-------|-------------|
+| `core/` | Networking, streaming protocols, media pipeline, overlay network |
+| `node/` | CLI relay node, web server, bootstrap server |
+| `proto/` | Wire protocol message definitions |
+| `ui/` | WASM viewer interface (experimental) |
+
+### Key Technologies
+
+- **Rust** + **tokio** async runtime
+- **libp2p** 0.53 — Kademlia, GossipSub, Noise encryption, Yamux multiplexing, Relay, AutoNAT, DCUtR
+- **MP4 → fMP4** fragmentation pipeline for MSE-compatible browser streaming
+- **WebSocket + MSE** for browser playback, **WebRTC** for mesh P2P
 
 ## Build & Test
 
 ```bash
-cargo build                  # Build entire workspace
-cargo test                   # Run all tests
-cargo clippy                 # Run lints
-cargo fmt --check            # Check formatting
-
-# Build specific packages
-cargo build -p OpenBroadcastNetwork-core
-cargo build -p OpenBroadcastNetwork-node
+cargo build            # Build workspace
+cargo test             # Run tests
+cargo clippy           # Lint
+cargo fmt --check      # Check formatting
 ```
 
-## Project Status
+## Roadmap
 
-- **Phase 1 (Complete):** Core P2P protocol - peer discovery, GossipSub pub/sub, tree-mesh hybrid relay, geo-aware rebalancing, relay node CLI
-- **Phase 2 (In Progress):** Streaming pipeline - MP4 parsing and fMP4 fragmentation working, WebSocket/MSE web viewer functional, P2P stream forwarding implemented. WebRTC transport and WASM integration are next.
-- **Phase 3 (Planned):** UI and tooling - CLI broadcasting, web UI, stream registry
+- [ ] Prometheus metrics export
+- [ ] Real GeoIP integration (currently uses stub mapping)
+- [ ] End-to-end content encryption
+- [ ] Load testing and benchmarks
+- [ ] Native desktop/mobile clients
+
+## Contributing
+
+Contributions welcome! Check out the [issues](https://github.com/Arbitraria/OpenBroadcastNetwork/issues) for good first issues.
+
+```bash
+# Development workflow
+cargo check && cargo test && cargo clippy
+```
 
 ## Author
 
-**Ian Glenn** - Infrastructure & Systems Deployment Engineer
+**Ian Glenn** — Infrastructure & Systems Deployment Engineer
 [github.com/Arbitraria](https://github.com/Arbitraria)
+
+## License
+
+This project is open source. See [LICENSE](LICENSE) for details.

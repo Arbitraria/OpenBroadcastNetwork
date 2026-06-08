@@ -70,7 +70,8 @@ pub async fn connect(relay_url: String) -> Result<(), JsValue> {
             let event = client_weak.borrow().overlay.next_event().await;
             match event {
                 Some(OpenBroadcastNetwork_core::overlay::interface::OverlayEvent::StreamData {
-                    data, ..
+                    data,
+                    ..
                 }) => {
                     let borrow = client_weak.borrow();
                     if let Some(ref cb) = borrow.segment_callback {
@@ -97,9 +98,7 @@ pub async fn subscribe_stream(stream_id: String) -> Result<(), JsValue> {
         .subscribe_stream(&sid)
         .await
         .map_err(|e| JsValue::from_str(&format!("subscribe failed: {}", e)))?;
-    web_sys::console::log_1(
-        &format!("OBN WASM: subscribed to {}", stream_id).into(),
-    );
+    web_sys::console::log_1(&format!("OBN WASM: subscribed to {}", stream_id).into());
     Ok(())
 }
 
@@ -132,8 +131,7 @@ pub async fn list_streams() -> Result<JsValue, JsValue> {
         let event = overlay.next_event().await;
         match event {
             Some(OverlayEvent::StreamList { streams }) => {
-                let json = serde_json::to_string(&streams)
-                    .unwrap_or_else(|_| "[]".to_string());
+                let json = serde_json::to_string(&streams).unwrap_or_else(|_| "[]".to_string());
                 return Ok(JsValue::from_str(&json));
             }
             Some(_) => {

@@ -67,8 +67,7 @@ pub struct WsTransport {
 impl WsTransport {
     /// Connect to a relay node at the given WebSocket URL
     pub fn connect(url: &str) -> Result<Self, String> {
-        let ws = WebSocket::new(url)
-            .map_err(|e| format!("WebSocket::new failed: {:?}", e))?;
+        let ws = WebSocket::new(url).map_err(|e| format!("WebSocket::new failed: {:?}", e))?;
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
         let (events_tx, events_rx) = mpsc::unbounded();
@@ -151,36 +150,22 @@ impl WsTransport {
                             let _ = tx.unbounded_send(evt);
                         }
                         // Forward remaining events from old rx
-                        let mut old_rx = std::mem::replace(
-                            &mut self.events_rx,
-                            new_rx,
-                        );
-                        wasm_bindgen_futures::spawn_local(
-                            async move {
-                                while let Some(e) =
-                                    old_rx.next().await
-                                {
-                                    if tx.unbounded_send(e).is_err()
-                                    {
-                                        break;
-                                    }
+                        let mut old_rx = std::mem::replace(&mut self.events_rx, new_rx);
+                        wasm_bindgen_futures::spawn_local(async move {
+                            while let Some(e) = old_rx.next().await {
+                                if tx.unbounded_send(e).is_err() {
+                                    break;
                                 }
-                            },
-                        );
+                            }
+                        });
                     }
                     return Ok(());
                 }
                 WsEvent::Error(e) => {
-                    return Err(format!(
-                        "WebSocket error before open: {}",
-                        e
-                    ));
+                    return Err(format!("WebSocket error before open: {}", e));
                 }
                 WsEvent::Closed(reason) => {
-                    return Err(format!(
-                        "WebSocket closed before open: {}",
-                        reason
-                    ));
+                    return Err(format!("WebSocket closed before open: {}", reason));
                 }
                 other => buffered.push(other),
             }
@@ -190,8 +175,7 @@ impl WsTransport {
 
     /// Send a JSON control message
     pub fn send_message(&self, msg: &RelayMessage) -> Result<(), String> {
-        let json = serde_json::to_string(msg)
-            .map_err(|e| format!("serialize failed: {}", e))?;
+        let json = serde_json::to_string(msg).map_err(|e| format!("serialize failed: {}", e))?;
         self.ws
             .send_with_str(&json)
             .map_err(|e| format!("send_with_str failed: {:?}", e))
@@ -208,13 +192,8 @@ impl WsTransport {
     ///
     /// After calling this, `next_event()` will always return `None`.
     /// The caller owns the receiver and can poll it directly.
-    pub fn take_event_receiver(
-        &mut self,
-    ) -> Option<mpsc::UnboundedReceiver<WsEvent>> {
-        Some(std::mem::replace(
-            &mut self.events_rx,
-            mpsc::unbounded().1,
-        ))
+    pub fn take_event_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<WsEvent>> {
+        Some(std::mem::replace(&mut self.events_rx, mpsc::unbounded().1))
     }
 
     /// Receive the next event from the WebSocket

@@ -29,7 +29,6 @@ wasm = [
 ]
 native-webrtc = ["webrtc"]
 ffmpeg = ["ffmpeg-next"]
-experimental-overlay = []
 
 [dependencies]
 # ── Platform-independent deps (always included) ──

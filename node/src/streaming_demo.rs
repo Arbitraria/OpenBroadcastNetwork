@@ -8,12 +8,10 @@ use std::time::Duration;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info};
 
-use OpenBroadcastNetwork_core::media::{OpenH264Codec, OpusCodec};
-use OpenBroadcastNetwork_core::media::segment::{
-    SegmentBuilder, StreamId, StreamSegment,
-};
-use OpenBroadcastNetwork_core::media::StreamMetadata;
+use OpenBroadcastNetwork_core::media::segment::{SegmentBuilder, StreamId, StreamSegment};
 use OpenBroadcastNetwork_core::media::wire_format::ToWireFormat;
+use OpenBroadcastNetwork_core::media::StreamMetadata;
+use OpenBroadcastNetwork_core::media::{OpenH264Codec, OpusCodec};
 use OpenBroadcastNetwork_core::overlay::interface::{
     Overlay, OverlayError, StreamId as OverlayStreamId,
 };
@@ -111,8 +109,7 @@ impl StreamingDemo {
         info!("Starting streaming demo: '{}'", self.config.title);
 
         // Convert segment StreamId to overlay StreamId
-        let overlay_stream_id =
-            OverlayStreamId::from_bytes(self.stream_id.to_vec());
+        let overlay_stream_id = OverlayStreamId::from_bytes(self.stream_id.to_vec());
 
         // Publish and subscribe to the stream topic to enable GossipSub routing
         self.overlay.publish_stream(&overlay_stream_id).await?;
@@ -132,11 +129,11 @@ impl StreamingDemo {
             self.config.audio_channels,
         );
 
-        let metadata_segment = self.segment_builder.metadata(
-            serde_json::to_vec(&metadata).map_err(|e| {
-                OverlayError::General(format!("Failed to serialize metadata: {}", e))
-            })?,
-        );
+        let metadata_segment =
+            self.segment_builder
+                .metadata(serde_json::to_vec(&metadata).map_err(|e| {
+                    OverlayError::General(format!("Failed to serialize metadata: {}", e))
+                })?);
 
         send_segment_to_network(&self.overlay, &metadata_segment).await?;
 

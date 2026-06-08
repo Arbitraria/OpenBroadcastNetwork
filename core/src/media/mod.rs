@@ -104,13 +104,13 @@ pub use ffmpeg_reader::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use mp4_parser::{BoxHeader, Mp4Parser, Mp4Track, SampleEntry, SampleTable};
 #[cfg(not(target_arch = "wasm32"))]
+pub use p2p_bridge::{P2PBridge, P2PBridgeConfig};
+#[cfg(not(target_arch = "wasm32"))]
 pub use pipeline::{MediaPipeline, PassThroughStage, PipelineStage};
 #[cfg(not(target_arch = "wasm32"))]
 pub use publisher::{PublisherError, StreamPublisher};
 #[cfg(not(target_arch = "wasm32"))]
 pub use video_reader::{AudioTrackInfo, VideoReader, VideoReaderError, VideoTrackInfo};
-#[cfg(not(target_arch = "wasm32"))]
-pub use p2p_bridge::{P2PBridge, P2PBridgeConfig};
 
 /// Convenience type alias for Result<T, MediaError>
 pub type Result<T> = std::result::Result<T, MediaError>;

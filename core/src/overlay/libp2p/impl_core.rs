@@ -152,11 +152,7 @@ impl Libp2pOverlay {
         // Relay configuration
         let relay_config = RelayConfig::default();
 
-        let relay = Arc::new(RelayManager::new(
-            peer_id,
-            relay_config,
-            topology.clone(),
-        ));
+        let relay = Arc::new(RelayManager::new(peer_id, relay_config, topology.clone()));
 
         // Mesh configuration
         let mesh_config = MeshConfig::default();
@@ -311,14 +307,8 @@ impl Libp2pOverlay {
         info!("NAT traversal enabled: relay client, autonat, dcutr");
 
         // Combine behaviors
-        let behavior = OverlayBehavior::new(
-            gossipsub,
-            kademlia,
-            identify,
-            relay_client,
-            autonat,
-            dcutr,
-        );
+        let behavior =
+            OverlayBehavior::new(gossipsub, kademlia, identify, relay_client, autonat, dcutr);
 
         // Create Swarm
         let swarm = SwarmBuilder::with_existing_identity(local_key)
@@ -374,9 +364,8 @@ impl Libp2pOverlay {
             .map_err(|e| OverlayError::Other(format!("Failed to subscribe to discovery: {}", e)))?;
 
         // Subscribe to stream announcement topic for stream discovery
-        let announce_topic = gossipsub::IdentTopic::new(
-            crate::discovery::stream_discovery::STREAM_ANNOUNCE_TOPIC,
-        );
+        let announce_topic =
+            gossipsub::IdentTopic::new(crate::discovery::stream_discovery::STREAM_ANNOUNCE_TOPIC);
         swarm
             .behaviour_mut()
             .gossipsub

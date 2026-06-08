@@ -7,9 +7,9 @@
 //! via `WireSegment` for P2P transmission.
 
 use crate::media::segment::{SegmentBuilder, StreamId, StreamSegment};
-use crate::media::StreamMetadata;
 use crate::media::wire_format::ToWireFormat;
 use crate::media::Mp4Parser;
+use crate::media::StreamMetadata;
 use crate::overlay::interface::{Overlay, OverlayError, StreamId as OverlayStreamId};
 use std::path::Path;
 use std::sync::Arc;
@@ -48,9 +48,8 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
     /// Create a new publisher that will stream to the given overlay network
     pub fn new(overlay: Arc<O>, _title: String) -> Self {
         let stream_id = StreamId::generate();
-        let overlay_stream_id = OverlayStreamId::from_string(
-            stream_id.as_str().unwrap_or_default(),
-        );
+        let overlay_stream_id =
+            OverlayStreamId::from_string(stream_id.as_str().unwrap_or_default());
         let segment_builder = SegmentBuilder::new(stream_id.clone());
         let (stop_signal, _) = broadcast::channel(1);
 
@@ -107,9 +106,9 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
                 .unwrap_or_else(|| "aac".to_string()),
         };
 
-        let metadata_segment = self.segment_builder.metadata(
-            serde_json::to_vec(&metadata)?,
-        );
+        let metadata_segment = self
+            .segment_builder
+            .metadata(serde_json::to_vec(&metadata)?);
         self.publish_segment(&metadata_segment).await?;
         info!("Published metadata segment");
 
@@ -136,7 +135,8 @@ impl<O: Overlay + Send + Sync> StreamPublisher<O> {
         let media_segments: Vec<_> = segments.iter().filter(|s| !s.is_init()).collect();
         info!(
             "Publishing {} media segments ({} init segments sent)",
-            media_segments.len(), init_count
+            media_segments.len(),
+            init_count
         );
 
         let start_time = Instant::now();

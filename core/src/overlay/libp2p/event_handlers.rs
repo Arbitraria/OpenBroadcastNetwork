@@ -9,12 +9,12 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 // Local imports
+use crate::discovery::stream_discovery::STREAM_ANNOUNCE_TOPIC;
 use crate::media::segment::MediaType;
 use crate::media::wire_format::WireSegment;
 use crate::overlay::interface::{OverlayError, OverlayEvent};
 use crate::overlay::libp2p::behavior::OverlayBehaviorEvent;
 use crate::overlay::libp2p::impl_core::Libp2pOverlay;
-use crate::discovery::stream_discovery::STREAM_ANNOUNCE_TOPIC;
 use crate::overlay::libp2p::topics;
 use crate::overlay::libp2p::types::{from_libp2p_peer_id, to_libp2p_peer_id};
 use crate::overlay::peer::Peer;
@@ -49,7 +49,9 @@ impl Libp2pOverlay {
                     self.handle_behavior_event(behavior_event).await?
                 }
                 SwarmEvent::ConnectionEstablished {
-                    peer_id, endpoint: _endpoint, ..
+                    peer_id,
+                    endpoint: _endpoint,
+                    ..
                 } => {
                     let peer_id = from_libp2p_peer_id(&peer_id);
 
@@ -57,10 +59,7 @@ impl Libp2pOverlay {
                     if let Some(ref moderation) = self.moderation {
                         let peer_str = peer_id.to_string();
                         if !moderation.is_peer_allowed(&peer_str).await {
-                            warn!(
-                                "Rejected connection from blocked peer: {}",
-                                peer_id
-                            );
+                            warn!("Rejected connection from blocked peer: {}", peer_id);
                             return Ok(());
                         }
                     }
@@ -139,12 +138,10 @@ impl Libp2pOverlay {
                                 bandwidth_capacity: None,
                             })
                     };
-                    if let Err(e) = self.event_tx.clone().try_send(
-                        OverlayEvent::PeerConnected {
-                            peer_id: peer_id.clone(),
-                            info: peer_info,
-                        },
-                    ) {
+                    if let Err(e) = self.event_tx.clone().try_send(OverlayEvent::PeerConnected {
+                        peer_id: peer_id.clone(),
+                        info: peer_info,
+                    }) {
                         warn!("Event channel full, dropping PeerConnected: {:?}", e);
                     }
                 }
@@ -161,12 +158,14 @@ impl Libp2pOverlay {
                     }
 
                     // Emit event
-                    if let Err(e) = self.event_tx.clone().try_send(
-                        OverlayEvent::PeerDisconnected {
+                    if let Err(e) = self
+                        .event_tx
+                        .clone()
+                        .try_send(OverlayEvent::PeerDisconnected {
                             peer_id: peer_id.clone(),
                             reason: "Connection closed".to_string(),
-                        },
-                    ) {
+                        })
+                    {
                         warn!("Event channel full, dropping PeerDisconnected: {:?}", e);
                     }
                 }
@@ -241,47 +240,47 @@ impl Libp2pOverlay {
 
                         // Deserialize as bincode WireSegment format
                         let (sequence, timestamp, is_keyframe, content_type) =
-                            if let Ok(wire_segment) = WireSegment::from_bytes(&data)
-                        {
-                            // Verify content integrity
-                            if !wire_segment.verify_integrity() {
-                                warn!(
-                                    "Content hash mismatch for stream {} seq {}",
-                                    stream_id, wire_segment.sequence
+                            if let Ok(wire_segment) = WireSegment::from_bytes(&data) {
+                                // Verify content integrity
+                                if !wire_segment.verify_integrity() {
+                                    warn!(
+                                        "Content hash mismatch for stream {} seq {}",
+                                        stream_id, wire_segment.sequence
+                                    );
+                                    return Ok(());
+                                }
+                                debug!(
+                                    "Deserialized WireSegment: type={}, seq={}, keyframe={}",
+                                    wire_segment.media_type,
+                                    wire_segment.sequence,
+                                    wire_segment.is_keyframe
                                 );
-                                return Ok(());
-                            }
-                            debug!(
-                                "Deserialized WireSegment: type={}, seq={}, keyframe={}",
-                                wire_segment.media_type,
-                                wire_segment.sequence,
-                                wire_segment.is_keyframe
-                            );
-                            let content_type = match MediaType::from_u8(wire_segment.media_type) {
-                                Some(MediaType::Video) => "video/h264",
-                                Some(MediaType::Audio) => "audio/opus",
-                                Some(MediaType::Metadata) => "application/json",
-                                Some(MediaType::Initialization) => "video/mp4",
-                                None => "application/octet-stream",
+                                let content_type = match MediaType::from_u8(wire_segment.media_type)
+                                {
+                                    Some(MediaType::Video) => "video/h264",
+                                    Some(MediaType::Audio) => "audio/opus",
+                                    Some(MediaType::Metadata) => "application/json",
+                                    Some(MediaType::Initialization) => "video/mp4",
+                                    None => "application/octet-stream",
+                                };
+                                (
+                                    wire_segment.sequence,
+                                    wire_segment.pts_us / 1000, // convert us to ms
+                                    wire_segment.is_keyframe,
+                                    content_type.to_string(),
+                                )
+                            } else {
+                                warn!("Failed to deserialize as WireSegment, using defaults");
+                                (
+                                    0,
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                    false,
+                                    "application/octet-stream".to_string(),
+                                )
                             };
-                            (
-                                wire_segment.sequence,
-                                wire_segment.pts_us / 1000, // convert us to ms
-                                wire_segment.is_keyframe,
-                                content_type.to_string(),
-                            )
-                        } else {
-                            warn!("Failed to deserialize as WireSegment, using defaults");
-                            (
-                                0,
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                                false,
-                                "application/octet-stream".to_string(),
-                            )
-                        };
 
                         // Forward to relay
                         let relay_node = self.relay.relay_node();
@@ -310,13 +309,11 @@ impl Libp2pOverlay {
                     }
 
                     // Emit event
-                    if let Err(e) = self.event_tx.clone().try_send(
-                        OverlayEvent::StreamData {
-                            stream_id: stream_id.clone(),
-                            source: source_peer_id,
-                            data,
-                        },
-                    ) {
+                    if let Err(e) = self.event_tx.clone().try_send(OverlayEvent::StreamData {
+                        stream_id: stream_id.clone(),
+                        source: source_peer_id,
+                        data,
+                    }) {
                         warn!("Event channel full, dropping StreamData: {:?}", e);
                     }
                 } else if topic == topics::discovery() {
@@ -350,12 +347,11 @@ impl Libp2pOverlay {
                         Err(_) => crate::overlay::interface::StreamId::from_string("unknown"),
                     };
 
-                    if let Err(e) = self.event_tx.clone().try_send(
-                        OverlayEvent::StreamAnnounced {
-                            stream_id,
-                            data,
-                        },
-                    ) {
+                    if let Err(e) = self
+                        .event_tx
+                        .clone()
+                        .try_send(OverlayEvent::StreamAnnounced { stream_id, data })
+                    {
                         warn!("Event channel full, dropping StreamAnnounced: {:?}", e);
                     }
                 }
@@ -437,8 +433,7 @@ impl Libp2pOverlay {
                     }
 
                     // Add protocols
-                    peer.info.protocols =
-                        info.protocols.iter().map(|p| p.to_string()).collect();
+                    peer.info.protocols = info.protocols.iter().map(|p| p.to_string()).collect();
 
                     // Update metadata
                     peer.info
@@ -471,11 +466,11 @@ impl Libp2pOverlay {
                     info!("Relay reservation accepted by {}", relay_peer_id);
                 }
             }
-            relay::client::Event::OutboundCircuitEstablished {
-                relay_peer_id,
-                ..
-            } => {
-                info!("Outbound circuit established through relay {}", relay_peer_id);
+            relay::client::Event::OutboundCircuitEstablished { relay_peer_id, .. } => {
+                info!(
+                    "Outbound circuit established through relay {}",
+                    relay_peer_id
+                );
             }
             relay::client::Event::InboundCircuitEstablished { src_peer_id, .. } => {
                 info!("Inbound circuit established from {}", src_peer_id);
@@ -485,10 +480,7 @@ impl Libp2pOverlay {
     }
 
     /// Handle AutoNAT events for NAT status detection
-    pub async fn handle_autonat_event(
-        &self,
-        event: autonat::Event,
-    ) -> Result<(), OverlayError> {
+    pub async fn handle_autonat_event(&self, event: autonat::Event) -> Result<(), OverlayError> {
         match event {
             autonat::Event::StatusChanged { old, new } => {
                 info!("NAT status changed: {:?} -> {:?}", old, new);
@@ -515,10 +507,7 @@ impl Libp2pOverlay {
     }
 
     /// Handle DCUtR events for direct connection upgrade through relay
-    pub async fn handle_dcutr_event(
-        &self,
-        event: dcutr::Event,
-    ) -> Result<(), OverlayError> {
+    pub async fn handle_dcutr_event(&self, event: dcutr::Event) -> Result<(), OverlayError> {
         // DCUtR Event has fields: remote_peer_id and result
         match &event.result {
             Ok(connection_id) => {

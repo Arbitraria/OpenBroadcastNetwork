@@ -10,6 +10,9 @@ pub mod peer;
 
 // ── Native-only submodules (require libp2p + tokio) ──
 
+/// Module for testing dynamic overlay features
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub mod dynamic_tests;
 /// Mesh-based overlay implementation
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mesh;
@@ -19,12 +22,8 @@ pub mod network;
 /// Tree-based overlay implementation
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
-/// Module for testing dynamic overlay features
-#[cfg(all(not(target_arch = "wasm32"), test))]
-pub mod dynamic_tests;
-/// Hybrid tree-mesh overlay implementation
-#[cfg(not(target_arch = "wasm32"))]
-pub mod hybrid;
+// NOTE: The hybrid overlay module has been archived. The libp2p
+// implementation is the active overlay used by the system.
 /// Implementation of the overlay network using libp2p
 #[cfg(not(target_arch = "wasm32"))]
 pub mod libp2p;
@@ -52,18 +51,15 @@ pub use peer::{LocalPeerId, Peer, PeerConnection, PeerInfo, PeerRole};
 
 // Native-only re-exports
 #[cfg(not(target_arch = "wasm32"))]
-pub use network::NetworkConfig;
-#[cfg(not(target_arch = "wasm32"))]
-pub use topology::{TopologyConfig, TopologyManager};
+pub use crate::overlay::libp2p::impl_core::Libp2pOverlay;
 #[cfg(not(target_arch = "wasm32"))]
 pub use ::libp2p::PeerId;
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::overlay::libp2p::impl_core::Libp2pOverlay;
+pub use network::NetworkConfig;
+#[cfg(not(target_arch = "wasm32"))]
+pub use topology::{TopologyConfig, TopologyManager};
+/// The default overlay implementation for the current platform.
 #[cfg(not(target_arch = "wasm32"))]
 pub type DefaultOverlay = Libp2pOverlay;
 #[cfg(not(target_arch = "wasm32"))]
 pub use relay::{RelayManager, RelayNode, RelayStats};
-
-// Re-export hybrid overlay types (experimental)
-#[cfg(all(not(target_arch = "wasm32"), feature = "experimental-overlay"))]
-pub use hybrid::{HybridOverlay, HybridOverlayConfig, StreamMetadata, StreamQuality};

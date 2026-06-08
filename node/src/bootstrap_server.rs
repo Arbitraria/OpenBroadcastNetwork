@@ -166,11 +166,8 @@ impl BootstrapServer {
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(300)))
             .build();
 
-        let listen_addr: Multiaddr = format!(
-            "/ip4/{}/tcp/{}",
-            self.config.listen_addr, self.config.port
-        )
-        .parse()?;
+        let listen_addr: Multiaddr =
+            format!("/ip4/{}/tcp/{}", self.config.listen_addr, self.config.port).parse()?;
 
         swarm.listen_on(listen_addr)?;
 
@@ -323,31 +320,29 @@ impl BootstrapServer {
                 warn!("Identify error with {}: {}", peer_id, error);
             }
 
-            SwarmEvent::Behaviour(BootstrapBehaviorEvent::Kademlia(event)) => {
-                match &event {
-                    KademliaEvent::RoutingUpdated {
-                        peer, addresses, ..
-                    } => {
-                        info!(
-                            "🔄 DHT routing updated: peer {} with {} addresses",
-                            peer,
-                            addresses.len()
-                        );
-                    }
-                    KademliaEvent::InboundRequest { request } => {
-                        debug!("DHT inbound request: {:?}", request);
-                    }
-                    KademliaEvent::OutboundQueryProgressed { id, result, .. } => {
-                        debug!("DHT query {:?} progressed: {:?}", id, result);
-                    }
-                    KademliaEvent::ModeChanged { new_mode } => {
-                        info!("DHT mode changed to: {:?}", new_mode);
-                    }
-                    _ => {
-                        debug!("DHT event: {:?}", event);
-                    }
+            SwarmEvent::Behaviour(BootstrapBehaviorEvent::Kademlia(event)) => match &event {
+                KademliaEvent::RoutingUpdated {
+                    peer, addresses, ..
+                } => {
+                    info!(
+                        "🔄 DHT routing updated: peer {} with {} addresses",
+                        peer,
+                        addresses.len()
+                    );
                 }
-            }
+                KademliaEvent::InboundRequest { request } => {
+                    debug!("DHT inbound request: {:?}", request);
+                }
+                KademliaEvent::OutboundQueryProgressed { id, result, .. } => {
+                    debug!("DHT query {:?} progressed: {:?}", id, result);
+                }
+                KademliaEvent::ModeChanged { new_mode } => {
+                    info!("DHT mode changed to: {:?}", new_mode);
+                }
+                _ => {
+                    debug!("DHT event: {:?}", event);
+                }
+            },
 
             // Handle relay events
             SwarmEvent::Behaviour(BootstrapBehaviorEvent::Relay(event)) => {
@@ -373,19 +368,13 @@ impl BootstrapServer {
                         src_peer_id,
                         dst_peer_id,
                     } => {
-                        info!(
-                            "🔗 Circuit established: {} -> {}",
-                            src_peer_id, dst_peer_id
-                        );
+                        info!("🔗 Circuit established: {} -> {}", src_peer_id, dst_peer_id);
                     }
                     relay::Event::CircuitReqDenied {
                         src_peer_id,
                         dst_peer_id,
                     } => {
-                        warn!(
-                            "🔗 Circuit denied: {} -> {}",
-                            src_peer_id, dst_peer_id
-                        );
+                        warn!("🔗 Circuit denied: {} -> {}", src_peer_id, dst_peer_id);
                     }
                     // Handle deprecated events
                     _ => {

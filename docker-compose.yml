@@ -1,0 +1,63 @@
+services:
+  # Single-node demo: streams a test video to the browser via WebSocket/MSE.
+  # Open http://localhost:8080 after starting.
+  demo:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./test_simple.mp4:/app/test_simple.mp4:ro
+    command:
+      - web-viewer
+      - --host=0.0.0.0
+      - --port=8080
+      - --video=test_simple.mp4
+      - --cors
+      - --rate-limit=0
+
+  # --- P2P multi-node demo (use: docker compose --profile p2p up) ---
+
+  bootstrap:
+    build: .
+    profiles: ["p2p"]
+    ports:
+      - "9000:9000"
+    command:
+      - bootstrap-server
+      - --port=9000
+      - --listen=0.0.0.0
+
+  publisher:
+    build: .
+    profiles: ["p2p"]
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./test_simple.mp4:/app/test_simple.mp4:ro
+    depends_on:
+      - bootstrap
+    command:
+      - web-viewer
+      - --host=0.0.0.0
+      - --port=8081
+      - --video=test_simple.mp4
+      - --publish
+      - --dht
+      - --cors
+      - --rate-limit=0
+
+  subscriber:
+    build: .
+    profiles: ["p2p"]
+    ports:
+      - "8082:8082"
+    depends_on:
+      - bootstrap
+      - publisher
+    command:
+      - web-viewer
+      - --host=0.0.0.0
+      - --port=8082
+      - --dht
+      - --cors
+      - --rate-limit=0

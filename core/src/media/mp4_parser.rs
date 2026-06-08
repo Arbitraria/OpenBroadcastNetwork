@@ -185,8 +185,8 @@ impl SampleTable {
                 entries.push(SampleEntry {
                     offset: chunk_offset + offset_in_chunk,
                     size,
-                    duration: 0,   // filled below
-                    is_keyframe: false, // filled below
+                    duration: 0,           // filled below
+                    is_keyframe: false,    // filled below
                     composition_offset: 0, // filled below
                 });
                 offset_in_chunk += size as u64;
@@ -350,10 +350,7 @@ impl Mp4Parser {
                     // Record mdat payload offset for sample table indexing
                     if box_info.header.box_type == "mdat" {
                         self.mdat_payload_offset = box_info.header.content_start;
-                        debug!(
-                            "mdat payload starts at offset {}",
-                            self.mdat_payload_offset
-                        );
+                        debug!("mdat payload starts at offset {}", self.mdat_payload_offset);
                     }
 
                     self.boxes.push(box_info);
@@ -629,10 +626,7 @@ impl Mp4Parser {
     }
 
     /// Parse media (mdia) box to extract codec information
-    fn parse_mdia_box(
-        &mut self,
-        data: &[u8],
-    ) -> Result<MdiaBoxResult, io::Error> {
+    fn parse_mdia_box(&mut self, data: &[u8]) -> Result<MdiaBoxResult, io::Error> {
         let mut cursor = std::io::Cursor::new(data);
         let mut media_type = String::new();
         let mut timescale = 1000;
@@ -844,36 +838,28 @@ impl Mp4Parser {
 
             match box_type.as_str() {
                 "stsd" => {
-                    codec_result =
-                        Some(self.parse_stsd_box(&content_data, media_type));
+                    codec_result = Some(self.parse_stsd_box(&content_data, media_type));
                 }
                 "stsz" => {
-                    sample_table.sample_sizes =
-                        Self::parse_stsz(&content_data);
+                    sample_table.sample_sizes = Self::parse_stsz(&content_data);
                 }
                 "stts" => {
-                    sample_table.time_to_sample =
-                        Self::parse_stts(&content_data);
+                    sample_table.time_to_sample = Self::parse_stts(&content_data);
                 }
                 "stsc" => {
-                    sample_table.sample_to_chunk =
-                        Self::parse_stsc(&content_data);
+                    sample_table.sample_to_chunk = Self::parse_stsc(&content_data);
                 }
                 "stco" => {
-                    sample_table.chunk_offsets =
-                        Self::parse_stco(&content_data);
+                    sample_table.chunk_offsets = Self::parse_stco(&content_data);
                 }
                 "co64" => {
-                    sample_table.chunk_offsets =
-                        Self::parse_co64(&content_data);
+                    sample_table.chunk_offsets = Self::parse_co64(&content_data);
                 }
                 "stss" => {
-                    sample_table.sync_samples =
-                        Self::parse_stss(&content_data);
+                    sample_table.sync_samples = Self::parse_stss(&content_data);
                 }
                 "ctts" => {
-                    sample_table.composition_offsets =
-                        Self::parse_ctts(&content_data);
+                    sample_table.composition_offsets = Self::parse_ctts(&content_data);
                 }
                 _ => {}
             }
@@ -907,10 +893,8 @@ impl Mp4Parser {
         if data.len() < 12 {
             return Vec::new();
         }
-        let default_size =
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-        let count =
-            u32::from_be_bytes([data[8], data[9], data[10], data[11]]) as usize;
+        let default_size = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+        let count = u32::from_be_bytes([data[8], data[9], data[10], data[11]]) as usize;
 
         if default_size != 0 {
             // All samples have the same size
@@ -940,8 +924,7 @@ impl Mp4Parser {
         if data.len() < 8 {
             return Vec::new();
         }
-        let count =
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let count = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let mut entries = Vec::with_capacity(count);
         let mut offset = 8;
         for _ in 0..count {
@@ -971,8 +954,7 @@ impl Mp4Parser {
         if data.len() < 8 {
             return Vec::new();
         }
-        let count =
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let count = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let mut entries = Vec::with_capacity(count);
         let mut offset = 8;
         for _ in 0..count {
@@ -1008,8 +990,7 @@ impl Mp4Parser {
         if data.len() < 8 {
             return Vec::new();
         }
-        let count =
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let count = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let mut offsets = Vec::with_capacity(count);
         let mut offset = 8;
         for _ in 0..count {
@@ -1032,8 +1013,7 @@ impl Mp4Parser {
         if data.len() < 8 {
             return Vec::new();
         }
-        let count =
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let count = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let mut offsets = Vec::with_capacity(count);
         let mut offset = 8;
         for _ in 0..count {
@@ -1060,8 +1040,7 @@ impl Mp4Parser {
         if data.len() < 8 {
             return Vec::new();
         }
-        let count =
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let count = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let mut samples = Vec::with_capacity(count);
         let mut offset = 8;
         for _ in 0..count {
@@ -1084,8 +1063,7 @@ impl Mp4Parser {
         if data.len() < 8 {
             return Vec::new();
         }
-        let count =
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let count = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let mut entries = Vec::with_capacity(count);
         let mut offset = 8;
         for _ in 0..count {
@@ -1955,11 +1933,8 @@ impl Mp4Parser {
                 let base_media_decode_time = fragment_index * frame_duration;
 
                 // Ensure moof has proper tfdt box with timing
-                let moof_with_tfdt = self.ensure_moof_has_tfdt(
-                    &fixed_moof_data,
-                    base_media_decode_time,
-                    timescale,
-                )?;
+                let moof_with_tfdt =
+                    self.ensure_moof_has_tfdt(&fixed_moof_data, base_media_decode_time, timescale)?;
 
                 let mut media_data = Vec::new();
                 media_data.extend_from_slice(&moof_with_tfdt);
@@ -1985,10 +1960,7 @@ impl Mp4Parser {
 
                 debug!(
                     "Created media segment {} ({} bytes, decode_time={}, ts={}ms)",
-                    fragment_index,
-                    media_data_len,
-                    base_media_decode_time,
-                    timestamp_ms
+                    fragment_index, media_data_len, base_media_decode_time, timestamp_ms
                 );
 
                 fragment_index += 1;
@@ -2011,9 +1983,7 @@ impl Mp4Parser {
 
         // Check if we have AC-3 audio that needs video-only mode
         let has_ac3_audio = self.tracks.iter().any(|track| {
-            if track.media_type == "soun"
-                && track.codec_params.as_deref() == Some("AC-3")
-            {
+            if track.media_type == "soun" && track.codec_params.as_deref() == Some("AC-3") {
                 warn!(
                     "AC-3 audio in track {} - not supported by Chrome MSE, \
                      using video-only mode",
@@ -2085,10 +2055,7 @@ impl Mp4Parser {
         }
 
         // Find video track with sample table
-        let video_track = self
-            .tracks
-            .iter()
-            .find(|t| t.media_type == "vide");
+        let video_track = self.tracks.iter().find(|t| t.media_type == "vide");
         let timescale = video_track.map(|t| t.timescale).unwrap_or(1000);
         let track_id = video_track.map(|t| t.track_id).unwrap_or(1);
         let sample_table = video_track.and_then(|t| t.sample_table.clone());
@@ -2133,10 +2100,8 @@ impl Mp4Parser {
 
                     for se in gop_samples {
                         // Extract frame data from mdat
-                        let local_offset =
-                            (se.offset - mdat_offset) as usize;
-                        if local_offset + se.size as usize > mdat_data.len()
-                        {
+                        let local_offset = (se.offset - mdat_offset) as usize;
+                        if local_offset + se.size as usize > mdat_data.len() {
                             warn!(
                                 "Sample at offset {} size {} exceeds mdat \
                                  bounds ({}), skipping GOP",
@@ -2147,9 +2112,8 @@ impl Mp4Parser {
                             gop_valid = false;
                             break;
                         }
-                        let data = mdat_data
-                            [local_offset..local_offset + se.size as usize]
-                            .to_vec();
+                        let data =
+                            mdat_data[local_offset..local_offset + se.size as usize].to_vec();
 
                         frames.push(FrameData::new(
                             data,
@@ -2160,18 +2124,12 @@ impl Mp4Parser {
                     }
 
                     if gop_valid && !frames.is_empty() {
-                        let gop_duration: u64 = frames
-                            .iter()
-                            .map(|f| f.duration as u64)
-                            .sum();
-                        let timestamp_ms =
-                            (decode_time * 1000) / timescale as u64;
+                        let gop_duration: u64 = frames.iter().map(|f| f.duration as u64).sum();
+                        let timestamp_ms = (decode_time * 1000) / timescale as u64;
 
                         let fragment_data = self
                             .fmp4_converter
-                            .create_fragment_v2(
-                                &frames, track_id, timescale,
-                            )?;
+                            .create_fragment_v2(&frames, track_id, timescale)?;
 
                         segments.push(MseSegment {
                             segment_type: "media".to_string(),
@@ -2202,21 +2160,12 @@ impl Mp4Parser {
                  chunk-based fragmentation"
             );
             let chunk_size = 64 * 1024;
-            for (chunk_index, chunk) in
-                mdat_data.chunks(chunk_size).enumerate()
-            {
+            for (chunk_index, chunk) in mdat_data.chunks(chunk_size).enumerate() {
                 let timestamp_ms = (chunk_index as u64) * 1000;
-                let frame = FrameData::new(
-                    chunk.to_vec(),
-                    timescale,
-                    chunk_index == 0,
-                    0,
-                );
-                let fragment_data = self.fmp4_converter.create_fragment(
-                    &[frame],
-                    track_id,
-                    timescale,
-                )?;
+                let frame = FrameData::new(chunk.to_vec(), timescale, chunk_index == 0, 0);
+                let fragment_data =
+                    self.fmp4_converter
+                        .create_fragment(&[frame], track_id, timescale)?;
                 segments.push(MseSegment {
                     segment_type: "media".to_string(),
                     data: fragment_data,
@@ -2231,16 +2180,12 @@ impl Mp4Parser {
         // --- Audio fragmentation ---
         // Find audio track (skip AC-3 which Chrome doesn't support)
         if !has_ac3_audio {
-            let audio_track = self
-                .tracks
-                .iter()
-                .find(|t| t.media_type == "soun");
+            let audio_track = self.tracks.iter().find(|t| t.media_type == "soun");
 
             if let Some(audio_track) = audio_track {
                 let audio_timescale = audio_track.timescale;
                 let audio_track_id = audio_track.track_id;
-                let audio_sample_table =
-                    audio_track.sample_table.clone();
+                let audio_sample_table = audio_track.sample_table.clone();
 
                 if let Some(ref ast) = audio_sample_table {
                     let audio_samples = ast.resolve_sample_offsets();
@@ -2253,16 +2198,13 @@ impl Mp4Parser {
                             audio_timescale,
                         );
 
-                        let mut audio_converter =
-                            FragmentedMp4Converter::new();
+                        let mut audio_converter = FragmentedMp4Converter::new();
                         let mdat_offset = self.mdat_payload_offset;
 
                         // Group audio samples into ~500ms chunks
                         let samples_per_chunk = std::cmp::max(
                             1,
-                            (audio_timescale as u64 / 2)
-                                / audio_samples[0].duration.max(1)
-                                    as u64,
+                            (audio_timescale as u64 / 2) / audio_samples[0].duration.max(1) as u64,
                         );
 
                         let mut chunk_start = 0usize;
@@ -2274,19 +2216,14 @@ impl Mp4Parser {
                                 chunk_start + samples_per_chunk as usize,
                                 audio_samples.len(),
                             );
-                            let chunk_samples =
-                                &audio_samples[chunk_start..chunk_end];
+                            let chunk_samples = &audio_samples[chunk_start..chunk_end];
 
-                            let mut frames =
-                                Vec::with_capacity(chunk_samples.len());
+                            let mut frames = Vec::with_capacity(chunk_samples.len());
                             let mut chunk_valid = true;
 
                             for se in chunk_samples {
-                                let local_offset =
-                                    (se.offset - mdat_offset) as usize;
-                                if local_offset + se.size as usize
-                                    > mdat_data.len()
-                                {
+                                let local_offset = (se.offset - mdat_offset) as usize;
+                                if local_offset + se.size as usize > mdat_data.len() {
                                     warn!(
                                         "Audio sample at offset {} \
                                          exceeds mdat bounds, skipping",
@@ -2295,8 +2232,7 @@ impl Mp4Parser {
                                     chunk_valid = false;
                                     break;
                                 }
-                                let data = mdat_data[local_offset
-                                    ..local_offset + se.size as usize]
+                                let data = mdat_data[local_offset..local_offset + se.size as usize]
                                     .to_vec();
 
                                 frames.push(FrameData::new(
@@ -2308,13 +2244,10 @@ impl Mp4Parser {
                             }
 
                             if chunk_valid && !frames.is_empty() {
-                                let chunk_duration: u64 = frames
-                                    .iter()
-                                    .map(|f| f.duration as u64)
-                                    .sum();
-                                let timestamp_ms = (audio_decode_time
-                                    * 1000)
-                                    / audio_timescale as u64;
+                                let chunk_duration: u64 =
+                                    frames.iter().map(|f| f.duration as u64).sum();
+                                let timestamp_ms =
+                                    (audio_decode_time * 1000) / audio_timescale as u64;
 
                                 match audio_converter.create_fragment_v2(
                                     &frames,
@@ -2323,15 +2256,10 @@ impl Mp4Parser {
                                 ) {
                                     Ok(fragment_data) => {
                                         segments.push(MseSegment {
-                                            segment_type: "media"
-                                                .to_string(),
+                                            segment_type: "media".to_string(),
                                             data: fragment_data,
-                                            timestamp: Some(
-                                                timestamp_ms,
-                                            ),
-                                            duration: Some(
-                                                chunk_duration,
-                                            ),
+                                            timestamp: Some(timestamp_ms),
+                                            duration: Some(chunk_duration),
                                             is_keyframe: true,
                                             track_id: audio_track_id,
                                         });
@@ -2368,10 +2296,7 @@ impl Mp4Parser {
             }
         }
 
-        info!(
-            "Generated {} segments from regular MP4",
-            segments.len()
-        );
+        info!("Generated {} segments from regular MP4", segments.len());
         Ok(segments)
     }
 
@@ -2382,10 +2307,7 @@ impl Mp4Parser {
         }
         if data.len() > 4 {
             for window in data.windows(4) {
-                if window[0] == 0x00
-                    && window[1] == 0x00
-                    && window[2] == 0x01
-                {
+                if window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 {
                     let nal_type = window[3] & 0x1F;
                     if nal_type == 0x07 || nal_type == 0x08 {
                         return true;
@@ -2780,7 +2702,8 @@ impl Mp4Parser {
         }
 
         // Parse moof box
-        let moof_size = u32::from_be_bytes([moof_data[0], moof_data[1], moof_data[2], moof_data[3]]);
+        let moof_size =
+            u32::from_be_bytes([moof_data[0], moof_data[1], moof_data[2], moof_data[3]]);
         let moof_type = &moof_data[4..8];
         if moof_type != b"moof" {
             return Err(std::io::Error::new(
@@ -2802,8 +2725,8 @@ impl Mp4Parser {
                 moof_data[cursor + 2],
                 moof_data[cursor + 3],
             ]) as usize;
-            let child_type = std::str::from_utf8(&moof_data[cursor + 4..cursor + 8])
-                .unwrap_or("????");
+            let child_type =
+                std::str::from_utf8(&moof_data[cursor + 4..cursor + 8]).unwrap_or("????");
 
             if child_size == 0 || cursor + child_size > moof_data.len() {
                 break;
@@ -2851,7 +2774,8 @@ impl Mp4Parser {
             ));
         }
 
-        let traf_size = u32::from_be_bytes([traf_data[0], traf_data[1], traf_data[2], traf_data[3]]) as usize;
+        let traf_size =
+            u32::from_be_bytes([traf_data[0], traf_data[1], traf_data[2], traf_data[3]]) as usize;
 
         let mut traf_content = Vec::new();
         let mut cursor = 8; // Skip traf header
@@ -2866,8 +2790,8 @@ impl Mp4Parser {
                 traf_data[cursor + 2],
                 traf_data[cursor + 3],
             ]) as usize;
-            let child_type = std::str::from_utf8(&traf_data[cursor + 4..cursor + 8])
-                .unwrap_or("????");
+            let child_type =
+                std::str::from_utf8(&traf_data[cursor + 4..cursor + 8]).unwrap_or("????");
 
             if child_size == 0 || cursor + child_size > traf_data.len() {
                 break;
@@ -3633,7 +3557,7 @@ mod tests {
         data.push(0);
         data.extend_from_slice(&[0, 0, 0]);
         data.extend_from_slice(&2u32.to_be_bytes()); // 2 entries
-        // Entry 1: 10 samples with delta 1000
+                                                     // Entry 1: 10 samples with delta 1000
         data.extend_from_slice(&10u32.to_be_bytes());
         data.extend_from_slice(&1000u32.to_be_bytes());
         // Entry 2: 5 samples with delta 2000
@@ -3885,7 +3809,7 @@ mod tests {
         stsd.push(0); // version
         stsd.extend_from_slice(&[0, 0, 0]); // flags
         stsd.extend_from_slice(&1u32.to_be_bytes()); // entry count
-        // avc1 entry (minimal)
+                                                     // avc1 entry (minimal)
         let avc1_size = 86u32; // min avc1 box
         stsd.extend_from_slice(&avc1_size.to_be_bytes());
         stsd.extend_from_slice(b"avc1");
@@ -4004,7 +3928,10 @@ mod tests {
         assert_eq!(track.media_type, "vide");
         assert_eq!(track.timescale, 1000);
 
-        let st = track.sample_table.as_ref().expect("sample table should exist");
+        let st = track
+            .sample_table
+            .as_ref()
+            .expect("sample table should exist");
         assert_eq!(st.sample_sizes, vec![10, 15, 20]);
         assert_eq!(st.time_to_sample, vec![(3, 1000)]);
         assert_eq!(st.sample_to_chunk, vec![(1, 3, 1)]);
@@ -4027,9 +3954,8 @@ mod tests {
         assert_eq!(&fragment[4..8], b"moof");
 
         // Find mdat box
-        let moof_size = u32::from_be_bytes([
-            fragment[0], fragment[1], fragment[2], fragment[3],
-        ]) as usize;
+        let moof_size =
+            u32::from_be_bytes([fragment[0], fragment[1], fragment[2], fragment[3]]) as usize;
         assert_eq!(&fragment[moof_size + 4..moof_size + 8], b"mdat");
 
         // mdat should contain both frames' data

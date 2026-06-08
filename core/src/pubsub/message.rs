@@ -23,8 +23,7 @@ impl TryFrom<SerializablePeerId> for libp2p::PeerId {
     type Error = String;
 
     fn try_from(peer_id: SerializablePeerId) -> Result<Self, Self::Error> {
-        libp2p::PeerId::from_str(&peer_id.0)
-            .map_err(|e| format!("Failed to parse PeerId: {}", e))
+        libp2p::PeerId::from_str(&peer_id.0).map_err(|e| format!("Failed to parse PeerId: {}", e))
     }
 }
 

@@ -38,8 +38,7 @@
 
 // Import libp2p core components
 use libp2p::{
-    autonat,
-    dcutr,
+    autonat, dcutr,
     gossipsub::{Behaviour as Gossipsub, Event as GossipsubEvent},
     identify::{Behaviour as Identify, Event as IdentifyEvent},
     kad::{store::MemoryStore, Behaviour as Kademlia, Event as KademliaEvent},

@@ -29,10 +29,7 @@ fn make_stream_data_message(sequence: u64) -> Message {
     );
     let bytes = wire.to_bytes().expect("serialize");
 
-    let topic = TopicId(format!(
-        "stream/{}/data",
-        hex::encode(b"test_stream")
-    ));
+    let topic = TopicId(format!("stream/{}/data", hex::encode(b"test_stream")));
     Message::binary(topic, bytes)
 }
 
@@ -49,10 +46,7 @@ fn test_valid_wire_segment_accepted() {
 fn test_malformed_wire_segment_rejected() {
     let validator = StreamDataValidator::new(100);
 
-    let topic = TopicId(format!(
-        "stream/{}/data",
-        hex::encode(b"test_stream")
-    ));
+    let topic = TopicId(format!("stream/{}/data", hex::encode(b"test_stream")));
     let msg = Message::binary(topic, vec![0xFF, 0x00, 0x01]); // garbage
     assert_eq!(validator.validate(&msg, None), ValidationResult::Reject);
 }
@@ -79,10 +73,7 @@ fn test_unknown_media_type_rejected() {
         vec![0xBB; 64],
     );
     let bytes = wire.to_bytes().expect("serialize");
-    let topic = TopicId(format!(
-        "stream/{}/data",
-        hex::encode(b"test_stream")
-    ));
+    let topic = TopicId(format!("stream/{}/data", hex::encode(b"test_stream")));
     let msg = Message::binary(topic, bytes);
 
     let validator = StreamDataValidator::new(100);
@@ -214,8 +205,7 @@ fn test_stream_announcement_roundtrip() {
 
     // Serialize → deserialize
     let bytes = announcement.to_bytes().expect("serialize announcement");
-    let restored =
-        StreamAnnouncement::from_bytes(&bytes).expect("deserialize announcement");
+    let restored = StreamAnnouncement::from_bytes(&bytes).expect("deserialize announcement");
 
     assert_eq!(restored.stream_id, stream_id);
     assert_eq!(restored.title, "Test Stream");
@@ -296,29 +286,17 @@ fn test_composite_validator_chains_basic_and_stream() {
     // Large message rejected by BasicValidator (size check)
     let topic = TopicId("chat/general".to_string());
     let big_msg = Message::binary(topic, vec![0u8; 128]);
-    assert_eq!(
-        composite.validate(&big_msg, None),
-        ValidationResult::Reject
-    );
+    assert_eq!(composite.validate(&big_msg, None), ValidationResult::Reject);
 
     // Malformed WireSegment on stream topic rejected by StreamDataValidator
-    let stream_topic = TopicId(format!(
-        "stream/{}/data",
-        hex::encode(b"comp_test")
-    ));
+    let stream_topic = TopicId(format!("stream/{}/data", hex::encode(b"comp_test")));
     let bad_msg = Message::binary(stream_topic, vec![0xFF; 10]);
-    assert_eq!(
-        composite.validate(&bad_msg, None),
-        ValidationResult::Reject
-    );
+    assert_eq!(composite.validate(&bad_msg, None), ValidationResult::Reject);
 
     // Valid small message on non-stream topic passes both
     let ok_topic = TopicId("chat/ok".to_string());
     let ok_msg = Message::binary(ok_topic, vec![42; 16]);
-    assert_eq!(
-        composite.validate(&ok_msg, None),
-        ValidationResult::Accept
-    );
+    assert_eq!(composite.validate(&ok_msg, None), ValidationResult::Accept);
 }
 
 // ─── Keypair signing tests ──────────────────────────────────────
@@ -356,12 +334,4 @@ fn test_hash_for_signing_deterministic() {
 
     let h3 = hash_for_signing(b"different");
     assert_ne!(h1, h3);
-}
-
-#[test]
-#[allow(deprecated)]
-fn test_deprecated_sign_verify_stubs_compile() {
-    use OpenBroadcastNetwork_core::crypto::{sign, verify};
-    let _ = sign(&[], &[]);
-    let _ = verify(&[], &[], &[]);
 }

@@ -35,8 +35,7 @@ impl From<String> for MediaError {
 }
 
 /// Represents a media format (e.g., HLS, DASH, WebRTC)
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum MediaFormat {
     /// HTTP Live Streaming
     Hls,
@@ -50,7 +49,6 @@ pub enum MediaFormat {
     /// Custom format
     Custom(String),
 }
-
 
 /// Represents a media stream with metadata
 #[derive(Debug, Clone)]

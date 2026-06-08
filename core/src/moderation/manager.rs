@@ -48,12 +48,7 @@ impl ModerationManager {
 
     /// Unblock a peer
     pub async fn unblock_peer(&self, peer_id: &str) -> bool {
-        let removed = self
-            .blocked_peers
-            .write()
-            .await
-            .remove(peer_id)
-            .is_some();
+        let removed = self.blocked_peers.write().await.remove(peer_id).is_some();
         if removed {
             info!("Unblocked peer: {}", peer_id);
             self.maybe_persist().await;
@@ -85,10 +80,7 @@ impl ModerationManager {
 
     /// Add a peer to the whitelist
     pub async fn whitelist_peer(&self, peer_id: &str) {
-        self.whitelist
-            .write()
-            .await
-            .insert(peer_id.to_string());
+        self.whitelist.write().await.insert(peer_id.to_string());
         info!("Whitelisted peer: {}", peer_id);
         self.maybe_persist().await;
     }
@@ -130,7 +122,10 @@ impl ModerationManager {
         flags.retain(|f| f.stream_id != stream_id);
         let removed = before - flags.len();
         if removed > 0 {
-            info!("Unflagged stream: {} ({} flags removed)", stream_id, removed);
+            info!(
+                "Unflagged stream: {} ({} flags removed)",
+                stream_id, removed
+            );
             drop(flags);
             self.maybe_persist().await;
         }
@@ -152,10 +147,7 @@ impl ModerationManager {
     }
 
     /// Load moderation state from a JSON file
-    pub async fn load_from_file(
-        &self,
-        path: &std::path::Path,
-    ) -> Result<(), String> {
+    pub async fn load_from_file(&self, path: &std::path::Path) -> Result<(), String> {
         let data = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
         let list: ModerationList = serde_json::from_str(&data)
@@ -166,10 +158,7 @@ impl ModerationManager {
     }
 
     /// Save moderation state to a JSON file
-    pub async fn save_to_file(
-        &self,
-        path: &std::path::Path,
-    ) -> Result<(), String> {
+    pub async fn save_to_file(&self, path: &std::path::Path) -> Result<(), String> {
         let list = self.export_list().await;
         let data = serde_json::to_string_pretty(&list)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
@@ -278,7 +267,8 @@ mod tests {
 
         assert!(!mgr.is_stream_flagged("stream1").await);
 
-        mgr.flag_stream("stream1", FlagReason::Spam, None, None).await;
+        mgr.flag_stream("stream1", FlagReason::Spam, None, None)
+            .await;
         assert!(mgr.is_stream_flagged("stream1").await);
         assert_eq!(mgr.flagged_streams().await.len(), 1);
 
@@ -292,7 +282,8 @@ mod tests {
         let mgr = ModerationManager::new(ModerationConfig::default());
         mgr.block_peer("peer1", Some("test".into())).await;
         mgr.whitelist_peer("peer2").await;
-        mgr.flag_stream("s1", FlagReason::Copyright, None, None).await;
+        mgr.flag_stream("s1", FlagReason::Copyright, None, None)
+            .await;
 
         let list = mgr.export_list().await;
         assert_eq!(list.version, 1);

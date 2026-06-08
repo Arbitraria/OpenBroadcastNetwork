@@ -512,10 +512,7 @@ async fn test_concurrent_subscribers_same_stream() {
         }
     }
 
-    info!(
-        "Concurrent subscribers: {}/3 received data",
-        received_count
-    );
+    info!("Concurrent subscribers: {}/3 received data", received_count);
 
     // Clean up
     node1
@@ -733,13 +730,11 @@ async fn test_three_node_relay_chain() {
     // Node3 polls for the StreamData event
     let received = timeout(Duration::from_secs(5), async {
         loop {
-            if let Some(
-                OpenBroadcastNetwork_core::overlay::interface::OverlayEvent::StreamData {
-                    stream_id: recv_sid,
-                    data,
-                    ..
-                },
-            ) = node3.next_event().await
+            if let Some(OpenBroadcastNetwork_core::overlay::interface::OverlayEvent::StreamData {
+                stream_id: recv_sid,
+                data,
+                ..
+            }) = node3.next_event().await
             {
                 return (recv_sid, data);
             }

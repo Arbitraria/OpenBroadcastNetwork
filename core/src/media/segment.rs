@@ -660,7 +660,7 @@ impl StreamSegment {
         crate::overlay::relay::StreamChunk {
             id,
             stream_id: crate::overlay::interface::StreamId::from_bytes(self.stream_id.to_vec()),
-            data: self.data.clone(), // zero-copy clone via Bytes
+            data: self.data.clone(),       // zero-copy clone via Bytes
             timestamp: self.pts_us / 1000, // us to ms
             sequence: self.sequence,
             content_type: content_type.to_string(),

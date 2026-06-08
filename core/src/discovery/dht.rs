@@ -106,7 +106,6 @@ pub struct DhtDiscovery {
 
     /// Task handle for background discovery
     task_handle: Option<tokio::task::JoinHandle<()>>,
-
 }
 
 /// Types of DHT queries we can perform
@@ -239,7 +238,9 @@ impl DhtDiscovery {
                             debug!("Listening on: {}", address);
                         }
                         SwarmEvent::ConnectionEstablished {
-                            peer_id, endpoint: _endpoint, ..
+                            peer_id,
+                            endpoint: _endpoint,
+                            ..
                         } => {
                             debug!("Connected to peer: {}", peer_id);
 
@@ -277,7 +278,11 @@ impl DhtDiscovery {
                         }
                         SwarmEvent::IncomingConnection { .. } => {}
                         SwarmEvent::IncomingConnectionError { .. } => {}
-                        SwarmEvent::OutgoingConnectionError { peer_id: Some(peer_id), error, .. } => {
+                        SwarmEvent::OutgoingConnectionError {
+                            peer_id: Some(peer_id),
+                            error,
+                            ..
+                        } => {
                             warn!("Failed to connect to peer {}: {}", peer_id, error);
                         }
                         SwarmEvent::OutgoingConnectionError { .. } => {}

@@ -303,7 +303,11 @@ impl StreamTree {
         let mut best_bandwidth = 0;
 
         for (candidate_id, node) in &self.nodes {
-            if node.can_accept_children() && *candidate_id != peer_id && (node.depth < best_depth || (node.depth == best_depth && node.bandwidth > best_bandwidth)) {
+            if node.can_accept_children()
+                && *candidate_id != peer_id
+                && (node.depth < best_depth
+                    || (node.depth == best_depth && node.bandwidth > best_bandwidth))
+            {
                 best_parent = Some(*candidate_id);
                 best_depth = node.depth;
                 best_bandwidth = node.bandwidth;
@@ -679,7 +683,6 @@ impl StreamTree {
                 };
 
                 for child_id in children.iter().take(to_move.min(children.len())).copied() {
-
                     // Get child node info for scoring
                     let child_node = match self.nodes.get(&child_id) {
                         Some(n) => n.clone(),

@@ -242,10 +242,7 @@ impl<O: Overlay + Send + Sync + 'static> P2PBridge<O> {
                         }
                     }
                     Err(e) => {
-                        debug!(
-                            "Failed to deserialize WireSegment: {}",
-                            e
-                        );
+                        debug!("Failed to deserialize WireSegment: {}", e);
                     }
                 }
             }
@@ -371,11 +368,7 @@ mod tests {
             Ok(())
         }
 
-        async fn publish_to_topic(
-            &self,
-            _topic: &str,
-            _data: Vec<u8>,
-        ) -> Result<(), OverlayError> {
+        async fn publish_to_topic(&self, _topic: &str, _data: Vec<u8>) -> Result<(), OverlayError> {
             Ok(())
         }
     }

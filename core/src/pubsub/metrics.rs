@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use instant::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use crate::pubsub::message::MessageId;
 use crate::pubsub::topic::TopicId;
@@ -393,7 +393,6 @@ impl PeerMetrics {
             last_seen: RwLock::new(now),
         }
     }
-
 }
 
 /// Time-series data for calculating rates

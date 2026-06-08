@@ -260,18 +260,12 @@ impl Overlay for Libp2pOverlay {
             .behaviour_mut()
             .gossipsub
             .publish(topic, data)
-            .map_err(|e| {
-                OverlayError::RelayError(format!("Failed to publish: {:?}", e))
-            })?;
+            .map_err(|e| OverlayError::RelayError(format!("Failed to publish: {:?}", e)))?;
 
         Ok(())
     }
 
-    async fn publish_to_topic(
-        &self,
-        topic: &str,
-        data: Vec<u8>,
-    ) -> Result<(), OverlayError> {
+    async fn publish_to_topic(&self, topic: &str, data: Vec<u8>) -> Result<(), OverlayError> {
         debug!("Publishing {} bytes to topic {}", data.len(), topic);
 
         let mut swarm_lock = self.swarm.lock().await;
@@ -285,11 +279,7 @@ impl Overlay for Libp2pOverlay {
             .behaviour_mut()
             .gossipsub
             .publish(ident_topic, data)
-            .map_err(|e| {
-                OverlayError::RelayError(
-                    format!("Publish to topic failed: {:?}", e),
-                )
-            })?;
+            .map_err(|e| OverlayError::RelayError(format!("Publish to topic failed: {:?}", e)))?;
 
         Ok(())
     }

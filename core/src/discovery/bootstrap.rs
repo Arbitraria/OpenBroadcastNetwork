@@ -579,8 +579,7 @@ impl Discovery for BootstrapDiscovery {
         let result = peers
             .values()
             .filter(|(_, last_seen)| {
-                now.duration_since(*last_seen)
-                    < Duration::from_secs(self.config.peer_expiration)
+                now.duration_since(*last_seen) < Duration::from_secs(self.config.peer_expiration)
             })
             .map(|(info, _)| info.clone())
             .collect();

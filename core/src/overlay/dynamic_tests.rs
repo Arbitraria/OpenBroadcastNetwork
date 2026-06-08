@@ -7,8 +7,8 @@
 mod dynamic_tests {
     use crate::overlay::interface::StreamId;
     use crate::overlay::peer::PeerRole;
-    use crate::overlay::tree::{StreamTree, TreeNode};
     use crate::overlay::topology::TopologyConfig;
+    use crate::overlay::tree::{StreamTree, TreeNode};
     use libp2p::PeerId;
     use std::time::Duration;
 

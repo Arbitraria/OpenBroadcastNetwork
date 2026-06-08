@@ -223,22 +223,14 @@ impl Libp2pOverlay {
             None => return Err(OverlayError::Other("Swarm not initialized".to_string())),
         };
 
-        // Disconnect from the peer
-        // Note: In newer libp2p versions, we can use close_connection or disconnect_peer_id
-        // For now, we'll try to close all connections to this peer
-        if let Some(_connection_id) = swarm
-            .connected_peers()
-            .find(|p| **p == *peer_id)
-            .map(|_| *peer_id)
-        {
-            // In newer versions, we would call swarm.close_connection or similar
-            info!(
-                "Would disconnect from peer {} if API was available",
-                peer_id
-            );
+        // Close all connections to this peer
+        let was_connected = swarm.is_connected(peer_id);
+        if was_connected {
+            let _ = swarm.disconnect_peer_id(*peer_id);
+            info!("Disconnected from peer {}", peer_id);
+        } else {
+            debug!("Peer {} was not connected", peer_id);
         }
-
-        // Peer disconnection is logged for now
 
         // Update peer state
         {
@@ -249,7 +241,6 @@ impl Libp2pOverlay {
             }
         }
 
-        info!("Disconnected from peer {}", peer_id);
         Ok(())
     }
 

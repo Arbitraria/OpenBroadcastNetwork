@@ -518,9 +518,8 @@ async fn run_web_viewer(
     info!("Starting web viewer server on {}:{}", host, port);
 
     // Determine P2P mode: subscribing, publishing, or browse (bootstrap only)
-    let enable_p2p = stream_id.is_some()
-        || (publish && video_file.is_some())
-        || !bootstrap_nodes.is_empty();
+    let enable_p2p =
+        stream_id.is_some() || (publish && video_file.is_some()) || !bootstrap_nodes.is_empty();
 
     // Create web server configuration
     let config = WebServerConfig {
@@ -611,7 +610,10 @@ async fn run_web_viewer(
         // Generate a new stream ID for publishing
         let stream_id_obj = StreamId::generate();
         info!("📡 Publishing stream with ID: {}", stream_id_obj);
-        info!("Other nodes can subscribe with: --stream-id {}", stream_id_obj);
+        info!(
+            "Other nodes can subscribe with: --stream-id {}",
+            stream_id_obj
+        );
 
         let stream_manager = Arc::new(web_server::StreamManager::with_p2p(
             node.overlay.clone(),
@@ -652,16 +654,14 @@ async fn run_web_viewer(
 
         for bootstrap in &bootstrap_nodes {
             info!("Connecting to bootstrap node: {}", bootstrap);
-            if let Err(e) =
-                Overlay::connect_peer(node.overlay.as_ref(), bootstrap.as_str()).await
-            {
+            if let Err(e) = Overlay::connect_peer(node.overlay.as_ref(), bootstrap.as_str()).await {
                 warn!("Failed to connect to bootstrap {}: {}", bootstrap, e);
             }
         }
 
-        let stream_manager = Arc::new(
-            web_server::StreamManager::with_discovery(node.overlay.clone()),
-        );
+        let stream_manager = Arc::new(web_server::StreamManager::with_discovery(
+            node.overlay.clone(),
+        ));
 
         let config_clone = config.clone();
         let rate_limiter = Arc::new(RateLimiterState::new(
@@ -946,18 +946,10 @@ async fn main() -> Result<(), anyhow::Error> {
                             );
                             println!("{}", "-".repeat(85));
                             for s in streams {
-                                let id = s["stream_id"]
-                                    .as_str()
-                                    .unwrap_or("unknown");
-                                let title = s["title"]
-                                    .as_str()
-                                    .unwrap_or("untitled");
-                                let vc = s["video_codec"]
-                                    .as_str()
-                                    .unwrap_or("");
-                                let ac = s["audio_codec"]
-                                    .as_str()
-                                    .unwrap_or("");
+                                let id = s["stream_id"].as_str().unwrap_or("unknown");
+                                let title = s["title"].as_str().unwrap_or("untitled");
+                                let vc = s["video_codec"].as_str().unwrap_or("");
+                                let ac = s["audio_codec"].as_str().unwrap_or("");
                                 let codecs = format!("{}/{}", vc, ac);
                                 let w = s["video_width"].as_u64().unwrap_or(0);
                                 let h = s["video_height"].as_u64().unwrap_or(0);
@@ -966,23 +958,15 @@ async fn main() -> Result<(), anyhow::Error> {
                                 } else {
                                     String::new()
                                 };
-                                println!(
-                                    "{:<40} {:<20} {:<15} {:<10}",
-                                    id, title, codecs, res
-                                );
+                                println!("{:<40} {:<20} {:<15} {:<10}", id, title, codecs, res);
                             }
                         }
                         _ => println!("No active streams found on {}", node),
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Failed to connect to node at {}: {}",
-                        node, e
-                    );
-                    eprintln!(
-                        "Make sure a web-viewer is running on that address."
-                    );
+                    eprintln!("Failed to connect to node at {}: {}", node, e);
+                    eprintln!("Make sure a web-viewer is running on that address.");
                 }
             }
         }
@@ -1127,14 +1111,12 @@ async fn main() -> Result<(), anyhow::Error> {
         } => {
             let bootstrap_nodes = bootstrap.clone().unwrap_or_default();
             let video_str = video.to_string_lossy().to_string();
-            let stream_title = title
-                .clone()
-                .unwrap_or_else(|| {
-                    video
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "Live Stream".to_string())
-                });
+            let stream_title = title.clone().unwrap_or_else(|| {
+                video
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Live Stream".to_string())
+            });
             info!("Publishing: \"{}\" from {}", stream_title, video_str);
             run_web_viewer(
                 "127.0.0.1".to_string(),

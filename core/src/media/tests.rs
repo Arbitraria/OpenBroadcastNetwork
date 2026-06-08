@@ -70,6 +70,6 @@ async fn test_bandwidth_monitor() {
     // Record some downloads
     monitor.record_download(1024 * 1024); // 1 MB
     monitor.record_download(1024 * 1024); // Another 1 MB
-    // Should have some bandwidth
+                                          // Should have some bandwidth
     assert!(monitor.current_bandwidth() > 0.0);
 }

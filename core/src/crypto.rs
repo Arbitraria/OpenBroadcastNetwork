@@ -49,22 +49,6 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Sign data with a private key (deprecated stub)
-#[deprecated(note = "Use sign_with_keypair instead")]
-pub fn sign(_private_key: &[u8], _data: &[u8]) -> Result<Vec<u8>, CryptoError> {
-    Ok(vec![])
-}
-
-/// Verify a signature with a public key (deprecated stub)
-#[deprecated(note = "Use verify_with_public_key instead")]
-pub fn verify(
-    _public_key: &[u8],
-    _data: &[u8],
-    _signature: &[u8],
-) -> Result<bool, CryptoError> {
-    Ok(false)
-}
-
 /// Compute a blake3 hash suitable for signing (32 bytes)
 pub fn hash_for_signing(data: &[u8]) -> [u8; 32] {
     *blake3::hash(data).as_bytes()
@@ -141,15 +125,7 @@ mod tests {
         assert!(valid);
 
         // Tampered data should fail
-        let invalid =
-            verify_with_public_key(&pubkey, b"tampered", &signature).unwrap();
+        let invalid = verify_with_public_key(&pubkey, b"tampered", &signature).unwrap();
         assert!(!invalid);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_stubs_compile() {
-        let _ = sign(&[], &[]);
-        let _ = verify(&[], &[], &[]);
     }
 }

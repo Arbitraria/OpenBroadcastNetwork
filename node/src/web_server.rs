@@ -52,15 +52,11 @@ use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tower::ServiceBuilder;
-use tower_http::{
-    cors::CorsLayer,
-    services::ServeDir,
-    set_header::SetResponseHeaderLayer,
-};
+use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer};
 use tracing::{debug, error, info, warn};
 
 // Import WebRTC signaling types
-use OpenBroadcastNetwork_core::transport::{SignalingMessage, PeerInfo};
+use OpenBroadcastNetwork_core::transport::{PeerInfo, SignalingMessage};
 
 use std::time::Duration;
 use OpenBroadcastNetwork_core::media::codec::{OpenH264Codec, OpusCodec};
@@ -68,6 +64,7 @@ use OpenBroadcastNetwork_core::media::codec::{OpenH264Codec, OpusCodec};
 use OpenBroadcastNetwork_core::media::ffmpeg_reader::FFmpegVideoReader;
 use OpenBroadcastNetwork_core::media::mp4_parser::Mp4Parser;
 // Unified segment types - StreamSegment is the internal type, WireSegment for P2P
+use OpenBroadcastNetwork_core::discovery::stream_discovery::{StreamAnnouncement, StreamDiscovery};
 use OpenBroadcastNetwork_core::media::segment::{MediaType, StreamId, StreamSegment};
 use OpenBroadcastNetwork_core::media::video_reader::VideoReader;
 use OpenBroadcastNetwork_core::media::wire_format::{ToWireFormat, WireSegment};
@@ -76,9 +73,6 @@ use OpenBroadcastNetwork_core::overlay::interface::{
     Overlay, OverlayEvent, StreamId as OverlayStreamId,
 };
 use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
-use OpenBroadcastNetwork_core::discovery::stream_discovery::{
-    StreamAnnouncement, StreamDiscovery,
-};
 
 /// Configuration for the web server
 #[derive(Debug, Clone)]
@@ -221,7 +215,9 @@ fn try_acquire_ws_slot(state: &AppState) -> Option<WsConnectionGuard> {
 fn validate_id(id: &str, max_len: usize) -> bool {
     !id.is_empty()
         && id.len() <= max_len
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 // ── Per-IP rate limiting ─────────────────────────────────────────────
@@ -233,9 +229,7 @@ fn validate_id(id: &str, max_len: usize) -> bool {
 /// bucket resets. If `count >= max_requests` within the window the
 /// request is rejected.
 pub struct RateLimiterState {
-    buckets: std::sync::Mutex<
-        HashMap<std::net::IpAddr, (u32, Instant)>,
-    >,
+    buckets: std::sync::Mutex<HashMap<std::net::IpAddr, (u32, Instant)>>,
     max_requests: u32,
     window: Duration,
 }
@@ -253,9 +247,7 @@ impl RateLimiterState {
     pub fn check_rate_limit(&self, ip: std::net::IpAddr) -> bool {
         let mut buckets = self.buckets.lock().unwrap();
         let now = Instant::now();
-        let entry = buckets
-            .entry(ip)
-            .or_insert((0, now));
+        let entry = buckets.entry(ip).or_insert((0, now));
 
         // Reset bucket if window expired
         if now.duration_since(entry.1) >= self.window {
@@ -280,9 +272,7 @@ impl RateLimiterState {
     pub fn cleanup_expired(&self) {
         let mut buckets = self.buckets.lock().unwrap();
         let now = Instant::now();
-        buckets.retain(|_, (_, start)| {
-            now.duration_since(*start) < self.window
-        });
+        buckets.retain(|_, (_, start)| now.duration_since(*start) < self.window);
     }
 }
 
@@ -290,9 +280,7 @@ impl RateLimiterState {
 ///
 /// If `rate_limit_per_ip` is 0 in the config, the middleware is a no-op.
 async fn rate_limit_middleware<B>(
-    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<
-        SocketAddr,
-    >,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     req: Request<B>,
     next: Next<B>,
@@ -301,11 +289,7 @@ async fn rate_limit_middleware<B>(
         return next.run(req).await;
     }
     if !state.rate_limiter.check_rate_limit(addr.ip()) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            "Rate limit exceeded",
-        )
-            .into_response();
+        return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
     }
     next.run(req).await
 }
@@ -423,8 +407,7 @@ impl StreamManager {
         let segment_stream_id = stream_id.clone();
 
         // Create P2P publisher
-        let publisher =
-            StreamPublisher::new(overlay.clone(), format!("Stream {}", stream_id));
+        let publisher = StreamPublisher::new(overlay.clone(), format!("Stream {}", stream_id));
 
         // Create stream discovery service and start background tasks
         let discovery = Arc::new(StreamDiscovery::with_overlay(overlay.clone()));
@@ -528,35 +511,36 @@ impl StreamManager {
         // Announce stream to the P2P network for discovery (publisher only)
         let has_video = self.video_samples.lock().await.is_some();
         if has_video {
-        if let (Some(discovery), Some(overlay), Some(stream_id)) =
-            (&self.stream_discovery, &self.overlay, &self.stream_id)
-        {
-            let overlay_stream_id =
-                OverlayStreamId::from_bytes(stream_id.as_str().unwrap_or_default().as_bytes().to_vec());
-            let peer_id = overlay.local_peer_id();
+            if let (Some(discovery), Some(overlay), Some(stream_id)) =
+                (&self.stream_discovery, &self.overlay, &self.stream_id)
+            {
+                let overlay_stream_id = OverlayStreamId::from_bytes(
+                    stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),
+                );
+                let peer_id = overlay.local_peer_id();
 
-            let video_info = self.video_codec_info.lock().await;
-            let audio_info = self.audio_codec_info.lock().await;
+                let video_info = self.video_codec_info.lock().await;
+                let audio_info = self.audio_codec_info.lock().await;
 
-            let mut announcement = StreamAnnouncement::new(
-                overlay_stream_id,
-                format!("Stream {}", stream_id.as_str().unwrap_or_default()),
-                peer_id,
-            );
+                let mut announcement = StreamAnnouncement::new(
+                    overlay_stream_id,
+                    format!("Stream {}", stream_id.as_str().unwrap_or_default()),
+                    peer_id,
+                );
 
-            if let Some((codec, _mime)) = video_info.as_ref() {
-                announcement = announcement.with_video(codec.clone(), 0, 0);
+                if let Some((codec, _mime)) = video_info.as_ref() {
+                    announcement = announcement.with_video(codec.clone(), 0, 0);
+                }
+                if let Some((codec, _mime)) = audio_info.as_ref() {
+                    announcement = announcement.with_audio(codec.clone());
+                }
+
+                if let Err(e) = discovery.announce_stream(announcement).await {
+                    warn!("Failed to announce stream: {}", e);
+                } else {
+                    info!("Stream announced to P2P network");
+                }
             }
-            if let Some((codec, _mime)) = audio_info.as_ref() {
-                announcement = announcement.with_audio(codec.clone());
-            }
-
-            if let Err(e) = discovery.announce_stream(announcement).await {
-                warn!("Failed to announce stream: {}", e);
-            } else {
-                info!("Stream announced to P2P network");
-            }
-        }
         } // end publisher-only announcement
 
         // Browse mode: no stream_id but overlay exists — listen for announcements only
@@ -573,17 +557,11 @@ impl StreamManager {
                             if let Some(ref disc) = discovery {
                                 match disc.process_announcement(&data).await {
                                     Ok(Some(ann)) => {
-                                        info!(
-                                            "Discovered stream: {}",
-                                            ann.summary()
-                                        );
+                                        info!("Discovered stream: {}", ann.summary());
                                     }
                                     Ok(None) => {}
                                     Err(e) => {
-                                        warn!(
-                                            "Failed to process announcement: {}",
-                                            e
-                                        );
+                                        warn!("Failed to process announcement: {}", e);
                                     }
                                 }
                             }
@@ -614,16 +592,11 @@ impl StreamManager {
             // If P2P enabled, subscribe to the GossipSub topic before publishing
             if enable_p2p {
                 if let (Some(overlay), Some(stream_id)) = (&overlay, &stream_id) {
-                    let overlay_stream_id =
-                        OverlayStreamId::from_bytes(
-                            stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),
-                        );
-                    if let Err(e) = overlay.publish_stream(&overlay_stream_id).await
-                    {
-                        warn!(
-                            "Failed to publish_stream (topic subscribe): {}",
-                            e
-                        );
+                    let overlay_stream_id = OverlayStreamId::from_bytes(
+                        stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),
+                    );
+                    if let Err(e) = overlay.publish_stream(&overlay_stream_id).await {
+                        warn!("Failed to publish_stream (topic subscribe): {}", e);
                     } else {
                         info!("Subscribed to GossipSub topic for publishing");
                     }
@@ -638,8 +611,9 @@ impl StreamManager {
                         let segment =
                             StreamSegment::initialization(init_stream_id, init_data.clone());
                         if let Ok(wire_bytes) = segment.to_wire_bytes() {
-                            let overlay_stream_id =
-                                OverlayStreamId::from_bytes(stream_id.as_str().unwrap_or_default().as_bytes().to_vec());
+                            let overlay_stream_id = OverlayStreamId::from_bytes(
+                                stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),
+                            );
                             if let Err(e) = overlay
                                 .publish_stream_data(&overlay_stream_id, wire_bytes)
                                 .await
@@ -655,7 +629,10 @@ impl StreamManager {
 
             let samples = video_samples.lock().await;
             if let Some(ref video_segments) = *samples {
-                info!("Starting to stream {} loaded segments", video_segments.len());
+                info!(
+                    "Starting to stream {} loaded segments",
+                    video_segments.len()
+                );
 
                 for (index, segment) in video_segments.iter().enumerate() {
                     // Skip initialization segments as they're sent separately
@@ -670,7 +647,9 @@ impl StreamManager {
                     }
 
                     // Send to local WebSocket clients
-                    if segment_sender.receiver_count() > 0 && segment_sender.send(segment.clone()).is_err() {
+                    if segment_sender.receiver_count() > 0
+                        && segment_sender.send(segment.clone()).is_err()
+                    {
                         info!("All receivers dropped");
                     }
 
@@ -771,11 +750,10 @@ impl StreamManager {
         *self.is_streaming.lock().await = false;
 
         // Remove stream announcement from discovery
-        if let (Some(discovery), Some(stream_id)) =
-            (&self.stream_discovery, &self.stream_id)
-        {
-            let overlay_stream_id =
-                OverlayStreamId::from_bytes(stream_id.as_str().unwrap_or_default().as_bytes().to_vec());
+        if let (Some(discovery), Some(stream_id)) = (&self.stream_discovery, &self.stream_id) {
+            let overlay_stream_id = OverlayStreamId::from_bytes(
+                stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),
+            );
             if let Err(e) = discovery.remove_stream(&overlay_stream_id).await {
                 warn!("Failed to remove stream announcement: {}", e);
             }
@@ -807,7 +785,8 @@ impl StreamManager {
             .map_err(|e| format!("Failed to serialize segment to wire format: {:?}", e))?;
 
         // Convert to overlay stream ID
-        let overlay_stream_id = OverlayStreamId::from_bytes(stream_id.as_str().unwrap_or_default().as_bytes().to_vec());
+        let overlay_stream_id =
+            OverlayStreamId::from_bytes(stream_id.as_str().unwrap_or_default().as_bytes().to_vec());
 
         // Publish to overlay network
         overlay
@@ -833,7 +812,8 @@ impl StreamManager {
         }
 
         // Create initialization segment using the stored segment_stream_id
-        let segment = StreamSegment::initialization(self.segment_stream_id.clone(), init_data.to_vec());
+        let segment =
+            StreamSegment::initialization(self.segment_stream_id.clone(), init_data.to_vec());
         self.publish_segment_to_p2p(&segment).await?;
 
         info!(
@@ -929,8 +909,7 @@ impl StreamManager {
         // Store initialization segment and verify ESDS
         for (index, segment) in stream_segments.iter().enumerate() {
             if segment.is_init() {
-                *self.initialization_segment.lock().await =
-                    Some(segment.data.to_vec());
+                *self.initialization_segment.lock().await = Some(segment.data.to_vec());
                 info!(
                     "Stored initialization segment ({} bytes)",
                     segment.data.len()
@@ -947,10 +926,7 @@ impl StreamManager {
             );
         }
 
-        info!(
-            "Prepared {} stream segments",
-            stream_segments.len()
-        );
+        info!("Prepared {} stream segments", stream_segments.len());
 
         // Store prepared segments for streaming
         *self.video_samples.lock().await = Some(stream_segments);
@@ -1133,8 +1109,7 @@ async fn run_p2p_receive_loop(
                     ..
                 } => {
                     let recv_id_str =
-                        String::from_utf8_lossy(recv_stream_id.as_bytes())
-                            .to_string();
+                        String::from_utf8_lossy(recv_stream_id.as_bytes()).to_string();
                     if recv_id_str != target_stream_id.as_str().unwrap_or_default() {
                         continue;
                     }
@@ -1146,10 +1121,7 @@ async fn run_p2p_receive_loop(
                             if segment.media_type == MediaType::Initialization {
                                 let mut init = init_segment.lock().await;
                                 *init = Some(segment.data.to_vec());
-                                info!(
-                                    "Received P2P init segment ({} bytes)",
-                                    segment.data.len()
-                                );
+                                info!("Received P2P init segment ({} bytes)", segment.data.len());
                             }
 
                             if segment_sender.receiver_count() > 0 {
@@ -1169,10 +1141,7 @@ async fn run_p2p_receive_loop(
                     if let Some(ref discovery) = stream_discovery {
                         match discovery.process_announcement(&data).await {
                             Ok(Some(ann)) => {
-                                info!(
-                                    "Discovered stream: {}",
-                                    ann.summary()
-                                );
+                                info!("Discovered stream: {}", ann.summary());
                             }
                             Ok(None) => {} // expired, ignored
                             Err(e) => {
@@ -1220,24 +1189,16 @@ struct RelayStreamInfo {
 }
 
 /// WebSocket handler for WASM browser relay connections
-async fn relay_websocket_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+async fn relay_websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     let Some(guard) = try_acquire_ws_slot(&state) else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections")
-            .into_response();
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
     };
     ws.max_message_size(state.config.max_ws_message_bytes)
         .on_upgrade(move |socket| handle_relay_websocket(socket, state, guard))
 }
 
 /// Handle a single WASM relay WebSocket connection
-async fn handle_relay_websocket(
-    socket: WebSocket,
-    state: AppState,
-    _guard: WsConnectionGuard,
-) {
+async fn handle_relay_websocket(socket: WebSocket, state: AppState, _guard: WsConnectionGuard) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let sm = &state.stream_manager;
 
@@ -1271,10 +1232,7 @@ async fn handle_relay_websocket(
                 let parsed: Result<RelayMessage, _> = serde_json::from_str(&text);
                 match parsed {
                     Ok(RelayMessage::Subscribe { stream_id }) => {
-                        info!(
-                            "WASM relay: subscribe to stream '{}'",
-                            stream_id
-                        );
+                        info!("WASM relay: subscribe to stream '{}'", stream_id);
                         // Cancel any existing relay task
                         if let Some(handle) = relay_task.take() {
                             handle.abort();
@@ -1287,15 +1245,9 @@ async fn handle_relay_websocket(
                             let tx = binary_tx.clone();
 
                             // Subscribe on the overlay
-                            let overlay_sid =
-                                OverlayStreamId::from_string(&sid);
-                            if let Err(e) =
-                                overlay.subscribe_stream(&overlay_sid).await
-                            {
-                                warn!(
-                                    "Relay subscribe failed: {}",
-                                    e
-                                );
+                            let overlay_sid = OverlayStreamId::from_string(&sid);
+                            if let Err(e) = overlay.subscribe_stream(&overlay_sid).await {
+                                warn!("Relay subscribe failed: {}", e);
                             }
 
                             // Send init segment if available
@@ -1310,9 +1262,7 @@ async fn handle_relay_websocket(
                             relay_task = Some(tokio::spawn(async move {
                                 let target = OverlayStreamId::from_string(&sid);
                                 loop {
-                                    if let Some(event) =
-                                        overlay.next_event().await
-                                    {
+                                    if let Some(event) = overlay.next_event().await {
                                         if let OverlayEvent::StreamData {
                                             stream_id: recv_id,
                                             data,
@@ -1320,24 +1270,16 @@ async fn handle_relay_websocket(
                                         } = event
                                         {
                                             let recv_str =
-                                                String::from_utf8_lossy(
-                                                    recv_id.as_bytes(),
-                                                )
-                                                .to_string();
-                                            let target_str = target
-                                                .as_str()
-                                                .unwrap_or_default();
-                                            if recv_str == target_str
-                                                && tx.try_send(data).is_err()
+                                                String::from_utf8_lossy(recv_id.as_bytes())
+                                                    .to_string();
+                                            let target_str = target.as_str().unwrap_or_default();
+                                            if recv_str == target_str && tx.try_send(data).is_err()
                                             {
                                                 break;
                                             }
                                         }
                                     } else {
-                                        tokio::time::sleep(
-                                            Duration::from_millis(50),
-                                        )
-                                        .await;
+                                        tokio::time::sleep(Duration::from_millis(50)).await;
                                     }
                                 }
                             }));
@@ -1358,37 +1300,23 @@ async fn handle_relay_websocket(
                         }
                     }
                     Ok(RelayMessage::Unsubscribe { stream_id }) => {
-                        info!(
-                            "WASM relay: unsubscribe from stream '{}'",
-                            stream_id
-                        );
+                        info!("WASM relay: unsubscribe from stream '{}'", stream_id);
                         if let Some(handle) = relay_task.take() {
                             handle.abort();
                         }
                     }
                     Ok(RelayMessage::Publish { stream_id }) => {
-                        info!(
-                            "WASM relay: publish stream '{}'",
-                            stream_id
-                        );
+                        info!("WASM relay: publish stream '{}'", stream_id);
                         // Browser is publishing — announce stream
                         if let Some(ref overlay) = sm.overlay {
-                            let sid =
-                                OverlayStreamId::from_string(&stream_id);
-                            if let Err(e) =
-                                overlay.publish_stream(&sid).await
-                            {
-                                warn!(
-                                    "Relay publish announce failed: {}",
-                                    e
-                                );
+                            let sid = OverlayStreamId::from_string(&stream_id);
+                            if let Err(e) = overlay.publish_stream(&sid).await {
+                                warn!("Relay publish announce failed: {}", e);
                             }
                         }
                     }
                     Ok(RelayMessage::ListStreams) => {
-                        let streams = if let Some(ref discovery) =
-                            sm.stream_discovery
-                        {
+                        let streams = if let Some(ref discovery) = sm.stream_discovery {
                             discovery
                                 .list_streams()
                                 .await
@@ -1396,10 +1324,7 @@ async fn handle_relay_websocket(
                                 .map(|ann| RelayStreamInfo {
                                     stream_id: ann.stream_id.to_string(),
                                     publisher: Some(
-                                        String::from_utf8_lossy(
-                                            &ann.publisher_id,
-                                        )
-                                        .to_string(),
+                                        String::from_utf8_lossy(&ann.publisher_id).to_string(),
                                     ),
                                 })
                                 .collect()
@@ -1414,10 +1339,7 @@ async fn handle_relay_websocket(
                     }
                     Ok(_) => {} // ignore other message types from client
                     Err(e) => {
-                        warn!(
-                            "WASM relay: invalid JSON from client: {}",
-                            e
-                        );
+                        warn!("WASM relay: invalid JSON from client: {}", e);
                     }
                 }
             }
@@ -1425,13 +1347,9 @@ async fn handle_relay_websocket(
                 // Browser is publishing binary stream data
                 if let Some(ref overlay) = sm.overlay {
                     if let Some(ref sid) = sm.stream_id {
-                        let overlay_sid = OverlayStreamId::from_string(
-                            sid.as_str().unwrap_or_default(),
-                        );
-                        if let Err(e) = overlay
-                            .publish_stream_data(&overlay_sid, data)
-                            .await
-                        {
+                        let overlay_sid =
+                            OverlayStreamId::from_string(sid.as_str().unwrap_or_default());
+                        if let Err(e) = overlay.publish_stream_data(&overlay_sid, data).await {
                             warn!("Relay publish data failed: {}", e);
                         }
                     }
@@ -1498,9 +1416,7 @@ impl WebServer {
         if self.config.rate_limit_per_ip > 0 {
             let rl = self.app_state.rate_limiter.clone();
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(
-                    Duration::from_secs(300),
-                );
+                let mut interval = tokio::time::interval(Duration::from_secs(300));
                 loop {
                     interval.tick().await;
                     let before = rl.tracked_count();
@@ -1522,15 +1438,12 @@ impl WebServer {
         if cleanup_interval > 0 {
             let cleanup_state = self.app_state.signaling_state.clone();
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(
-                    Duration::from_secs(cleanup_interval),
-                );
+                let mut interval = tokio::time::interval(Duration::from_secs(cleanup_interval));
                 loop {
                     interval.tick().await;
                     let now = Instant::now();
                     let mut streams = cleanup_state.streams.write().await;
-                    let mut timestamps =
-                        cleanup_state.stream_last_active.write().await;
+                    let mut timestamps = cleanup_state.stream_last_active.write().await;
                     let before = streams.len();
                     streams.retain(|id, peers| {
                         if peers.is_empty() {
@@ -1538,9 +1451,7 @@ impl WebServer {
                             return false;
                         }
                         if let Some(last) = timestamps.get(id) {
-                            if now.duration_since(*last).as_secs()
-                                > cleanup_interval
-                            {
+                            if now.duration_since(*last).as_secs() > cleanup_interval {
                                 timestamps.remove(id);
                                 return false;
                             }
@@ -1549,10 +1460,7 @@ impl WebServer {
                     });
                     let removed = before - streams.len();
                     if removed > 0 {
-                        info!(
-                            "Idle cleanup: removed {} stale stream room(s)",
-                            removed
-                        );
+                        info!("Idle cleanup: removed {} stale stream room(s)", removed);
                     }
                 }
             });
@@ -1572,22 +1480,13 @@ impl WebServer {
             .route("/stream/start", post(start_stream_handler))
             .route("/stream/stop", post(stop_stream_handler))
             // Moderation
-            .route(
-                "/moderation/block-peer",
-                post(mod_block_peer_handler),
-            )
+            .route("/moderation/block-peer", post(mod_block_peer_handler))
             .route(
                 "/moderation/block-peer/:peer_id",
                 delete(mod_unblock_peer_handler),
             )
-            .route(
-                "/moderation/blocked-peers",
-                get(mod_blocked_peers_handler),
-            )
-            .route(
-                "/moderation/flag-stream",
-                post(mod_flag_stream_handler),
-            )
+            .route("/moderation/blocked-peers", get(mod_blocked_peers_handler))
+            .route("/moderation/flag-stream", post(mod_flag_stream_handler))
             .route(
                 "/moderation/flagged-streams",
                 get(mod_flagged_streams_handler),
@@ -1617,35 +1516,19 @@ impl WebServer {
             let cors = if self.config.cors_allowed_origins.is_empty() {
                 // Same-origin only when no origins configured
                 CorsLayer::new()
-                    .allow_methods([
-                        Method::GET,
-                        Method::POST,
-                        Method::DELETE,
-                    ])
-                    .allow_headers([
-                        header::CONTENT_TYPE,
-                        header::AUTHORIZATION,
-                    ])
+                    .allow_methods([Method::GET, Method::POST, Method::DELETE])
+                    .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
             } else {
                 CorsLayer::new()
                     .allow_origin(
                         self.config
                             .cors_allowed_origins
                             .iter()
-                            .filter_map(|o| {
-                                o.parse::<HeaderValue>().ok()
-                            })
+                            .filter_map(|o| o.parse::<HeaderValue>().ok())
                             .collect::<Vec<_>>(),
                     )
-                    .allow_methods([
-                        Method::GET,
-                        Method::POST,
-                        Method::DELETE,
-                    ])
-                    .allow_headers([
-                        header::CONTENT_TYPE,
-                        header::AUTHORIZATION,
-                    ])
+                    .allow_methods([Method::GET, Method::POST, Method::DELETE])
+                    .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
             };
             router = router.layer(ServiceBuilder::new().layer(cors));
         }
@@ -1678,29 +1561,20 @@ impl WebServer {
 
         // Per-IP rate limiting (outermost layer)
         if self.config.rate_limit_per_ip > 0 {
-            router = router.layer(
-                axum::middleware::from_fn_with_state(
-                    self.app_state.clone(),
-                    rate_limit_middleware,
-                ),
-            );
+            router = router.layer(axum::middleware::from_fn_with_state(
+                self.app_state.clone(),
+                rate_limit_middleware,
+            ));
         }
 
         // Serve static files (web viewer)
         if self.config.web_root.exists() {
-            info!(
-                "Serving static files from: {:?}",
-                self.config.web_root
-            );
+            info!("Serving static files from: {:?}", self.config.web_root);
             router = router.fallback_service(
-                ServeDir::new(&self.config.web_root)
-                    .append_index_html_on_directories(true),
+                ServeDir::new(&self.config.web_root).append_index_html_on_directories(true),
             );
         } else {
-            warn!(
-                "Web root directory not found: {:?}",
-                self.config.web_root
-            );
+            warn!("Web root directory not found: {:?}", self.config.web_root);
             router = router.fallback(|| async { Html(DEFAULT_HTML) });
         }
 
@@ -1722,17 +1596,14 @@ async fn websocket_handler(
     State(state): State<AppState>,
 ) -> Response {
     let Some(guard) = try_acquire_ws_slot(&state) else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections")
-            .into_response();
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
     };
     let stream_id = params.get("stream_id").cloned();
     if let Some(ref id) = stream_id {
         info!("WebSocket connection requested stream_id={}", id);
     }
     ws.max_message_size(state.config.max_ws_message_bytes)
-        .on_upgrade(move |socket| {
-            handle_websocket(socket, state, stream_id, guard)
-        })
+        .on_upgrade(move |socket| handle_websocket(socket, state, stream_id, guard))
 }
 
 /// Handle individual WebSocket connections
@@ -1775,18 +1646,14 @@ async fn handle_websocket(
     // If the client requested a specific stream and we have an overlay but no
     // matching subscription yet (browse mode), dynamically subscribe now.
     let _dynamic_listener_handle = if let Some(ref sid) = requested_stream_id {
-        if state.stream_manager.overlay.is_some()
-            && state.stream_manager.stream_id.is_none()
-        {
+        if state.stream_manager.overlay.is_some() && state.stream_manager.stream_id.is_none() {
             info!(
                 "Dynamic subscription: subscribing to stream {} via overlay",
                 sid
             );
             let overlay = state.stream_manager.overlay.as_ref().unwrap().clone();
             let target_stream_id = StreamId::new(sid.clone());
-            let overlay_stream_id = OverlayStreamId::from_bytes(
-                sid.as_bytes().to_vec(),
-            );
+            let overlay_stream_id = OverlayStreamId::from_bytes(sid.as_bytes().to_vec());
 
             // Subscribe to the GossipSub topic
             if let Err(e) = overlay.subscribe_stream(&overlay_stream_id).await {
@@ -1799,8 +1666,7 @@ async fn handle_websocket(
 
             // Spawn a per-connection P2P receive loop
             let segment_sender = state.stream_manager.segment_sender.clone();
-            let init_segment =
-                Arc::clone(&state.stream_manager.initialization_segment);
+            let init_segment = Arc::clone(&state.stream_manager.initialization_segment);
             let discovery = state.stream_manager.stream_discovery.clone();
 
             let handle = tokio::spawn(async move {
@@ -1828,8 +1694,7 @@ async fn handle_websocket(
     // Send initial stream info with detected codec information
     // In browse/subscriber mode, codec info may not be available locally —
     // the client will receive it from the P2P init segment instead.
-    let _has_local_codec_info =
-        state.stream_manager.video_codec_info.lock().await.is_some();
+    let _has_local_codec_info = state.stream_manager.video_codec_info.lock().await.is_some();
 
     let (video_codec, video_mime) =
         if let Some((codec, mime)) = &*state.stream_manager.video_codec_info.lock().await {
@@ -1895,10 +1760,8 @@ async fn handle_websocket(
     {
         const MAX_CHUNK_SIZE: usize = 512 * 1024; // 512KB chunks
 
-        let video_init =
-            state.stream_manager.video_init_segment.lock().await.clone();
-        let audio_init =
-            state.stream_manager.audio_init_segment.lock().await.clone();
+        let video_init = state.stream_manager.video_init_segment.lock().await.clone();
+        let audio_init = state.stream_manager.audio_init_segment.lock().await.clone();
 
         if let Some(ref video_init_data) = video_init {
             // Send video init segment
@@ -1917,9 +1780,7 @@ async fn handle_websocket(
             };
 
             if let Ok(info_message) = serde_json::to_string(&chunk_info) {
-                if let Err(e) =
-                    sender.send(Message::Text(info_message)).await
-                {
+                if let Err(e) = sender.send(Message::Text(info_message)).await {
                     error!("Failed to send video init chunk info: {}", e);
                     return;
                 }
@@ -1929,51 +1790,30 @@ async fn handle_websocket(
                 let mut offset = 0;
                 let mut chunk_num = 0;
                 while offset < video_init_data.len() {
-                    let chunk_end = std::cmp::min(
-                        offset + MAX_CHUNK_SIZE,
-                        video_init_data.len(),
-                    );
+                    let chunk_end = std::cmp::min(offset + MAX_CHUNK_SIZE, video_init_data.len());
                     let chunk = &video_init_data[offset..chunk_end];
                     chunk_num += 1;
 
                     let chunk_info = ClientMessage::ChunkInfo {
                         data: ChunkInfo {
-                            chunk_type: format!(
-                                "init_video_chunk_{}",
-                                chunk_num
-                            ),
+                            chunk_type: format!("init_video_chunk_{}", chunk_num),
                             size: chunk.len(),
                             timestamp: offset as u64,
                         },
                     };
-                    if let Ok(info_message) =
-                        serde_json::to_string(&chunk_info)
-                    {
-                        if let Err(e) =
-                            sender.send(Message::Text(info_message)).await
-                        {
-                            error!(
-                                "Failed to send chunk {} info: {}",
-                                chunk_num, e
-                            );
+                    if let Ok(info_message) = serde_json::to_string(&chunk_info) {
+                        if let Err(e) = sender.send(Message::Text(info_message)).await {
+                            error!("Failed to send chunk {} info: {}", chunk_num, e);
                             return;
                         }
                     }
-                    if let Err(e) =
-                        sender.send(Message::Binary(chunk.to_vec())).await
-                    {
-                        error!(
-                            "Failed to send video init chunk {}: {}",
-                            chunk_num, e
-                        );
+                    if let Err(e) = sender.send(Message::Binary(chunk.to_vec())).await {
+                        error!("Failed to send video init chunk {}: {}", chunk_num, e);
                         return;
                     }
                     offset = chunk_end;
                 }
-            } else if let Err(e) = sender
-                .send(Message::Binary(video_init_data.clone()))
-                .await
-            {
+            } else if let Err(e) = sender.send(Message::Binary(video_init_data.clone())).await {
                 error!("Failed to send video init segment: {}", e);
                 return;
             }
@@ -1999,24 +1839,14 @@ async fn handle_websocket(
                     },
                 };
 
-                if let Ok(info_message) =
-                    serde_json::to_string(&chunk_info)
-                {
-                    if let Err(e) =
-                        sender.send(Message::Text(info_message)).await
-                    {
-                        error!(
-                            "Failed to send audio init chunk info: {}",
-                            e
-                        );
+                if let Ok(info_message) = serde_json::to_string(&chunk_info) {
+                    if let Err(e) = sender.send(Message::Text(info_message)).await {
+                        error!("Failed to send audio init chunk info: {}", e);
                         return;
                     }
                 }
 
-                if let Err(e) = sender
-                    .send(Message::Binary(audio_init_data.clone()))
-                    .await
-                {
+                if let Err(e) = sender.send(Message::Binary(audio_init_data.clone())).await {
                     error!("Failed to send audio init segment: {}", e);
                     return;
                 }
@@ -2045,13 +1875,8 @@ async fn handle_websocket(
             };
 
             if let Ok(info_message) = serde_json::to_string(&chunk_info) {
-                if let Err(e) =
-                    sender.send(Message::Text(info_message)).await
-                {
-                    error!(
-                        "Failed to send initialization chunk info: {}",
-                        e
-                    );
+                if let Err(e) = sender.send(Message::Text(info_message)).await {
+                    error!("Failed to send initialization chunk info: {}", e);
                     return;
                 }
             }
@@ -2060,43 +1885,25 @@ async fn handle_websocket(
                 let mut offset = 0;
                 let mut chunk_num = 0;
                 while offset < init_segment.len() {
-                    let chunk_end = std::cmp::min(
-                        offset + MAX_CHUNK_SIZE,
-                        init_segment.len(),
-                    );
+                    let chunk_end = std::cmp::min(offset + MAX_CHUNK_SIZE, init_segment.len());
                     let chunk = &init_segment[offset..chunk_end];
                     chunk_num += 1;
 
                     let chunk_info = ClientMessage::ChunkInfo {
                         data: ChunkInfo {
-                            chunk_type: format!(
-                                "initialization_chunk_{}",
-                                chunk_num
-                            ),
+                            chunk_type: format!("initialization_chunk_{}", chunk_num),
                             size: chunk.len(),
                             timestamp: offset as u64,
                         },
                     };
-                    if let Ok(info_message) =
-                        serde_json::to_string(&chunk_info)
-                    {
-                        if let Err(e) =
-                            sender.send(Message::Text(info_message)).await
-                        {
-                            error!(
-                                "Failed to send chunk {} info: {}",
-                                chunk_num, e
-                            );
+                    if let Ok(info_message) = serde_json::to_string(&chunk_info) {
+                        if let Err(e) = sender.send(Message::Text(info_message)).await {
+                            error!("Failed to send chunk {} info: {}", chunk_num, e);
                             return;
                         }
                     }
-                    if let Err(e) =
-                        sender.send(Message::Binary(chunk.to_vec())).await
-                    {
-                        error!(
-                            "Failed to send init chunk {}: {}",
-                            chunk_num, e
-                        );
+                    if let Err(e) = sender.send(Message::Binary(chunk.to_vec())).await {
+                        error!("Failed to send init chunk {}: {}", chunk_num, e);
                         return;
                     }
                     offset = chunk_end;
@@ -2109,23 +1916,13 @@ async fn handle_websocket(
                         timestamp: 0,
                     },
                 };
-                if let Ok(info_message) =
-                    serde_json::to_string(&completion_info)
-                {
-                    if let Err(e) =
-                        sender.send(Message::Text(info_message)).await
-                    {
-                        error!(
-                            "Failed to send completion marker: {}",
-                            e
-                        );
+                if let Ok(info_message) = serde_json::to_string(&completion_info) {
+                    if let Err(e) = sender.send(Message::Text(info_message)).await {
+                        error!("Failed to send completion marker: {}", e);
                         return;
                     }
                 }
-            } else if let Err(e) = sender
-                .send(Message::Binary(init_segment.clone()))
-                .await
-            {
+            } else if let Err(e) = sender.send(Message::Binary(init_segment.clone())).await {
                 error!("Failed to send initialization segment: {}", e);
                 return;
             }
@@ -2152,16 +1949,10 @@ async fn handle_websocket(
         while let Some(message) = receiver.next().await {
             match message {
                 Ok(Message::Text(text)) => {
-                    debug!(
-                        "Received text from client {}: {}",
-                        client_id_clone, text
-                    );
+                    debug!("Received text from client {}: {}", client_id_clone, text);
                 }
                 Ok(Message::Binary(_)) => {
-                    debug!(
-                        "Received binary data from client {}",
-                        client_id_clone
-                    );
+                    debug!("Received binary data from client {}", client_id_clone);
                 }
                 Ok(Message::Pong(_)) => {
                     debug!("Pong from client {}", client_id_clone);
@@ -2383,10 +2174,7 @@ async fn handle_websocket(
     // Clean up dynamic P2P listener if one was spawned
     if let Some(handle) = _dynamic_listener_handle {
         handle.abort();
-        info!(
-            "Stopped dynamic P2P listener for client {}",
-            client_id
-        );
+        info!("Stopped dynamic P2P listener for client {}", client_id);
     }
 
     info!("WebSocket handler finished for client: {}", client_id);
@@ -2458,7 +2246,10 @@ async fn list_streams_handler(State(state): State<AppState>) -> impl IntoRespons
 
     // Add streams discovered from P2P network via StreamDiscovery
     if let Some(ref discovery) = state.stream_manager.stream_discovery {
-        let local_stream_id = state.stream_manager.stream_id.as_ref()
+        let local_stream_id = state
+            .stream_manager
+            .stream_id
+            .as_ref()
             .map(|id| id.to_string_lossy());
 
         for ann in discovery.list_streams().await {
@@ -2498,13 +2289,9 @@ async fn list_streams_handler(State(state): State<AppState>) -> impl IntoRespons
 ///
 /// This endpoint handles WebSocket connections for WebRTC signaling,
 /// relaying SDP offers/answers and ICE candidates between peers.
-async fn webrtc_signaling_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+async fn webrtc_signaling_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     let Some(guard) = try_acquire_ws_slot(&state) else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections")
-            .into_response();
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
     };
     ws.max_message_size(state.config.max_ws_message_bytes)
         .on_upgrade(|socket| handle_webrtc_signaling(socket, state, guard))
@@ -2516,11 +2303,7 @@ async fn webrtc_signaling_handler(
 /// 1. Assigns a unique peer ID to the connection
 /// 2. Receives and relays signaling messages between peers
 /// 3. Manages peer registration and discovery for streams
-async fn handle_webrtc_signaling(
-    socket: WebSocket,
-    state: AppState,
-    _guard: WsConnectionGuard,
-) {
+async fn handle_webrtc_signaling(socket: WebSocket, state: AppState, _guard: WsConnectionGuard) {
     let peer_id = uuid::Uuid::new_v4().to_string();
     info!("New WebRTC signaling client connected: {}", peer_id);
 
@@ -2546,7 +2329,10 @@ async fn handle_webrtc_signaling(
             match serde_json::to_string(&msg) {
                 Ok(json) => {
                     if let Err(e) = sender.send(Message::Text(json)).await {
-                        debug!("Failed to send signaling message to {}: {}", peer_id_clone, e);
+                        debug!(
+                            "Failed to send signaling message to {}: {}",
+                            peer_id_clone, e
+                        );
                         break;
                     }
                 }
@@ -2655,8 +2441,7 @@ async fn handle_signaling_message(
                     && streams.len() >= state.config.max_stream_rooms
                 {
                     warn!("Max stream rooms reached, rejecting {}", peer_id);
-                    let senders =
-                        state.signaling_state.peer_senders.read().await;
+                    let senders = state.signaling_state.peer_senders.read().await;
                     if let Some(sender) = senders.get(peer_id) {
                         let _ = sender.try_send(SignalingMessage::Error {
                             message: "Max stream rooms reached".to_string(),
@@ -2670,12 +2455,8 @@ async fn handle_signaling_message(
                     if peers.iter().all(|p| p.peer_id != peer_id)
                         && peers.len() >= state.config.max_peers_per_stream
                     {
-                        warn!(
-                            "Stream {} full, rejecting {}",
-                            stream_id, peer_id
-                        );
-                        let senders =
-                            state.signaling_state.peer_senders.read().await;
+                        warn!("Stream {} full, rejecting {}", stream_id, peer_id);
+                        let senders = state.signaling_state.peer_senders.read().await;
                         if let Some(sender) = senders.get(peer_id) {
                             let _ = sender.try_send(SignalingMessage::Error {
                                 message: "Stream room is full".to_string(),
@@ -2685,8 +2466,7 @@ async fn handle_signaling_message(
                     }
                 }
 
-                let peers =
-                    streams.entry(stream_id.clone()).or_insert_with(Vec::new);
+                let peers = streams.entry(stream_id.clone()).or_insert_with(Vec::new);
 
                 // Remove if already exists (rejoin)
                 peers.retain(|p| p.peer_id != peer_id);
@@ -2697,17 +2477,12 @@ async fn handle_signaling_message(
                     can_relay: false,
                 });
 
-                debug!(
-                    "Stream {} now has {} peers",
-                    stream_id,
-                    peers.len()
-                );
+                debug!("Stream {} now has {} peers", stream_id, peers.len());
             }
 
             // Update stream last-active timestamp
             {
-                let mut timestamps =
-                    state.signaling_state.stream_last_active.write().await;
+                let mut timestamps = state.signaling_state.stream_last_active.write().await;
                 timestamps.insert(stream_id.clone(), Instant::now());
             }
 
@@ -2817,7 +2592,10 @@ async fn handle_signaling_message(
             sdp_mid,
             sdp_mline_index,
         } => {
-            debug!("Relaying ICE candidate from {} to {}", peer_id, target_peer_id);
+            debug!(
+                "Relaying ICE candidate from {} to {}",
+                peer_id, target_peer_id
+            );
             let ice = SignalingMessage::IceCandidate {
                 peer_id: peer_id.to_string(),
                 target_peer_id: target_peer_id.clone(),
@@ -2943,8 +2721,7 @@ async fn kick_peer_from_signaling(state: &AppState, peer_id: &str) {
         for (stream_id, peers) in streams.iter_mut() {
             if peers.iter().any(|p| p.peer_id == peer_id) {
                 peers.retain(|p| p.peer_id != peer_id);
-                let remaining: Vec<String> =
-                    peers.iter().map(|p| p.peer_id.clone()).collect();
+                let remaining: Vec<String> = peers.iter().map(|p| p.peer_id.clone()).collect();
                 result.push((stream_id.clone(), remaining));
             }
         }
@@ -2997,10 +2774,7 @@ async fn admin_auth_middleware<B>(
 ) -> Response {
     let expected = match &state.config.admin_api_token {
         Some(t) => t,
-        None => {
-            return (StatusCode::NOT_FOUND, "Admin API not enabled")
-                .into_response()
-        }
+        None => return (StatusCode::NOT_FOUND, "Admin API not enabled").into_response(),
     };
 
     let auth_header = req
@@ -3017,10 +2791,11 @@ async fn admin_auth_middleware<B>(
                 (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
             }
         }
-        _ => {
-            (StatusCode::UNAUTHORIZED, "Missing or invalid Authorization header")
-                .into_response()
-        }
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            "Missing or invalid Authorization header",
+        )
+            .into_response(),
     }
 }
 
@@ -3094,9 +2869,7 @@ async fn mod_unblock_peer_handler(
     }))
 }
 
-async fn mod_blocked_peers_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn mod_blocked_peers_handler(State(state): State<AppState>) -> impl IntoResponse {
     let Some(ref moderation) = state.moderation else {
         return mod_not_enabled();
     };
@@ -3125,9 +2898,7 @@ async fn mod_flag_stream_handler(
     }))
 }
 
-async fn mod_flagged_streams_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn mod_flagged_streams_handler(State(state): State<AppState>) -> impl IntoResponse {
     let Some(ref moderation) = state.moderation else {
         return mod_not_enabled();
     };
@@ -3153,9 +2924,7 @@ async fn mod_import_handler(
     }))
 }
 
-async fn mod_export_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn mod_export_handler(State(state): State<AppState>) -> impl IntoResponse {
     let Some(ref moderation) = state.moderation else {
         return mod_not_enabled();
     };
@@ -3266,9 +3035,7 @@ mod tests {
     use OpenBroadcastNetwork_core::overlay::RelayStats;
 
     /// Helper to build an AppState suitable for unit tests (no overlay).
-    fn test_app_state(
-        relay_stats: Option<Arc<RwLock<RelayStats>>>,
-    ) -> AppState {
+    fn test_app_state(relay_stats: Option<Arc<RwLock<RelayStats>>>) -> AppState {
         let config = WebServerConfig::default();
         let rate_limiter = Arc::new(RateLimiterState::new(
             config.rate_limit_per_ip,
@@ -3287,9 +3054,7 @@ mod tests {
     }
 
     /// Helper to build an AppState with custom config for unit tests.
-    fn test_app_state_with_config(
-        config: WebServerConfig,
-    ) -> AppState {
+    fn test_app_state_with_config(config: WebServerConfig) -> AppState {
         let rate_limiter = Arc::new(RateLimiterState::new(
             config.rate_limit_per_ip,
             config.rate_limit_window_secs,
@@ -3310,8 +3075,7 @@ mod tests {
     async fn call_stats(state: AppState) -> serde_json::Value {
         let resp = stats_handler(State(state)).await;
         let resp = axum::response::IntoResponse::into_response(resp);
-        let bytes =
-            hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let bytes = hyper::body::to_bytes(resp.into_body()).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 
@@ -3325,8 +3089,7 @@ mod tests {
             connected_peers: 5,
             ..Default::default()
         };
-        let state =
-            test_app_state(Some(Arc::new(RwLock::new(stats))));
+        let state = test_app_state(Some(Arc::new(RwLock::new(stats))));
         let json = call_stats(state).await;
 
         assert_eq!(json["status"], "ok");
@@ -3352,13 +3115,11 @@ mod tests {
         // Insert a peer into a stream room and the senders map
         let (tx, _rx) = mpsc::channel(64);
         {
-            let mut senders =
-                state.signaling_state.peer_senders.write().await;
+            let mut senders = state.signaling_state.peer_senders.write().await;
             senders.insert("peer-A".to_string(), tx);
         }
         {
-            let mut streams =
-                state.signaling_state.streams.write().await;
+            let mut streams = state.signaling_state.streams.write().await;
             streams.insert(
                 "stream-1".to_string(),
                 vec![SignalingPeer {
@@ -3459,8 +3220,7 @@ mod tests {
 
         // Fill up 2 stream rooms
         {
-            let mut streams =
-                state.signaling_state.streams.write().await;
+            let mut streams = state.signaling_state.streams.write().await;
             streams.insert(
                 "stream-1".to_string(),
                 vec![SignalingPeer {
@@ -3482,8 +3242,7 @@ mod tests {
         // Register a sender for the test peer
         let (tx, _rx) = mpsc::channel(64);
         {
-            let mut senders =
-                state.signaling_state.peer_senders.write().await;
+            let mut senders = state.signaling_state.peer_senders.write().await;
             senders.insert("new-peer".to_string(), tx);
         }
 
@@ -3507,10 +3266,7 @@ mod tests {
             !streams.contains_key("stream-3"),
             "stream-3 should not be created when at max rooms"
         );
-        assert!(
-            current_stream.is_none(),
-            "peer should not have joined"
-        );
+        assert!(current_stream.is_none(), "peer should not have joined");
     }
 
     #[tokio::test]
@@ -3519,8 +3275,7 @@ mod tests {
 
         // Insert a stale stream room with an old timestamp
         {
-            let mut streams =
-                state.signaling_state.streams.write().await;
+            let mut streams = state.signaling_state.streams.write().await;
             streams.insert(
                 "stale-stream".to_string(),
                 vec![SignalingPeer {
@@ -3531,8 +3286,7 @@ mod tests {
             );
         }
         {
-            let mut timestamps =
-                state.signaling_state.stream_last_active.write().await;
+            let mut timestamps = state.signaling_state.stream_last_active.write().await;
             // Set timestamp to 10 minutes ago
             timestamps.insert(
                 "stale-stream".to_string(),
@@ -3542,8 +3296,7 @@ mod tests {
 
         // Insert a fresh stream room
         {
-            let mut streams =
-                state.signaling_state.streams.write().await;
+            let mut streams = state.signaling_state.streams.write().await;
             streams.insert(
                 "fresh-stream".to_string(),
                 vec![SignalingPeer {
@@ -3554,31 +3307,23 @@ mod tests {
             );
         }
         {
-            let mut timestamps =
-                state.signaling_state.stream_last_active.write().await;
-            timestamps.insert(
-                "fresh-stream".to_string(),
-                Instant::now(),
-            );
+            let mut timestamps = state.signaling_state.stream_last_active.write().await;
+            timestamps.insert("fresh-stream".to_string(), Instant::now());
         }
 
         // Simulate cleanup (same logic as the spawned task)
         let cleanup_interval = 300u64; // 5 minutes
         {
             let now = Instant::now();
-            let mut streams =
-                state.signaling_state.streams.write().await;
-            let mut timestamps =
-                state.signaling_state.stream_last_active.write().await;
+            let mut streams = state.signaling_state.streams.write().await;
+            let mut timestamps = state.signaling_state.stream_last_active.write().await;
             streams.retain(|id, peers| {
                 if peers.is_empty() {
                     timestamps.remove(id);
                     return false;
                 }
                 if let Some(last) = timestamps.get(id) {
-                    if now.duration_since(*last).as_secs()
-                        > cleanup_interval
-                    {
+                    if now.duration_since(*last).as_secs() > cleanup_interval {
                         timestamps.remove(id);
                         return false;
                     }
@@ -3622,31 +3367,20 @@ mod tests {
 
     /// Build a small router with a single POST route protected by
     /// admin_auth_middleware, and send a request using `tower::ServiceExt`.
-    async fn call_admin_protected(
-        state: AppState,
-        token: Option<&str>,
-    ) -> StatusCode {
+    async fn call_admin_protected(state: AppState, token: Option<&str>) -> StatusCode {
         use tower::ServiceExt;
 
         let app = Router::new()
-            .route(
-                "/test",
-                post(|| async { StatusCode::OK.into_response() }),
-            )
+            .route("/test", post(|| async { StatusCode::OK.into_response() }))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 admin_auth_middleware,
             ))
             .with_state(state);
 
-        let mut builder = Request::builder()
-            .method("POST")
-            .uri("/test");
+        let mut builder = Request::builder().method("POST").uri("/test");
         if let Some(t) = token {
-            builder = builder.header(
-                "Authorization",
-                format!("Bearer {}", t),
-            );
+            builder = builder.header("Authorization", format!("Bearer {}", t));
         }
         let req = builder.body(hyper::Body::empty()).unwrap();
 
@@ -3711,8 +3445,7 @@ mod tests {
     #[test]
     fn test_rate_limiter_allows_within_limit() {
         let rl = RateLimiterState::new(5, 60);
-        let ip: std::net::IpAddr =
-            "127.0.0.1".parse().unwrap();
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
         for _ in 0..5 {
             assert!(rl.check_rate_limit(ip));
         }
@@ -3721,8 +3454,7 @@ mod tests {
     #[test]
     fn test_rate_limiter_blocks_over_limit() {
         let rl = RateLimiterState::new(5, 60);
-        let ip: std::net::IpAddr =
-            "127.0.0.1".parse().unwrap();
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
         for _ in 0..5 {
             assert!(rl.check_rate_limit(ip));
         }
@@ -3734,8 +3466,7 @@ mod tests {
     fn test_rate_limiter_resets_after_window() {
         // Use a window of 0 seconds so it expires immediately
         let rl = RateLimiterState::new(1, 0);
-        let ip: std::net::IpAddr =
-            "127.0.0.1".parse().unwrap();
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
         assert!(rl.check_rate_limit(ip));
         // Window of 0 seconds means the next call will see
         // that the window has expired and reset
@@ -3745,10 +3476,8 @@ mod tests {
     #[test]
     fn test_rate_limiter_independent_per_ip() {
         let rl = RateLimiterState::new(2, 60);
-        let ip1: std::net::IpAddr =
-            "10.0.0.1".parse().unwrap();
-        let ip2: std::net::IpAddr =
-            "10.0.0.2".parse().unwrap();
+        let ip1: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        let ip2: std::net::IpAddr = "10.0.0.2".parse().unwrap();
 
         // Exhaust ip1's budget
         assert!(rl.check_rate_limit(ip1));
@@ -3764,8 +3493,7 @@ mod tests {
     #[test]
     fn test_rate_limiter_cleanup_expired() {
         let rl = RateLimiterState::new(10, 0); // 0-second window
-        let ip: std::net::IpAddr =
-            "10.0.0.1".parse().unwrap();
+        let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
         rl.check_rate_limit(ip);
         assert_eq!(rl.tracked_count(), 1);
 

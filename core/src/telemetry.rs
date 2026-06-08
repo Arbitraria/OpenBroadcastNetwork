@@ -23,6 +23,8 @@ use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::RwLock;
+#[cfg(not(target_arch = "wasm32"))]
+use tracing::info;
 
 /// Configuration for the telemetry and metrics system
 ///
@@ -190,16 +192,19 @@ impl TelemetryManager {
         }
     }
 
-    /// Start the telemetry manager
+    /// Start the telemetry reporting loop.
+    ///
+    /// Periodically logs a summary of all counters, gauges, and histograms.
+    /// For external collection (e.g. Prometheus), expose an HTTP endpoint
+    /// that reads these same maps.
     pub async fn start(&self) {
         if !self.config.enabled {
             return;
         }
 
-        // Start the reporting task
-        let _counters = self.counters.clone();
-        let _gauges = self.gauges.clone();
-        let _histograms = self.histograms.clone();
+        let counters = self.counters.clone();
+        let gauges = self.gauges.clone();
+        let histograms = self.histograms.clone();
         let interval = Duration::from_secs(self.config.reporting_interval_secs);
 
         tokio::spawn(async move {
@@ -208,8 +213,33 @@ impl TelemetryManager {
             loop {
                 timer.tick().await;
 
-                // Report metrics here
-                // In a real implementation, this would send metrics to a collection service
+                let c = counters.read().await;
+                let g = gauges.read().await;
+                let h = histograms.read().await;
+
+                if c.is_empty() && g.is_empty() && h.is_empty() {
+                    continue;
+                }
+
+                let counter_summary: Vec<String> = c
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v.value()))
+                    .collect();
+                let gauge_summary: Vec<String> = g
+                    .iter()
+                    .map(|(k, v)| format!("{}={:.2}", k, v.value()))
+                    .collect();
+                let histogram_summary: Vec<String> = h
+                    .iter()
+                    .filter_map(|(k, v)| v.average().map(|avg| format!("{}(avg={:.2})", k, avg)))
+                    .collect();
+
+                info!(
+                    counters = %counter_summary.join(", "),
+                    gauges = %gauge_summary.join(", "),
+                    histograms = %histogram_summary.join(", "),
+                    "telemetry report"
+                );
             }
         });
     }

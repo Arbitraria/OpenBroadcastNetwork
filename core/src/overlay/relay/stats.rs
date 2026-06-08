@@ -72,13 +72,12 @@ impl RelayStats {
     }
 
     /// Record a relayed chunk with per-stream tracking
-    pub fn record_chunk_for_stream(
-        &mut self,
-        chunk_size: usize,
-        stream_id: &str,
-    ) {
+    pub fn record_chunk_for_stream(&mut self, chunk_size: usize, stream_id: &str) {
         self.record_chunk(chunk_size);
-        *self.per_stream_chunks.entry(stream_id.to_string()).or_insert(0) += 1;
+        *self
+            .per_stream_chunks
+            .entry(stream_id.to_string())
+            .or_insert(0) += 1;
     }
 }
 

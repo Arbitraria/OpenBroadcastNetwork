@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use instant::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use crate::media::wire_format::WireSegment;
 use crate::pubsub::message::{Message, SerializablePeerId};
@@ -211,9 +211,7 @@ impl StreamDataValidator {
         let mut tracker = self.rate_tracker.lock().unwrap();
         let now = Instant::now();
 
-        let entry = tracker
-            .entry(source_id.to_string())
-            .or_insert((0, now));
+        let entry = tracker.entry(source_id.to_string()).or_insert((0, now));
 
         // Reset window if more than 1 second has passed
         if now.duration_since(entry.1).as_secs() >= 1 {
@@ -227,11 +225,7 @@ impl StreamDataValidator {
 
     /// Track sequence number, warn on gaps/duplicates.
     /// Returns Ignore for duplicates, Accept otherwise (gaps are logged).
-    fn check_sequence(
-        &self,
-        stream_key: &str,
-        sequence: u64,
-    ) -> ValidationResult {
+    fn check_sequence(&self, stream_key: &str, sequence: u64) -> ValidationResult {
         let mut tracker = self.sequence_tracker.lock().unwrap();
         if let Some(last_seq) = tracker.get(stream_key) {
             if sequence == *last_seq {
@@ -259,11 +253,7 @@ impl StreamDataValidator {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageValidator for StreamDataValidator {
-    fn validate(
-        &self,
-        message: &Message,
-        source: Option<&PeerId>,
-    ) -> ValidationResult {
+    fn validate(&self, message: &Message, source: Option<&PeerId>) -> ValidationResult {
         // Only validate stream data topics
         if !Self::is_stream_data_topic(&message.topic) {
             return ValidationResult::Accept;
@@ -286,10 +276,7 @@ impl MessageValidator for StreamDataValidator {
             Ok(wire) => {
                 // Check version compatibility
                 if !wire.is_compatible() {
-                    warn!(
-                        "Incompatible wire format version: {}",
-                        wire.version
-                    );
+                    warn!("Incompatible wire format version: {}", wire.version);
                     return ValidationResult::Reject;
                 }
 
@@ -300,18 +287,11 @@ impl MessageValidator for StreamDataValidator {
                 }
 
                 // Check sequence continuity
-                let stream_key = format!(
-                    "{}:{}",
-                    hex::encode(&wire.stream_id),
-                    wire.track_id
-                );
+                let stream_key = format!("{}:{}", hex::encode(&wire.stream_id), wire.track_id);
                 self.check_sequence(&stream_key, wire.sequence)
             }
             Err(e) => {
-                warn!(
-                    "Invalid WireSegment on stream data topic: {}",
-                    e
-                );
+                warn!("Invalid WireSegment on stream data topic: {}", e);
                 ValidationResult::Reject
             }
         }

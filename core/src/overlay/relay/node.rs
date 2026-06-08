@@ -21,10 +21,7 @@ use super::types::{RelayMessage, StreamChunk, TaskHandles};
 
 /// Type alias for the async chunk handler callback
 type ChunkHandlerFn = Box<
-    dyn Fn(
-            PeerId,
-            StreamChunk,
-        ) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>
+    dyn Fn(PeerId, StreamChunk) -> Pin<Box<dyn Future<Output = Result<(), OverlayError>> + Send>>
         + Send
         + Sync,
 >;
@@ -411,10 +408,7 @@ impl RelayNode {
         // Record per-stream stats
         {
             let mut stats_guard = stats.write().await;
-            stats_guard.record_chunk_for_stream(
-                chunk.data.len(),
-                &stream_id.to_string(),
-            );
+            stats_guard.record_chunk_for_stream(chunk.data.len(), &stream_id.to_string());
         }
 
         // Check if we have this stream
@@ -706,10 +700,7 @@ impl RelayNode {
     ) -> Result<(), OverlayError> {
         if let Some(tx) = self.message_tx.lock().await.as_ref() {
             if let Err(e) = tx
-                .send(RelayMessage::RemoveSubscriber(
-                    stream_id.clone(),
-                    *peer_id,
-                ))
+                .send(RelayMessage::RemoveSubscriber(stream_id.clone(), *peer_id))
                 .await
             {
                 error!("Failed to send remove subscriber message: {}", e);

@@ -9,19 +9,19 @@ use std::str::FromStr;
 
 /// GeoIP lookup provider
 ///
-/// In production, this would use a real GeoIP database.
-/// For testing, it uses a deterministic mapping based on IP octets.
+/// **Stub implementation**: Uses a deterministic mapping based on the last
+/// octet of the IP address. To use real GeoIP data, replace this with a
+/// MaxMind GeoIP2 or ip-api integration. See GitHub issue for details.
+///
+/// Mapping: last_octet % 4 → 0=US, 1=DE, 2=JP, 3=BR
 #[derive(Debug, Clone)]
 pub struct GeoIP;
 
 impl GeoIP {
     /// Look up geographic information for an IP address.
     ///
-    /// Uses the last octet of the IP address to deterministically select a region:
-    /// - 0: NA/US (North America)
-    /// - 1: EU/DE (Europe)
-    /// - 2: AS/JP (Asia)
-    /// - 3: SA/BR (South America)
+    /// **Stub**: Returns a deterministic country based on IP last octet mod 4.
+    /// Replace with a real GeoIP provider for production use.
     pub fn lookup(&self, ip: IpAddr) -> Option<String> {
         match ip {
             IpAddr::V4(ipv4) => {

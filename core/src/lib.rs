@@ -33,8 +33,8 @@ pub mod transport;
 pub mod prelude {
     // Pub/Sub module re-exports (platform-independent types)
     pub use crate::pubsub::{
-        Message, MessageId, MessagePayload, MessageType, PubSub,
-        PubSubError, PubSubEvent, PubSubStats, StreamTopic, Topic, TopicId,
+        Message, MessageId, MessagePayload, MessageType, PubSub, PubSubError, PubSubEvent,
+        PubSubStats, StreamTopic, Topic, TopicId,
     };
     // Native-only pubsub re-exports
     #[cfg(not(target_arch = "wasm32"))]
@@ -43,16 +43,16 @@ pub mod prelude {
     // Discovery module re-exports (native only)
     #[cfg(not(target_arch = "wasm32"))]
     pub use crate::discovery::{
-        BootstrapDiscovery, BootstrapDiscoveryConfig, DhtDiscovery, DhtDiscoveryConfig,
-        Discovery, DiscoveryError, DiscoveryEvent, PeerInfo,
+        BootstrapDiscovery, BootstrapDiscoveryConfig, DhtDiscovery, DhtDiscoveryConfig, Discovery,
+        DiscoveryError, DiscoveryEvent, PeerInfo,
     };
 
     // Overlay module re-exports
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::overlay::PeerId;
     pub use crate::overlay::{
         Overlay, OverlayError, OverlayEvent, Peer, PeerInfo as OverlayPeerInfo, PeerRole,
     };
-    #[cfg(not(target_arch = "wasm32"))]
-    pub use crate::overlay::PeerId;
 
     // Standard library re-exports for convenience
     pub use futures::SinkExt;

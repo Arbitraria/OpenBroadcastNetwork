@@ -10,10 +10,10 @@ use std::time::Duration;
 
 // On native, use std::time::Instant directly.
 // On wasm32, use instant::Instant which polyfills via performance.now().
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use instant::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 // ── Native LocalPeerId (wraps libp2p::PeerId) ──────────────────────
 

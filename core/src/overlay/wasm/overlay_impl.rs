@@ -98,54 +98,36 @@ impl WasmOverlay {
                         let stream_id = StreamId::from_string("relay");
                         let borrow = inner.borrow();
                         if let Some(ref tx) = borrow.event_tx {
-                            let _ = tx.unbounded_send(
-                                OverlayEvent::StreamData {
-                                    stream_id,
-                                    source: borrow.local_peer_id.clone(),
-                                    data,
-                                },
-                            );
+                            let _ = tx.unbounded_send(OverlayEvent::StreamData {
+                                stream_id,
+                                source: borrow.local_peer_id.clone(),
+                                data,
+                            });
                         }
                     }
-                    WsEvent::Text(json) => {
-                        match serde_json::from_str::<RelayMessage>(&json)
-                        {
-                            Ok(RelayMessage::StreamList { streams }) => {
-                                debug!(
-                                    "Relay sent {} streams",
-                                    streams.len()
-                                );
-                                let borrow = inner.borrow();
-                                if let Some(ref tx) = borrow.event_tx {
-                                    let _ = tx.unbounded_send(
-                                        OverlayEvent::StreamList {
-                                            streams: streams
-                                                .into_iter()
-                                                .map(|s| {
-                                                    (
-                                                        s.stream_id,
-                                                        s.publisher,
-                                                    )
-                                                })
-                                                .collect(),
-                                        },
-                                    );
-                                }
-                            }
-                            Ok(RelayMessage::Error { message }) => {
-                                warn!("Relay error: {}", message);
-                            }
-                            Ok(msg) => {
-                                debug!("Relay message: {:?}", msg);
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "Failed to parse relay message: {}",
-                                    e
-                                );
+                    WsEvent::Text(json) => match serde_json::from_str::<RelayMessage>(&json) {
+                        Ok(RelayMessage::StreamList { streams }) => {
+                            debug!("Relay sent {} streams", streams.len());
+                            let borrow = inner.borrow();
+                            if let Some(ref tx) = borrow.event_tx {
+                                let _ = tx.unbounded_send(OverlayEvent::StreamList {
+                                    streams: streams
+                                        .into_iter()
+                                        .map(|s| (s.stream_id, s.publisher))
+                                        .collect(),
+                                });
                             }
                         }
-                    }
+                        Ok(RelayMessage::Error { message }) => {
+                            warn!("Relay error: {}", message);
+                        }
+                        Ok(msg) => {
+                            debug!("Relay message: {:?}", msg);
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse relay message: {}", e);
+                        }
+                    },
                     WsEvent::Closed(reason) => {
                         info!("Relay WebSocket closed: {}", reason);
                         let mut borrow = inner.borrow_mut();
@@ -168,8 +150,8 @@ impl WasmOverlay {
 #[async_trait::async_trait(?Send)]
 impl Overlay for WasmOverlay {
     async fn start(&self) -> Result<(), OverlayError> {
-        let mut transport = WsTransport::connect(&self.relay_url)
-            .map_err(|e| OverlayError::ConnectionError(e))?;
+        let mut transport =
+            WsTransport::connect(&self.relay_url).map_err(|e| OverlayError::ConnectionError(e))?;
 
         // Wait for the WebSocket to actually open before proceeding.
         // This prevents subscribe/publish calls from failing because
@@ -219,19 +201,13 @@ impl Overlay for WasmOverlay {
         ))
     }
 
-    async fn disconnect_peer(
-        &self,
-        _peer_id: &LocalPeerId,
-    ) -> Result<(), OverlayError> {
+    async fn disconnect_peer(&self, _peer_id: &LocalPeerId) -> Result<(), OverlayError> {
         Err(OverlayError::General(
             "Direct peer management not supported in WASM mode".into(),
         ))
     }
 
-    async fn publish_stream(
-        &self,
-        stream_id: &StreamId,
-    ) -> Result<(), OverlayError> {
+    async fn publish_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         let sid = stream_id.to_string();
         let inner = self.inner.borrow();
         if let Some(ref transport) = inner.transport {
@@ -244,10 +220,7 @@ impl Overlay for WasmOverlay {
             return Err(OverlayError::NotRunning);
         }
         drop(inner);
-        self.inner
-            .borrow_mut()
-            .published_streams
-            .insert(sid);
+        self.inner.borrow_mut().published_streams.insert(sid);
         Ok(())
     }
 
@@ -261,10 +234,7 @@ impl Overlay for WasmOverlay {
         ))
     }
 
-    async fn stop_stream(
-        &self,
-        stream_id: &StreamId,
-    ) -> Result<(), OverlayError> {
+    async fn stop_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         let sid = stream_id.to_string();
         let inner = self.inner.borrow();
         if let Some(ref transport) = inner.transport {
@@ -305,8 +275,7 @@ impl Overlay for WasmOverlay {
         let inner = self.inner.borrow();
         Ok(OverlayStats {
             connected_peers: if inner.running { 1 } else { 0 },
-            active_streams: inner.subscribed_streams.len()
-                + inner.published_streams.len(),
+            active_streams: inner.subscribed_streams.len() + inner.published_streams.len(),
             ..Default::default()
         })
     }
@@ -316,10 +285,7 @@ impl Overlay for WasmOverlay {
         Ok(())
     }
 
-    async fn subscribe_stream(
-        &self,
-        stream_id: &StreamId,
-    ) -> Result<(), OverlayError> {
+    async fn subscribe_stream(&self, stream_id: &StreamId) -> Result<(), OverlayError> {
         let sid = stream_id.to_string();
         let inner = self.inner.borrow();
         if let Some(ref transport) = inner.transport {
@@ -352,11 +318,7 @@ impl Overlay for WasmOverlay {
         }
     }
 
-    async fn publish_to_topic(
-        &self,
-        _topic: &str,
-        _data: Vec<u8>,
-    ) -> Result<(), OverlayError> {
+    async fn publish_to_topic(&self, _topic: &str, _data: Vec<u8>) -> Result<(), OverlayError> {
         Err(OverlayError::General(
             "Direct topic publishing not supported in WASM mode".into(),
         ))
