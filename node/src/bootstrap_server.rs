@@ -1,5 +1,9 @@
 use futures_util::StreamExt;
 use libp2p::{
+    gossipsub::{
+        Behaviour as Gossipsub, ConfigBuilder as GossipsubConfigBuilder,
+        Event as GossipsubEvent, IdentTopic, MessageAuthenticity, ValidationMode,
+    },
     identify::{Behaviour as Identify, Config as IdentifyConfig, Event as IdentifyEvent},
     identity::Keypair,
     kad::{
@@ -12,7 +16,7 @@ use libp2p::{
     tcp::Config as GenTcpConfig,
     Multiaddr, PeerId, SwarmBuilder,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -25,6 +29,10 @@ struct BootstrapBehavior {
     kademlia: Kademlia<MemoryStore>,
     /// Circuit relay v2 server behavior for NAT traversal
     relay: relay::Behaviour,
+    /// Gossipsub so the bootstrap server can act as a mesh hub for stream
+    /// data: publishers and subscribers usually only know each other through
+    /// the bootstrap, so without gossipsub here they can never form a mesh.
+    gossipsub: Gossipsub,
 }
 
 /// Events emitted by the combined bootstrap behavior
@@ -33,6 +41,7 @@ enum BootstrapBehaviorEvent {
     Identify(IdentifyEvent),
     Kademlia(KademliaEvent),
     Relay(relay::Event),
+    Gossipsub(GossipsubEvent),
 }
 
 impl From<IdentifyEvent> for BootstrapBehaviorEvent {
@@ -50,6 +59,12 @@ impl From<KademliaEvent> for BootstrapBehaviorEvent {
 impl From<relay::Event> for BootstrapBehaviorEvent {
     fn from(event: relay::Event) -> Self {
         BootstrapBehaviorEvent::Relay(event)
+    }
+}
+
+impl From<GossipsubEvent> for BootstrapBehaviorEvent {
+    fn from(event: GossipsubEvent) -> Self {
+        BootstrapBehaviorEvent::Gossipsub(event)
     }
 }
 
@@ -102,6 +117,9 @@ struct TrackedPeer {
 pub struct BootstrapServer {
     config: BootstrapServerConfig,
     peers: HashMap<PeerId, TrackedPeer>,
+    /// Stream data topics this bootstrap is currently subscribed to. Tracked
+    /// so we can subscribe lazily when remote peers join a new stream's mesh.
+    subscribed_stream_topics: HashSet<String>,
 }
 
 impl BootstrapServer {
@@ -110,6 +128,7 @@ impl BootstrapServer {
         Self {
             config,
             peers: HashMap::new(),
+            subscribed_stream_topics: HashSet::new(),
         }
     }
 
@@ -149,10 +168,40 @@ impl BootstrapServer {
         };
         let relay = relay::Behaviour::new(peer_id, relay_config);
 
+        // Match the gossipsub config used by client overlay nodes (see
+        // core/src/overlay/libp2p/impl_core.rs) so this bootstrap can join
+        // their meshes and forward stream data.
+        let gossipsub_config = GossipsubConfigBuilder::default()
+            .heartbeat_interval(Duration::from_secs(1))
+            .validation_mode(ValidationMode::Strict)
+            .mesh_n(2)
+            .mesh_n_low(1)
+            .mesh_n_high(4)
+            .mesh_outbound_min(1)
+            .max_transmit_size(4 * 1024 * 1024)
+            .build()
+            .map_err(|e| format!("Invalid gossipsub config: {}", e))?;
+
+        let mut gossipsub = Gossipsub::new(
+            MessageAuthenticity::Signed(keypair.clone()),
+            gossipsub_config,
+        )
+        .map_err(|e| format!("Failed to create gossipsub: {}", e))?;
+
+        // Subscribe to the discovery/announce topics that all overlay nodes
+        // use, so this bootstrap is in their initial mesh and can relay any
+        // future stream data subscriptions back to other peers.
+        for topic in ["obn/streams/announce", "discovery"] {
+            gossipsub
+                .subscribe(&IdentTopic::new(topic))
+                .map_err(|e| format!("Failed to subscribe to {}: {}", topic, e))?;
+        }
+
         let behavior = BootstrapBehavior {
             identify,
             kademlia,
             relay,
+            gossipsub,
         };
 
         let mut swarm = SwarmBuilder::with_existing_identity(keypair)
@@ -341,6 +390,37 @@ impl BootstrapServer {
                 }
                 _ => {
                     debug!("DHT event: {:?}", event);
+                }
+            },
+
+            // Handle gossipsub events: keep the bootstrap server subscribed
+            // to every stream topic some peer joins, so it can forward stream
+            // data between publishers and subscribers that only know each
+            // other through this bootstrap.
+            SwarmEvent::Behaviour(BootstrapBehaviorEvent::Gossipsub(event)) => match event {
+                GossipsubEvent::Subscribed { peer_id, topic } => {
+                    debug!("Peer {} subscribed to {}", peer_id, topic);
+                    let topic_str = topic.as_str();
+                    if topic_str.starts_with("stream/")
+                        && !self.subscribed_stream_topics.contains(topic_str)
+                    {
+                        let ident = IdentTopic::new(topic_str);
+                        if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&ident) {
+                            warn!("Failed to subscribe to {}: {}", topic_str, e);
+                        } else {
+                            info!("🔁 Bootstrap now relaying {}", topic_str);
+                            self.subscribed_stream_topics.insert(topic_str.to_string());
+                        }
+                    }
+                }
+                GossipsubEvent::Unsubscribed { peer_id, topic } => {
+                    debug!("Peer {} unsubscribed from {}", peer_id, topic);
+                }
+                GossipsubEvent::Message { .. } => {
+                    // Bootstrap forwards messages but does not consume them.
+                }
+                GossipsubEvent::GossipsubNotSupported { peer_id } => {
+                    debug!("Peer {} does not support gossipsub", peer_id);
                 }
             },
 

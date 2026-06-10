@@ -4,16 +4,15 @@
 //! with both DHT and bootstrap discovery mechanisms integrated into the overlay network.
 
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::info;
 
 use OpenBroadcastNetwork_core::{
     discovery::{
-        BootstrapDiscoveryConfig, DhtDiscoveryConfig, DiscoveryManager, DiscoveryManagerConfig,
+        DhtDiscoveryConfig, DiscoveryManager, DiscoveryManagerConfig,
     },
     overlay::{
         interface::{Overlay, OverlayConfig},
         libp2p::impl_core::Libp2pOverlay,
-        peer::LocalPeerId,
     },
 };
 

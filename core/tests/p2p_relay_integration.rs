@@ -248,3 +248,84 @@ async fn test_stream_publish_and_subscribe() {
 
     overlay.stop().await.expect("Failed to stop overlay");
 }
+
+/// Regression test: a single video keyframe can easily exceed 64 KiB, the
+/// default GossipSub `max_transmit_size`. Verify the overlay accepts a 256 KiB
+/// payload so large fMP4 fragments are not rejected with `MessageTooLarge`.
+#[tokio::test]
+async fn test_publish_large_segment() {
+    let publisher = Libp2pOverlay::new(test_config())
+        .await
+        .expect("Failed to create publisher overlay");
+    let subscriber = Libp2pOverlay::new(test_config())
+        .await
+        .expect("Failed to create subscriber overlay");
+
+    publisher.start().await.expect("Failed to start publisher");
+    subscriber
+        .start()
+        .await
+        .expect("Failed to start subscriber");
+
+    sleep(Duration::from_millis(200)).await;
+
+    let addrs = publisher.get_listen_addrs().await;
+    assert!(!addrs.is_empty(), "Publisher should have a listen address");
+    let multiaddr = format!("{}/p2p/{}", addrs[0], publisher.local_peer_id().to_base58());
+    Overlay::connect_peer(&subscriber, &multiaddr)
+        .await
+        .expect("Failed to connect subscriber to publisher");
+
+    sleep(Duration::from_millis(500)).await;
+
+    let stream_id = StreamId::from_string("large-segment-stream");
+    publisher
+        .publish_stream(&stream_id)
+        .await
+        .expect("Failed to publish stream on publisher");
+    subscriber
+        .subscribe_stream(&stream_id)
+        .await
+        .expect("Failed to subscribe on subscriber");
+
+    // Mesh formation
+    sleep(Duration::from_secs(2)).await;
+
+    // 256 KiB payload — comfortably above the default 64 KiB GossipSub limit.
+    let big_payload = vec![0xABu8; 256 * 1024];
+    let wire = WireSegment::new(
+        stream_id.as_bytes().to_vec(),
+        7,
+        0,
+        33333,
+        0,
+        1,
+        true,
+        big_payload.clone(),
+    );
+    let wire_bytes = wire.to_bytes().expect("serialize wire segment");
+
+    publisher
+        .publish_stream_data(&stream_id, wire_bytes)
+        .await
+        .expect("publish_stream_data must not reject 256 KiB payload");
+
+    // Best-effort delivery check; mesh propagation is timing-sensitive in CI.
+    let received = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(OverlayEvent::StreamData { data, .. }) = subscriber.next_event().await {
+                return data;
+            }
+        }
+    })
+    .await;
+
+    if let Ok(data) = received {
+        let decoded = WireSegment::from_bytes(&data).expect("decode received wire segment");
+        assert_eq!(decoded.data.len(), big_payload.len());
+        assert!(decoded.verify_integrity());
+    }
+
+    publisher.stop().await.expect("Failed to stop publisher");
+    subscriber.stop().await.expect("Failed to stop subscriber");
+}

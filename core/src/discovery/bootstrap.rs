@@ -18,6 +18,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::{interval, timeout};
+#[allow(unused_imports)]
 use tracing::{debug, error, warn};
 
 /// Type alias for the peer cache: maps peer ID bytes to (PeerInfo, last-seen timestamp)
@@ -441,11 +442,12 @@ impl Discovery for BootstrapDiscovery {
             self.event_receiver = Some(rx);
         }
 
-        // If no bootstrap nodes configured, we can't do discovery
+        // Warn (but allow start) when no bootstrap nodes are configured.
+        // The refresh task is a no-op in that case, but the service can still
+        // accept announcements and serve cached lookups — and the discovery
+        // manager can coexist with other discovery mechanisms (e.g. DHT).
         if self.config.bootstrap_nodes.is_empty() && self.config.bootstrap_nodes_legacy.is_empty() {
-            return Err(DiscoveryError::BootstrapError(
-                anyhow::anyhow!("No bootstrap nodes configured").into(),
-            ));
+            warn!("Bootstrap discovery started with no bootstrap nodes configured");
         }
 
         // Start the discovery task
@@ -473,18 +475,17 @@ impl Discovery for BootstrapDiscovery {
 
         self.running = false;
 
-        // Signal the background task to stop
+        // Signal the background task to stop (if anyone is listening)
         if let Some(sender) = self.stop_tx.take() {
-            // Ignore the error if the receiver is already dropped
             let _ = sender.send(());
         }
 
-        // Wait for the background task to complete if it exists
+        // Abort the refresh task and wait for it to drain. The task runs an
+        // infinite `tokio::time::interval` loop and does not poll the stop
+        // channel, so a graceful await would block forever — abort is correct.
         if let Some(handle) = self.task_handle.take() {
-            if let Err(e) = handle.await {
-                error!("Error in background task: {:?}", e);
-                return Err(DiscoveryError::Other("Background task error".into()));
-            }
+            handle.abort();
+            let _ = handle.await;
         }
 
         Ok(())

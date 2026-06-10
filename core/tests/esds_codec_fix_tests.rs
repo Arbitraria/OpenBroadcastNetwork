@@ -10,7 +10,7 @@ use OpenBroadcastNetwork_core::media::mp4_parser::Mp4Parser;
 #[test]
 fn test_esds_fix_synthetic_aac() {
     // Test basic Mp4Parser creation and functionality
-    let mut parser = Mp4Parser::new();
+    let parser = Mp4Parser::new();
 
     // Test that parser starts with correct defaults
     assert_eq!(parser.get_tracks().len(), 0);

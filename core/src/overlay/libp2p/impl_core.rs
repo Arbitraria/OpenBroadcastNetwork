@@ -257,7 +257,9 @@ impl Libp2pOverlay {
             .multiplex(libp2p::yamux::Config::default())
             .boxed();
 
-        // Create Gossipsub behavior
+        // Create Gossipsub behavior. Video segments routinely exceed the
+        // default 64 KiB transmit cap (a single keyframe can be hundreds of
+        // KiB), so bump the cap to 4 MiB which covers typical fMP4 fragments.
         let gossipsub_config = libp2p::gossipsub::ConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(1))
             .validation_mode(ValidationMode::Strict)
@@ -265,6 +267,7 @@ impl Libp2pOverlay {
             .mesh_n_low(1)
             .mesh_n_high(4)
             .mesh_outbound_min(1)
+            .max_transmit_size(4 * 1024 * 1024)
             .build()
             .map_err(|e| OverlayError::Other(format!("Invalid gossipsub config: {}", e)))?;
 

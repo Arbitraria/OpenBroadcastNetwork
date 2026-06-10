@@ -360,7 +360,7 @@ impl MessageValidator for CompositeValidator {
                 _ => {
                     // Continue with async validation for this validator
                     let result = validator
-                        .async_validate(message.clone(), source.clone())
+                        .async_validate(message.clone(), source)
                         .await;
                     match result {
                         ValidationResult::Reject => return ValidationResult::Reject,

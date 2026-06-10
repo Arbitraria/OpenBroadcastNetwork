@@ -1,7 +1,6 @@
 use libp2p::identity::Keypair;
-use std::net::SocketAddr;
-use tokio::time::{sleep, Duration};
-use OpenBroadcastNetwork_core::overlay::interface::{Overlay, OverlayConfig, OverlayEvent};
+use tokio::time::Duration;
+use OpenBroadcastNetwork_core::overlay::interface::{Overlay, OverlayConfig};
 use OpenBroadcastNetwork_core::overlay::libp2p::impl_core::Libp2pOverlay;
 use OpenBroadcastNetwork_core::overlay::peer::LocalPeerId;
 

@@ -1,4 +1,4 @@
-use OpenBroadcastNetwork_core::overlay::topology::{GeoLocation, Region};
+use OpenBroadcastNetwork_core::overlay::topology::GeoLocation;
 
 fn main() {
     println!("Testing geo-aware functionality");

@@ -14,7 +14,6 @@ use OpenBroadcastNetwork_core::discovery::{
 use OpenBroadcastNetwork_core::overlay::{
     interface::{Overlay, OverlayConfig},
     libp2p::impl_core::Libp2pOverlay,
-    peer::LocalPeerId,
 };
 
 /// Initialize test logging
@@ -161,9 +160,11 @@ async fn test_peer_announcement() {
         .await
         .expect("Failed to start DHT discovery");
 
-    // Create peer info to announce
+    // Create peer info to announce — use a real libp2p PeerId since the DHT
+    // serializes/deserializes it as a multihash.
+    let random_peer_id = libp2p::PeerId::random();
     let peer_info = PeerInfo {
-        id: b"test_peer_123".to_vec(),
+        id: random_peer_id.to_bytes(),
         addresses: vec![],
         protocols: vec!["test_protocol".to_string()],
         metadata: std::collections::HashMap::new(),

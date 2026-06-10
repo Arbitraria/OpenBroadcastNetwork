@@ -445,8 +445,11 @@ impl Discovery for DhtDiscovery {
         // Stop background tasks
         self.running.store(false, Ordering::SeqCst);
 
-        // Wait for the background task to complete
+        // Abort the swarm task. It blocks on `swarm.select_next_some().await`
+        // and only re-checks `running` when an event arrives, which may never
+        // happen for an idle DHT — abort avoids the indefinite hang.
         if let Some(handle) = self.task_handle.take() {
+            handle.abort();
             let _ = handle.await;
         }
 

@@ -3,7 +3,6 @@
 //! Tests the integration between the media pipeline and the P2P overlay network,
 //! including segment publishing, subscription, and late-joiner catchup.
 
-use std::collections::VecDeque;
 use OpenBroadcastNetwork_core::media::segment::{
     MediaType, SegmentBuilder, StreamId, StreamSegment,
 };

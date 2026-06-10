@@ -630,63 +630,108 @@ impl StreamManager {
             let samples = video_samples.lock().await;
             if let Some(ref video_segments) = *samples {
                 info!(
-                    "Starting to stream {} loaded segments",
-                    video_segments.len()
+                    "Starting to stream {} loaded segments{}",
+                    video_segments.len(),
+                    if enable_p2p { " (looping for P2P)" } else { "" }
                 );
 
-                for (index, segment) in video_segments.iter().enumerate() {
-                    // Skip initialization segments as they're sent separately
-                    if segment.is_init() {
-                        continue;
+                let mut loop_count: u64 = 0;
+                'outer: loop {
+                    for (index, segment) in video_segments.iter().enumerate() {
+                        // Skip initialization segments as they're sent separately
+                        if segment.is_init() {
+                            continue;
+                        }
+
+                        // Only send if there are active receivers OR P2P is enabled
+                        if segment_sender.receiver_count() == 0 && !enable_p2p {
+                            info!(
+                                "No clients connected and P2P disabled, \
+                                 stopping segment streaming"
+                            );
+                            break 'outer;
+                        }
+
+                        // Send to local WebSocket clients
+                        if segment_sender.receiver_count() > 0
+                            && segment_sender.send(segment.clone()).is_err()
+                        {
+                            info!("All receivers dropped");
+                        }
+
+                        // Publish to P2P overlay network
+                        if enable_p2p {
+                            if let (Some(overlay), Some(stream_id)) = (&overlay, &stream_id) {
+                                if let Ok(wire_bytes) = segment.to_wire_bytes() {
+                                    let overlay_stream_id = OverlayStreamId::from_bytes(
+                                        stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),
+                                    );
+                                    if let Err(e) = overlay
+                                        .publish_stream_data(&overlay_stream_id, wire_bytes)
+                                        .await
+                                    {
+                                        warn!(
+                                            "Failed to publish segment {} to P2P: {}",
+                                            index, e
+                                        );
+                                    } else {
+                                        debug!(
+                                            "Published segment {} to P2P \
+                                             ({} bytes, keyframe={})",
+                                            index,
+                                            segment.data.len(),
+                                            segment.is_keyframe
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        info!(
+                            "Sent segment {} ({} bytes, ts={}us, keyframe={})",
+                            index,
+                            segment.data.len(),
+                            segment.pts_us,
+                            segment.is_keyframe
+                        );
+
+                        // Add delay between segments to simulate streaming
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                     }
 
-                    // Only send if there are active receivers OR P2P is enabled
-                    if segment_sender.receiver_count() == 0 && !enable_p2p {
-                        info!("No clients connected and P2P disabled, stopping segment streaming");
+                    // Without P2P enabled, run through the segments once and
+                    // stop — that matches the original local-playback behaviour.
+                    if !enable_p2p {
                         break;
                     }
 
-                    // Send to local WebSocket clients
-                    if segment_sender.receiver_count() > 0
-                        && segment_sender.send(segment.clone()).is_err()
-                    {
-                        info!("All receivers dropped");
-                    }
+                    loop_count += 1;
+                    info!(
+                        "Completed broadcast loop #{} ({} segments) — looping for late subscribers",
+                        loop_count,
+                        video_segments.len()
+                    );
 
-                    // Publish to P2P overlay network
-                    if enable_p2p {
-                        if let (Some(overlay), Some(stream_id)) = (&overlay, &stream_id) {
+                    // Re-publish init segment so late-joining subscribers can
+                    // initialize their decoder before the next data segment.
+                    if let (Some(overlay), Some(stream_id)) = (&overlay, &stream_id) {
+                        if let Some(init_data) = &*init_segment.lock().await {
+                            let init_stream_id =
+                                StreamId::new(stream_id.as_str().unwrap_or_default());
+                            let segment = StreamSegment::initialization(
+                                init_stream_id,
+                                init_data.clone(),
+                            );
                             if let Ok(wire_bytes) = segment.to_wire_bytes() {
                                 let overlay_stream_id = OverlayStreamId::from_bytes(
                                     stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),
                                 );
-                                if let Err(e) = overlay
+                                let _ = overlay
                                     .publish_stream_data(&overlay_stream_id, wire_bytes)
-                                    .await
-                                {
-                                    warn!("Failed to publish segment {} to P2P: {}", index, e);
-                                } else {
-                                    debug!(
-                                        "Published segment {} to P2P ({} bytes, keyframe={})",
-                                        index,
-                                        segment.data.len(),
-                                        segment.is_keyframe
-                                    );
-                                }
+                                    .await;
                             }
                         }
                     }
-
-                    info!(
-                        "Sent segment {} ({} bytes, ts={}us, keyframe={})",
-                        index,
-                        segment.data.len(),
-                        segment.pts_us,
-                        segment.is_keyframe
-                    );
-
-                    // Add delay between segments to simulate streaming
-                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
 
                 info!("Finished streaming all segments");
@@ -1122,6 +1167,13 @@ async fn run_p2p_receive_loop(
                                 let mut init = init_segment.lock().await;
                                 *init = Some(segment.data.to_vec());
                                 info!("Received P2P init segment ({} bytes)", segment.data.len());
+                            } else {
+                                info!(
+                                    "Received P2P segment ({} bytes, type={:?}, ws_clients={})",
+                                    segment.data.len(),
+                                    segment.media_type,
+                                    segment_sender.receiver_count()
+                                );
                             }
 
                             if segment_sender.receiver_count() > 0 {
