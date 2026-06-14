@@ -5,9 +5,13 @@
 # WASM build output
 **/pkg/
 
-# Remove Cargo.lock from gitignore if creating an executable, leave it for libraries
-# More information here https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html
-Cargo.lock
+# Node / WASM front-end build artifacts
+node_modules/
+/ui/dist/
+
+# Compiled dev/test binaries accidentally committed at node/ root
+/node/simple_test
+/node/topology_test
 
 # Logs and databases
 *.log

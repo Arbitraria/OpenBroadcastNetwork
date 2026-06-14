@@ -162,8 +162,11 @@ impl PubSubMetrics {
         // Update peer metrics if available
         if let Some(peer_id) = peer_id {
             if let Ok(mut peer_metrics) = self.peer_metrics.write() {
+                // `PeerId` is `Copy` on native (libp2p) but `String` on wasm; cloning
+                // keeps both targets compiling.
+                #[allow(clippy::clone_on_copy)]
                 let metrics = peer_metrics
-                    .entry(*peer_id)
+                    .entry(peer_id.clone())
                     .or_insert_with(PeerMetrics::new);
 
                 metrics.messages_received.fetch_add(1, Ordering::Relaxed);
@@ -195,8 +198,11 @@ impl PubSubMetrics {
         // Update peer metrics if available
         if let Some(peer_id) = peer_id {
             if let Ok(mut peer_metrics) = self.peer_metrics.write() {
+                // `PeerId` is `Copy` on native (libp2p) but `String` on wasm; cloning
+                // keeps both targets compiling.
+                #[allow(clippy::clone_on_copy)]
                 let metrics = peer_metrics
-                    .entry(*peer_id)
+                    .entry(peer_id.clone())
                     .or_insert_with(PeerMetrics::new);
 
                 metrics.messages_sent.fetch_add(1, Ordering::Relaxed);

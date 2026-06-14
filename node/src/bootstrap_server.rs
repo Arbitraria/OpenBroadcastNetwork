@@ -1,8 +1,8 @@
 use futures_util::StreamExt;
 use libp2p::{
     gossipsub::{
-        Behaviour as Gossipsub, ConfigBuilder as GossipsubConfigBuilder,
-        Event as GossipsubEvent, IdentTopic, MessageAuthenticity, ValidationMode,
+        Behaviour as Gossipsub, ConfigBuilder as GossipsubConfigBuilder, Event as GossipsubEvent,
+        IdentTopic, MessageAuthenticity, ValidationMode,
     },
     identify::{Behaviour as Identify, Config as IdentifyConfig, Event as IdentifyEvent},
     identity::Keypair,

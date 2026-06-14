@@ -7,9 +7,7 @@ use std::time::Duration;
 use tracing::info;
 
 use OpenBroadcastNetwork_core::{
-    discovery::{
-        DhtDiscoveryConfig, DiscoveryManager, DiscoveryManagerConfig,
-    },
+    discovery::{DhtDiscoveryConfig, DiscoveryManager, DiscoveryManagerConfig},
     overlay::{
         interface::{Overlay, OverlayConfig},
         libp2p::impl_core::Libp2pOverlay,

@@ -358,9 +358,12 @@ impl MessageValidator for CompositeValidator {
                 ValidationResult::Reject => return ValidationResult::Reject,
                 ValidationResult::Ignore => return ValidationResult::Ignore,
                 _ => {
-                    // Continue with async validation for this validator
+                    // Continue with async validation for this validator.
+                    // `source: Option<PeerId>` is `Copy` on native but `String`-backed
+                    // on wasm; cloning keeps both targets compiling.
+                    #[allow(clippy::clone_on_copy)]
                     let result = validator
-                        .async_validate(message.clone(), source)
+                        .async_validate(message.clone(), source.clone())
                         .await;
                     match result {
                         ValidationResult::Reject => return ValidationResult::Reject,

@@ -670,10 +670,7 @@ impl StreamManager {
                                         .publish_stream_data(&overlay_stream_id, wire_bytes)
                                         .await
                                     {
-                                        warn!(
-                                            "Failed to publish segment {} to P2P: {}",
-                                            index, e
-                                        );
+                                        warn!("Failed to publish segment {} to P2P: {}", index, e);
                                     } else {
                                         debug!(
                                             "Published segment {} to P2P \
@@ -718,10 +715,8 @@ impl StreamManager {
                         if let Some(init_data) = &*init_segment.lock().await {
                             let init_stream_id =
                                 StreamId::new(stream_id.as_str().unwrap_or_default());
-                            let segment = StreamSegment::initialization(
-                                init_stream_id,
-                                init_data.clone(),
-                            );
+                            let segment =
+                                StreamSegment::initialization(init_stream_id, init_data.clone());
                             if let Ok(wire_bytes) = segment.to_wire_bytes() {
                                 let overlay_stream_id = OverlayStreamId::from_bytes(
                                     stream_id.as_str().unwrap_or_default().as_bytes().to_vec(),

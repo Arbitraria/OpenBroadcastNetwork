@@ -4,15 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenBroadcastNetwork is a decentralized live streaming CDN built with Rust using a hybrid tree-mesh overlay network. The system provides peer-to-peer streaming with WebRTC and QUIC transport layers, end-to-end encryption, and geographic clustering for optimal performance.
+OpenBroadcastNetwork is a decentralized peer-to-peer live streaming CDN built in Rust. Peers
+discover each other via Kademlia DHT, relay media through GossipSub pub/sub, and play video in
+the browser using WebSocket/MSE — no central server required. See `README.md` for the
+authoritative "What Works Today" summary; keep this file in sync with it.
 
-### Key Features
-- **Decentralized P2P CDN**: All viewers are nodes; headless relays permitted
-- **Hybrid topology**: Tree-based primary relay with mesh fallback
-- **Cross-platform**: Initial browser support (WebRTC), future native apps
-- **Privacy-focused**: One-hop removal from identity, no persistent ID required
-- **Scalable**: Designed for millions of concurrent users
-- **Incentivized**: Token economy for relaying, content, and moderation
+### What works today
+- **Local streaming pipeline**: hand-written MP4 parser, fMP4 fragmentation, WebSocket delivery,
+  MSE playback in Chrome/Firefox/Safari.
+- **P2P relay**: two+ nodes discover each other via Kademlia DHT and exchange stream data over
+  GossipSub; relay nodes forward media to downstream peers.
+- **Web viewer**: browser player with transport selection (WebSocket/WebRTC), stream-browser
+  sidebar, connection-stats dashboard, and log viewer.
+- **Moderation**: block/unblock peers, flag streams, JSON export/import, auto-persistence;
+  enforced at the signaling and connection level.
+- **Privacy**: hop-removal anonymization replaces source PeerIds at the relay level.
+- **Security**: admin auth on stream control, per-IP rate limiting, security headers, CORS.
+- **Hybrid topology**: tree-based primary relay with mesh fallback; geo-aware rebalancing.
+
+### Not yet built (aspirational / future)
+These are design goals, NOT implemented — do not describe them as existing features:
+- End-to-end encryption of media payloads
+- Token economy / incentives for relaying, content, and moderation
+- Native (non-browser) cross-platform clients
+- QUIC transport (WebRTC + WebSocket only today)
+- Production scale to millions of concurrent users
+
+### Development Philosophy
+- **AI-first development**: Optimized for Claude/Cursor workflows
+- **Type-driven**: Strict type system with comprehensive reference docs
+- **Test-driven**: Unit and integration tests for all components
+- **Modular**: Single-responsibility modules with clear interfaces
 
 ### Development Philosophy
 - **AI-first development**: Optimized for Claude/Cursor workflows
@@ -165,16 +187,12 @@ ls -la logs/server*.log
 ```
 
 ### Test Files and Debugging
-- **Test videos**: 
-  - `test_simple.mp4` (32KB, short, video-only)
-  - `sample_video.mp4` (257MB, full-length, H.264 + AAC)
-  - `Stargate SG1 S01E03.mp4` (360MB, target test file)
-  - `bigtroublelittlechina.mp4` (1.9GB, target test file)
-- **WebSocket tests**: 
-  - `test_utils/test_websocket_order.py` - Message flow analysis
-  - `test_utils/test_chrome_codec.py` - Chrome compatibility testing
-  - `test_utils/test_modernized_viewer.py` - Comprehensive end-to-end test
-- **Browser testing**: `http://127.0.0.1:8080/` (modernized universal viewer)
+- **Test video**: generate `test_simple.mp4` with `./scripts/make_test_video.sh` (30s synthetic
+  H.264 + AAC clip; `*.mp4` is gitignored so it is never committed). Larger source files can be
+  supplied locally and pointed at via `--video`.
+- **Debugging history**: see `docs/DEBUGGING_NOTES.md` for hard-won MP4/ESDS/MSE codec findings
+  (e.g. the Chrome AAC `objectTypeIndication=0x40` + `mp4a.40.2` gotcha).
+- **Browser testing**: `http://127.0.0.1:8080/` (web viewer).
 
 ## Key Implementation Guidelines
 
@@ -237,15 +255,16 @@ The libp2p refactoring has landed on `main`. The codebase uses a modular libp2p-
 - [x] Stream registry and discovery (`list-streams` queries running node's HTTP API)
 - [x] WASM integration (dual-target core + ui crate with relay proxy)
 
-### Future Phases
-- Moderation and privacy features
+### Future Phases (not yet built)
+- End-to-end encryption of media payloads
 - Token economy and incentives
 - Cross-platform native clients
-- Production scaling
+- QUIC transport
+- Production scaling to millions of concurrent users
 
 ## AI Development Workflow
 
-This project follows structured AI-assisted development patterns defined in `docs/promptplan.json`:
+This project is developed with structured AI-assisted patterns:
 
 1. **PLAN MODE**: Analyze and create detailed action plans
 2. **IMPLEMENT MODE**: Make agreed-upon changes with real code
@@ -265,4 +284,6 @@ When working on this codebase, always reference:
 - `docs/CODE_ORGANIZATION.md` - Modular structure and refactoring guidelines
 - `docs/DEPENDENCIES.md` - Dependency management and compatibility
 - `.windsurfrules` - Project-specific development rules
-- `docs/Decentralized Streaming Spec` - Complete system requirements
+- `docs/Decentralized Streaming Spec` - Complete system requirements (long-term vision; see
+  "Not yet built" above for what is aspirational vs. implemented)
+- `docs/DEBUGGING_NOTES.md` - MP4/ESDS/MSE codec findings from the streaming pipeline

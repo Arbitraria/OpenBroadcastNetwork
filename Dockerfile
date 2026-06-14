@@ -1,5 +1,7 @@
 # Build stage
-FROM rust:1.82-bookworm AS builder
+# Rust 1.85+ is required: the committed Cargo.lock resolves dependencies (e.g. clap_lex)
+# that use Cargo's edition2024 feature, stabilized in 1.85.
+FROM rust:1.86-bookworm AS builder
 
 RUN apt-get update && apt-get install -y \
     libopus-dev \
@@ -47,7 +49,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/OpenBroadcastNetwork-node /app/obn-node
+COPY --from=builder /app/target/release/relay-node /app/obn-node
 COPY web_viewer/ /app/web_viewer/
 
 EXPOSE 8080 9000
