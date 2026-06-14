@@ -1,5 +1,7 @@
 //! CLI relay node library for OpenBroadcastNetwork.
 #![allow(non_snake_case)]
+// See core/src/lib.rs: keep `x % n == 0` over `is_multiple_of` for the older Docker toolchain.
+#![allow(clippy::manual_is_multiple_of)]
 
 pub mod streaming_demo;
 pub mod visualization;

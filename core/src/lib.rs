@@ -1,4 +1,8 @@
 #![allow(non_snake_case)]
+// `x % n == 0` is kept over `x.is_multiple_of(n)`: the latter was stabilized in Rust 1.87,
+// but the Docker image (Dockerfile) builds on an older pinned toolchain. Declining this
+// clippy suggestion keeps a lower minimum supported Rust version.
+#![allow(clippy::manual_is_multiple_of)]
 
 //! Decentralized Streaming Core Library
 //!

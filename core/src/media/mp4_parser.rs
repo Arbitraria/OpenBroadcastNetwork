@@ -2302,7 +2302,7 @@ impl Mp4Parser {
 
     /// Check if data likely contains a keyframe based on H.264 NAL patterns
     fn is_likely_keyframe(&self, data: &[u8], segment_index: usize) -> bool {
-        if segment_index.is_multiple_of(5) {
+        if segment_index % 5 == 0 {
             return true;
         }
         if data.len() > 4 {

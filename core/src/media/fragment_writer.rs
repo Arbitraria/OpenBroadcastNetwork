@@ -224,7 +224,7 @@ impl FragmentWriter {
     /// Check if data likely contains a keyframe based on common patterns
     fn is_likely_keyframe(&self, data: &[u8], segment_index: usize) -> bool {
         // Every 5th segment is a keyframe (rough approximation)
-        if segment_index.is_multiple_of(5) {
+        if segment_index % 5 == 0 {
             return true;
         }
 

@@ -172,7 +172,7 @@ impl StreamingDemo {
                 let encoded_frame = format!("h264_frame_{}", frame_count).into_bytes();
 
                 // Create video segment
-                let is_keyframe = frame_count.is_multiple_of(30);
+                let is_keyframe = frame_count % 30 == 0;
                 let pts_us = frame_count * frame_duration_us;
                 let segment = StreamSegment::video(
                     stream_id.clone(),
