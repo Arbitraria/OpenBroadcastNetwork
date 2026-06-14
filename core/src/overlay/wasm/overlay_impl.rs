@@ -78,7 +78,7 @@ impl WasmOverlay {
     /// never holds a borrow on `Inner` across an await point.
     fn spawn_event_loop(inner: Rc<RefCell<Inner>>) {
         // Extract the WsTransport event receiver up-front
-        let mut ws_events = {
+        let ws_events = {
             let mut borrow = inner.borrow_mut();
             borrow
                 .transport

@@ -62,9 +62,10 @@ pub struct PeerInfo {
 /// of the local node. This status is used to track peer availability and
 /// to make decisions about connection attempts and peer selection for
 /// the overlay network construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ConnectionStatus {
     /// Not currently connected
+    #[default]
     Disconnected,
 
     /// Currently attempting to connect
@@ -112,12 +113,6 @@ pub enum DiscoveryEvent {
 
     /// An error occurred during discovery
     Error(String),
-}
-
-impl Default for ConnectionStatus {
-    fn default() -> Self {
-        Self::Disconnected
-    }
 }
 
 /// Errors that can occur during discovery

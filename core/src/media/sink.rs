@@ -72,11 +72,16 @@ impl MemorySink {
         }
     }
 
-    /// Get the data that was written to the sink
+    /// Get the data that was written to the sink.
+    ///
+    /// Takes ownership of the buffer when this sink holds the only reference;
+    /// otherwise (outstanding clones still exist) returns a copy of the current
+    /// contents rather than panicking.
     pub async fn into_inner(self) -> Vec<u8> {
-        Arc::try_unwrap(self.data)
-            .unwrap_or_else(|_| panic!("Failed to unwrap Arc"))
-            .into_inner()
+        match Arc::try_unwrap(self.data) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(arc) => arc.lock().await.clone(),
+        }
     }
 }
 

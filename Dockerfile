@@ -1,5 +1,6 @@
 # Build stage
-FROM rust:1.82-bookworm AS builder
+# Pinned to match rust-toolchain.toml's channel (keep these two in sync when bumping).
+FROM rust:1.96.0-bookworm AS builder
 
 RUN apt-get update && apt-get install -y \
     libopus-dev \
@@ -47,7 +48,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/OpenBroadcastNetwork-node /app/obn-node
+COPY --from=builder /app/target/release/relay-node /app/obn-node
 COPY web_viewer/ /app/web_viewer/
 
 EXPOSE 8080 9000

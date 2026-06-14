@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Toolchain is pinned by rust-toolchain.toml; rustup installs it on first use.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Toolchain is pinned by rust-toolchain.toml; rustup installs it on first use.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies
@@ -48,9 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # Toolchain (incl. clippy) is pinned by rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies
@@ -66,9 +64,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
+      # Toolchain (incl. rustfmt) is pinned by rust-toolchain.toml.
       - name: cargo fmt
         run: cargo fmt --all -- --check
+
+  wasm:
+    name: WASM (ui)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Toolchain (incl. wasm32 target) is pinned by rust-toolchain.toml.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopus-dev pkg-config
+
+      - name: cargo check (wasm32)
+        run: cargo check -p OpenBroadcastNetwork-ui --target wasm32-unknown-unknown
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: docker build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

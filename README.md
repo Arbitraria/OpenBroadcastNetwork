@@ -4,7 +4,19 @@
 
 A decentralized peer-to-peer live streaming CDN built in Rust. Peers discover each other via Kademlia DHT, relay media through GossipSub pub/sub, and play video in the browser using WebSocket/MSE — no central server required.
 
+<!-- TODO(demo): replace with a ~10s capture of the browser playing video through a relay node.
+     Save as docs/demo.gif and uncomment:
+![Demo: browser playing video through an OpenBroadcastNetwork relay](docs/demo.gif)
+-->
+
 ## Quick Start
+
+First, generate a test video. This synthesizes `test_simple.mp4` with ffmpeg — no source
+file needed (the demos bind-mount/serve this file, so it must exist before you start):
+
+```bash
+./scripts/make_test_video.sh
+```
 
 ### Docker (recommended)
 
@@ -13,10 +25,16 @@ docker compose up
 # Open http://localhost:8080 — video streams through the local relay
 ```
 
+If port 8080 is already in use on your machine, pick another:
+
+```bash
+OBN_PORT=8090 docker compose up   # then open http://localhost:8090
+```
+
 ### From source
 
 ```bash
-# Prerequisites: Rust toolchain, libopus-dev, pkg-config
+# Prerequisites: Rust toolchain, libopus-dev, pkg-config, ffmpeg
 cargo build -p OpenBroadcastNetwork-node
 cargo run -p OpenBroadcastNetwork-node -- web-viewer --port 8080 --video test_simple.mp4
 # Open http://127.0.0.1:8080/
@@ -106,4 +124,13 @@ cargo check && cargo test && cargo clippy
 
 ## License
 
-This project is open source. See [LICENSE](LICENSE) for details.
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in this project by you, as defined in the Apache-2.0 license, shall be
+dual-licensed as above, without any additional terms or conditions.

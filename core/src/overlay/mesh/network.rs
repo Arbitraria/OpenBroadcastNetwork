@@ -127,7 +127,7 @@ impl StreamMesh {
             .map(|(id, node)| (*id, node.bandwidth))
             .collect();
 
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
 
         // Connect to the source first if possible
         if let Some(source_id) = self.source {

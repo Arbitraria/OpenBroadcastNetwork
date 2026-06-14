@@ -2,6 +2,9 @@
 //!
 //! This module provides functions to visualize the network topology,
 //! peer connections, and stream status in various formats.
+//!
+//! The `writeln!`/`write!` calls below target an in-memory `String`, which can
+//! never fail, so their `Result` is discarded with `.ok()` rather than unwrapped.
 
 use libp2p::PeerId;
 use std::collections::HashMap;
@@ -22,17 +25,17 @@ pub fn create_stream_table(streams: &[StreamId]) -> String {
         output,
         "┌─────────────────────────────────────┬─────────────┬─────────────┐"
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "│ Stream ID                           │ Subscribers │ Bandwidth   │"
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "├─────────────────────────────────────┼─────────────┼─────────────┤"
     )
-    .unwrap();
+    .ok();
 
     for (i, stream) in streams.iter().enumerate() {
         let stream_id = format!("{}", stream);
@@ -51,14 +54,14 @@ pub fn create_stream_table(streams: &[StreamId]) -> String {
             "│ {:<35} │ {:<11} │ {:<11} │",
             short_id, subscribers, bandwidth
         )
-        .unwrap();
+        .ok();
     }
 
     writeln!(
         output,
         "└─────────────────────────────────────┴─────────────┴─────────────┘"
     )
-    .unwrap();
+    .ok();
     output
 }
 
@@ -76,33 +79,33 @@ pub fn create_peer_table(peers: &HashMap<PeerId, PeerInfo>, show_location: bool)
             output,
             "┌─────────────────┬─────────────┬─────────────┬─────────────┬─────────────┐"
         )
-        .unwrap();
+        .ok();
         writeln!(
             output,
             "│ Peer ID         │ Role        │ Connection  │ Location    │ Latency     │"
         )
-        .unwrap();
+        .ok();
         writeln!(
             output,
             "├─────────────────┼─────────────┼─────────────┼─────────────┼─────────────┤"
         )
-        .unwrap();
+        .ok();
     } else {
         writeln!(
             output,
             "┌─────────────────┬─────────────┬─────────────┬─────────────┐"
         )
-        .unwrap();
+        .ok();
         writeln!(
             output,
             "│ Peer ID         │ Role        │ Connection  │ Latency     │"
         )
-        .unwrap();
+        .ok();
         writeln!(
             output,
             "├─────────────────┼─────────────┼─────────────┼─────────────┤"
         )
-        .unwrap();
+        .ok();
     }
 
     for (peer_id, peer_info) in peers {
@@ -136,14 +139,14 @@ pub fn create_peer_table(peers: &HashMap<PeerId, PeerInfo>, show_location: bool)
                 "│ {:<15} │ {:<11} │ {:<11} │ {:<11} │ {:<11} │",
                 short_id, role, connection, location, latency
             )
-            .unwrap();
+            .ok();
         } else {
             writeln!(
                 output,
                 "│ {:<15} │ {:<11} │ {:<11} │ {:<11} │",
                 short_id, role, connection, latency
             )
-            .unwrap();
+            .ok();
         }
     }
 
@@ -152,13 +155,13 @@ pub fn create_peer_table(peers: &HashMap<PeerId, PeerInfo>, show_location: bool)
             output,
             "└─────────────────┴─────────────┴─────────────┴─────────────┴─────────────┘"
         )
-        .unwrap();
+        .ok();
     } else {
         writeln!(
             output,
             "└─────────────────┴─────────────┴─────────────┴─────────────┘"
         )
-        .unwrap();
+        .ok();
     }
 
     output
@@ -171,15 +174,15 @@ pub fn generate_dot_graph(
 ) -> String {
     let mut output = String::new();
 
-    writeln!(output, "digraph NetworkTopology {{").unwrap();
-    writeln!(output, "  rankdir=LR;").unwrap();
+    writeln!(output, "digraph NetworkTopology {{").ok();
+    writeln!(output, "  rankdir=LR;").ok();
     writeln!(
         output,
         "  node [shape=box, style=filled, fontname=\"Arial\"];"
     )
-    .unwrap();
-    writeln!(output, "  edge [fontname=\"Arial\"];").unwrap();
-    writeln!(output).unwrap();
+    .ok();
+    writeln!(output, "  edge [fontname=\"Arial\"];").ok();
+    writeln!(output).ok();
 
     if let Some(stream) = stream_id {
         writeln!(
@@ -187,12 +190,12 @@ pub fn generate_dot_graph(
             "  label=\"Network Topology for Stream: {}\";",
             stream
         )
-        .unwrap();
+        .ok();
     } else {
-        writeln!(output, "  label=\"Global Network Topology\";").unwrap();
+        writeln!(output, "  label=\"Global Network Topology\";").ok();
     }
-    writeln!(output, "  labelloc=\"t\";").unwrap();
-    writeln!(output).unwrap();
+    writeln!(output, "  labelloc=\"t\";").ok();
+    writeln!(output).ok();
 
     // Add nodes
     for (peer_id, peer_info) in peers {
@@ -211,10 +214,10 @@ pub fn generate_dot_graph(
             "  \"{}\" [label=\"{}\\n{:?}\", fillcolor=\"{}\"];",
             short_id, short_id, peer_info.role, color
         )
-        .unwrap();
+        .ok();
     }
 
-    writeln!(output).unwrap();
+    writeln!(output).ok();
 
     // Add edges (simplified - connect all peers for now)
     let peer_ids: Vec<_> = peers.keys().collect();
@@ -222,11 +225,11 @@ pub fn generate_dot_graph(
         for peer2 in peer_ids.iter().skip(i + 1) {
             let short_id1 = format!("{}", peer1).chars().take(12).collect::<String>();
             let short_id2 = format!("{}", peer2).chars().take(12).collect::<String>();
-            writeln!(output, "  \"{}\" -- \"{}\";", short_id1, short_id2).unwrap();
+            writeln!(output, "  \"{}\" -- \"{}\";", short_id1, short_id2).ok();
         }
     }
 
-    writeln!(output, "}}").unwrap();
+    writeln!(output, "}}").ok();
     output
 }
 
@@ -251,65 +254,65 @@ pub fn create_network_status(stats: &OverlayStats, uptime: std::time::Duration) 
         output,
         "╔══════════════════════════════════════════════════════════════╗"
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "║                    NETWORK STATUS                           ║"
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "╠══════════════════════════════════════════════════════════════╣"
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "║ Uptime:              {:<35} ║",
         format_duration(uptime)
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "║ Connected Peers:     {:<35} ║",
         stats.connected_peers
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "║ Discovered Peers:    {:<35} ║",
         stats.discovered_peers
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "║ Active Streams:      {:<35} ║",
         stats.active_streams
     )
-    .unwrap();
-    writeln!(output, "║ Relay Nodes:         {:<35} ║", stats.relay_nodes).unwrap();
+    .ok();
+    writeln!(output, "║ Relay Nodes:         {:<35} ║", stats.relay_nodes).ok();
     writeln!(
         output,
         "║ Incoming Bandwidth:  {:<35} ║",
         format_bytes(stats.incoming_bandwidth)
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "║ Outgoing Bandwidth:  {:<35} ║",
         format_bytes(stats.outgoing_bandwidth)
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "║ Average Latency:     {:<35} ║",
         format!("{}ms", stats.average_latency_ms)
     )
-    .unwrap();
+    .ok();
     writeln!(
         output,
         "╚══════════════════════════════════════════════════════════════╝"
     )
-    .unwrap();
+    .ok();
 
     output
 }

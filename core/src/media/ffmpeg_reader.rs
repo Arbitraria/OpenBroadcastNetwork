@@ -127,13 +127,12 @@ impl FFmpegVideoReader {
 
             self.video_decoder = Some(video_decoder);
 
-            info!(
-                "Found video stream: {}x{} @ {:.2}fps, codec: {:?}",
-                self.video_track.as_ref().unwrap().width,
-                self.video_track.as_ref().unwrap().height,
-                self.video_track.as_ref().unwrap().fps,
-                self.video_track.as_ref().unwrap().codec
-            );
+            if let Some(track) = self.video_track.as_ref() {
+                info!(
+                    "Found video stream: {}x{} @ {:.2}fps, codec: {:?}",
+                    track.width, track.height, track.fps, track.codec
+                );
+            }
         }
 
         // Find audio stream
@@ -160,12 +159,12 @@ impl FFmpegVideoReader {
 
             self.audio_decoder = Some(audio_decoder);
 
-            info!(
-                "Found audio stream: {} Hz, {} channels, codec: {:?}",
-                self.audio_track.as_ref().unwrap().sample_rate,
-                self.audio_track.as_ref().unwrap().channels,
-                self.audio_track.as_ref().unwrap().codec
-            );
+            if let Some(track) = self.audio_track.as_ref() {
+                info!(
+                    "Found audio stream: {} Hz, {} channels, codec: {:?}",
+                    track.sample_rate, track.channels, track.codec
+                );
+            }
         }
 
         Ok(())

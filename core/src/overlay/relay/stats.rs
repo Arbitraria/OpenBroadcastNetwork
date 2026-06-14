@@ -66,8 +66,8 @@ impl RelayStats {
         self.bytes_relayed += chunk_size as u64;
 
         // Update average chunk size
-        if self.chunks_relayed > 0 {
-            self.avg_chunk_size = self.bytes_relayed / self.chunks_relayed;
+        if let Some(avg) = self.bytes_relayed.checked_div(self.chunks_relayed) {
+            self.avg_chunk_size = avg;
         }
     }
 

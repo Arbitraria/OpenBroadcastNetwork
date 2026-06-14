@@ -1,6 +1,8 @@
-[build]
-# Enable parallel compilation
-rustc-wrapper = "sccache"
+# sccache is intentionally NOT forced here: a committed `rustc-wrapper` breaks every
+# environment that doesn't have sccache installed (CI runners, fresh clones, Docker).
+# To use sccache locally, opt in via your own environment instead, e.g.:
+#   export RUSTC_WRAPPER=sccache
+# (in your shell rc, or a local untracked .cargo/config.toml).
 
 [target.wasm32-unknown-unknown]
 # WASM-specific settings

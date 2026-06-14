@@ -247,33 +247,27 @@ impl TelemetryManager {
     /// Get or create a counter with the given name
     pub async fn counter(&self, name: &str) -> Counter {
         let mut counters = self.counters.write().await;
-
-        if !counters.contains_key(name) {
-            counters.insert(name.to_string(), Counter::new());
-        }
-
-        counters.get(name).unwrap().clone()
+        counters
+            .entry(name.to_string())
+            .or_insert_with(Counter::new)
+            .clone()
     }
 
     /// Get or create a gauge with the given name
     pub async fn gauge(&self, name: &str) -> Gauge {
         let mut gauges = self.gauges.write().await;
-
-        if !gauges.contains_key(name) {
-            gauges.insert(name.to_string(), Gauge::new());
-        }
-
-        gauges.get(name).unwrap().clone()
+        gauges
+            .entry(name.to_string())
+            .or_insert_with(Gauge::new)
+            .clone()
     }
 
     /// Get or create a histogram with the given name
     pub async fn histogram(&self, name: &str) -> Histogram {
         let mut histograms = self.histograms.write().await;
-
-        if !histograms.contains_key(name) {
-            histograms.insert(name.to_string(), Histogram::new());
-        }
-
-        histograms.get(name).unwrap().clone()
+        histograms
+            .entry(name.to_string())
+            .or_insert_with(Histogram::new)
+            .clone()
     }
 }
