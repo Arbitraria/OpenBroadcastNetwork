@@ -1,7 +1,6 @@
 # Build stage
-# Rust 1.85+ is required: the committed Cargo.lock resolves dependencies (e.g. clap_lex)
-# that use Cargo's edition2024 feature, stabilized in 1.85.
-FROM rust:1.86-bookworm AS builder
+# Pinned to match rust-toolchain.toml's channel (keep these two in sync when bumping).
+FROM rust:1.96.0-bookworm AS builder
 
 RUN apt-get update && apt-get install -y \
     libopus-dev \

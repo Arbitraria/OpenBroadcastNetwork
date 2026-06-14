@@ -1,10 +1,11 @@
 services:
   # Single-node demo: streams a test video to the browser via WebSocket/MSE.
-  # Open http://localhost:8080 after starting.
+  # Open http://localhost:8080 after starting. If 8080 is already in use on your
+  # host, pick another: `OBN_PORT=8090 docker compose up` -> http://localhost:8090
   demo:
     build: .
     ports:
-      - "8080:8080"
+      - "${OBN_PORT:-8080}:8080"
     volumes:
       - ./test_simple.mp4:/app/test_simple.mp4:ro
     command:
@@ -21,7 +22,7 @@ services:
     build: .
     profiles: ["p2p"]
     ports:
-      - "9000:9000"
+      - "${OBN_BOOTSTRAP_PORT:-9000}:9000"
     command:
       - bootstrap-server
       - --port=9000
@@ -31,7 +32,7 @@ services:
     build: .
     profiles: ["p2p"]
     ports:
-      - "8081:8081"
+      - "${OBN_PUB_PORT:-8081}:8081"
     volumes:
       - ./test_simple.mp4:/app/test_simple.mp4:ro
     depends_on:
@@ -50,7 +51,7 @@ services:
     build: .
     profiles: ["p2p"]
     ports:
-      - "8082:8082"
+      - "${OBN_SUB_PORT:-8082}:8082"
     depends_on:
       - bootstrap
       - publisher

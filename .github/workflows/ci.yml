@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Toolchain is pinned by rust-toolchain.toml; rustup installs it on first use.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Toolchain is pinned by rust-toolchain.toml; rustup installs it on first use.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies
@@ -48,9 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # Toolchain (incl. clippy) is pinned by rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies
@@ -66,10 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
+      # Toolchain (incl. rustfmt) is pinned by rust-toolchain.toml.
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
@@ -78,9 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+      # Toolchain (incl. wasm32 target) is pinned by rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies

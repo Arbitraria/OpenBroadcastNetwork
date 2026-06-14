@@ -25,6 +25,12 @@ docker compose up
 # Open http://localhost:8080 — video streams through the local relay
 ```
 
+If port 8080 is already in use on your machine, pick another:
+
+```bash
+OBN_PORT=8090 docker compose up   # then open http://localhost:8090
+```
+
 ### From source
 
 ```bash

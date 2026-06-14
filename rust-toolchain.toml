@@ -1,0 +1,8 @@
+# Single source of truth for the Rust toolchain used by local dev, CI, and Docker.
+# rustup reads this automatically for every cargo/rustc invocation in this repo, so
+# CI no longer floats on `stable` (which previously drifted and broke the build).
+# When bumping the version, also update the `FROM rust:<version>` line in the Dockerfile.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
