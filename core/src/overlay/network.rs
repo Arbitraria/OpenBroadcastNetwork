@@ -141,17 +141,17 @@ impl Network {
                 libp2p::yamux::Config::default,
             )
             .map_err(|e| {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to build swarm: {}", e),
-                ))
+                Box::new(std::io::Error::other(format!(
+                    "Failed to build swarm: {}",
+                    e
+                )))
             })?
             .with_behaviour(|_| gossipsub)
             .map_err(|e| {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to add behavior: {}", e),
-                ))
+                Box::new(std::io::Error::other(format!(
+                    "Failed to add behavior: {}",
+                    e
+                )))
             })?
             .build();
 
@@ -189,10 +189,10 @@ impl Network {
             }
             Err(e) => {
                 error!("Failed to subscribe to topic: {}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to subscribe: {}", e),
-                )))
+                Err(Box::new(std::io::Error::other(format!(
+                    "Failed to subscribe: {}",
+                    e
+                ))))
             }
         }
     }
@@ -208,10 +208,10 @@ impl Network {
             }
             Err(e) => {
                 error!("Failed to unsubscribe from topic: {}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to unsubscribe: {}", e),
-                )))
+                Err(Box::new(std::io::Error::other(format!(
+                    "Failed to unsubscribe: {}",
+                    e
+                ))))
             }
         }
     }
@@ -233,10 +233,10 @@ impl Network {
             }
             Err(e) => {
                 error!("Failed to publish to topic: {}", e);
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to publish: {}", e),
-                )))
+                Err(Box::new(std::io::Error::other(format!(
+                    "Failed to publish: {}",
+                    e
+                ))))
             }
         }
     }

@@ -53,7 +53,7 @@ impl Transport for MockTransport {
 
     fn send(
         &mut self,
-        conn_id: &ConnectionId,
+        _conn_id: &ConnectionId,
         data: Vec<u8>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send>>
     {
@@ -61,7 +61,7 @@ impl Transport for MockTransport {
         Box::pin(async { Ok(()) })
     }
 
-    fn close_connection(&mut self, conn_id: &ConnectionId) -> Result<(), TransportError> {
+    fn close_connection(&mut self, _conn_id: &ConnectionId) -> Result<(), TransportError> {
         println!("Closing connection");
         Ok(())
     }

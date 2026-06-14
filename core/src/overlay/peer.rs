@@ -240,7 +240,7 @@ impl<'de> Deserialize<'de> for LocalPeerId {
 ///
 /// The role affects how peers connect to each other and how data flows through the network,
 /// creating an efficient distribution structure for live streaming content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PeerRole {
     /// Source/publisher of content
     Publisher,
@@ -253,13 +253,8 @@ pub enum PeerRole {
     /// Gateway node that bridges networks
     Gateway,
     /// Unknown role
+    #[default]
     Unknown,
-}
-
-impl Default for PeerRole {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Peer connection status

@@ -275,7 +275,7 @@ impl Codec for OpusCodec {
             .ok_or_else(|| CodecError::EncodingFailed("Encoder not initialized".to_string()))?;
 
         // Convert bytes to i16 samples (assuming 16-bit PCM input)
-        if frame.len() % 2 != 0 {
+        if !frame.len().is_multiple_of(2) {
             return Err(CodecError::InvalidParameters(
                 "Frame length must be even for 16-bit samples".to_string(),
             ));

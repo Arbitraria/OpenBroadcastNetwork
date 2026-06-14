@@ -219,8 +219,8 @@ impl Overlay for Libp2pOverlay {
             }
         }
 
-        if latency_count > 0 {
-            stats.average_latency_ms = total_latency / latency_count;
+        if let Some(avg) = total_latency.checked_div(latency_count) {
+            stats.average_latency_ms = avg;
         }
 
         Ok(stats)

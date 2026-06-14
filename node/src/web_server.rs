@@ -544,8 +544,8 @@ impl StreamManager {
         } // end publisher-only announcement
 
         // Browse mode: no stream_id but overlay exists — listen for announcements only
-        if self.overlay.is_some() && self.stream_id.is_none() {
-            let overlay = self.overlay.as_ref().unwrap().clone();
+        if let (Some(overlay), None) = (self.overlay.as_ref(), self.stream_id.as_ref()) {
+            let overlay = overlay.clone();
             let discovery = self.stream_discovery.clone();
             let is_streaming = Arc::clone(&self.is_streaming);
 
@@ -1693,12 +1693,15 @@ async fn handle_websocket(
     // If the client requested a specific stream and we have an overlay but no
     // matching subscription yet (browse mode), dynamically subscribe now.
     let _dynamic_listener_handle = if let Some(ref sid) = requested_stream_id {
-        if state.stream_manager.overlay.is_some() && state.stream_manager.stream_id.is_none() {
+        if let (Some(overlay), None) = (
+            state.stream_manager.overlay.as_ref(),
+            state.stream_manager.stream_id.as_ref(),
+        ) {
             info!(
                 "Dynamic subscription: subscribing to stream {} via overlay",
                 sid
             );
-            let overlay = state.stream_manager.overlay.as_ref().unwrap().clone();
+            let overlay = overlay.clone();
             let target_stream_id = StreamId::new(sid.clone());
             let overlay_stream_id = OverlayStreamId::from_bytes(sid.as_bytes().to_vec());
 
